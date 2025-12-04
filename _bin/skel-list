@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# List available skeletons (relocatable)
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+detect_root() {
+  # Priority: explicit SKEL_DIR, alongside script, then $HOME/dev_skel
+  if [[ -n "${SKEL_DIR:-}" && -d "${SKEL_DIR}/_skels" ]]; then
+    printf "%s" "$SKEL_DIR"
+    return 0
+  fi
+  local candidate
+  candidate="$(cd "${SCRIPT_DIR}/.." && pwd)"
+  if [[ -d "${candidate}/_skels" ]]; then
+    printf "%s" "$candidate"
+    return 0
+  fi
+  candidate="$HOME/dev_skel"
+  if [[ -d "${candidate}/_skels" ]]; then
+    printf "%s" "$candidate"
+    return 0
+  fi
+  echo "Error: Could not locate _skels directory. Set SKEL_DIR or keep _bin and _skels together." >&2
+  exit 1
+}
+
+ROOT="$(detect_root)"
+SKELS_DIR="${ROOT}/_skels"
+
+if [[ ! -d "$SKELS_DIR" ]]; then
+  echo "No _skels directory found at: $SKELS_DIR" >&2
+  exit 1
+fi
+
+# Print just the skeleton names (directory basenames) that include a Makefile
+find "$SKELS_DIR" -mindepth 1 -maxdepth 1 -type d \
+  | while IFS= read -r d; do
+      if [[ -f "$d/Makefile" ]]; then
+        basename "$d"
+      fi
+    done \
+  | sort

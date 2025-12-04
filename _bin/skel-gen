@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Generate a new project from a skeleton (relocatable)
+# Usage: skel-gen <skel-name> <project-name-or-path>
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  echo "Usage: $(basename "$0") <skel-name> <project-name-or-path>"
+  echo "Example: $(basename "$0") python-fastapi-skel myapi"
+}
+
+detect_root() {
+  # Priority: explicit SKEL_DIR, alongside script, then $HOME/dev_skel
+  if [[ -n "${SKEL_DIR:-}" && -d "${SKEL_DIR}/_skels" ]]; then
+    printf "%s" "$SKEL_DIR"
+    return 0
+  fi
+  local candidate
+  candidate="$(cd "${SCRIPT_DIR}/.." && pwd)"
+  if [[ -d "${candidate}/_skels" ]]; then
+    printf "%s" "$candidate"
+    return 0
+  fi
+  candidate="$HOME/dev_skel"
+  if [[ -d "${candidate}/_skels" ]]; then
+    printf "%s" "$candidate"
+    return 0
+  fi
+  echo "Error: Could not locate _skels directory. Set SKEL_DIR or keep _bin and _skels together." >&2
+  exit 1
+}
+
+if [[ ${1:-} == "-h" || ${1:-} == "--help" || $# -lt 2 ]]; then
+  usage
+  exit 1
+fi
+
+SKEL_NAME="$1"
+RAW_TARGET="$2"
+
+ROOT="$(detect_root)"
+SKELS_DIR="${ROOT}/_skels"
+SKEL_PATH="${SKELS_DIR}/${SKEL_NAME}"
+
+if [[ ! -d "$SKEL_PATH" ]]; then
+  echo "Error: skeleton not found: $SKEL_NAME (expected at $SKEL_PATH)" >&2
+  echo "Available skeletons:" >&2
+  "${SCRIPT_DIR}/skel-list" >&2 || true
+  exit 1
+fi
+
+# Compute absolute target path
+if [[ "$RAW_TARGET" = /* ]]; then
+  TARGET="$RAW_TARGET"
+else
+  TARGET="$(pwd)/$RAW_TARGET"
+fi
+
+# Ensure parent exists for generators that expect it
+PARENT_DIR="$(dirname "$TARGET")"
+mkdir -p "$PARENT_DIR"
+
+echo "Generating from skeleton '$SKEL_NAME' into: $TARGET"
+
+if ! command -v make >/dev/null 2>&1; then
+  echo "Error: make is required to run skeleton generators." >&2
+  exit 1
+fi
+
+# Delegate to the skeleton's Makefile gen target
+make -C "$SKEL_PATH" gen NAME="$TARGET"
+
+echo "Done."
