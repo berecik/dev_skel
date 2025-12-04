@@ -28,6 +28,10 @@ A Makefile-based project generator system that creates new projects from skeleto
 
 ### Generate a New Project
 
+Two equivalent ways:
+
+1) From the repo root via the main Makefile targets
+
 ```bash
 # Python FastAPI
 make gen-fastapi NAME=myapp
@@ -54,10 +58,28 @@ make gen-actix NAME=myapp
 make gen-axum NAME=myapp
 ```
 
+2) With the generator tool (relocatable) from anywhere
+
+```bash
+_bin/skel-gen <skel-name> <target-path>
+
+# Examples
+_bin/skel-gen python-fastapi-skel ~/work/myapi
+_bin/skel-gen ts-vite-react-skel ./frontend
+```
+
 ### Test All Generators
 
 ```bash
 make test-generators
+```
+
+### Run a skeleton's E2E tests
+
+```bash
+# From the skeleton directory
+cd _skels/python-fastapi-skel
+make test   # calls: bash ./test
 ```
 
 ### Show Available Commands
@@ -74,8 +96,8 @@ make help
 
 ## Requirements
 
-- **Python**: Python 3.10+ with venv
-- **Node.js**: Node.js 18+ with npm
-- **Java**: JDK 17+ with Maven
-- **Rust**: Rust 1.70+ with Cargo
+- **Python**: Python 3.11+ with venv
+- **Node.js**: Node.js 20+ with npm
+- **Java**: JDK 21+ with Maven
+- **Rust**: Stable Rust with Cargo
 - **Make**: GNU Make 4.0+

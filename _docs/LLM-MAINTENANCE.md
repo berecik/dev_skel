@@ -4,7 +4,7 @@ Instructions for AI assistants (Claude, GPT, Gemini, etc.) maintaining this proj
 
 ## Project Overview
 
-This is a **Makefile-based project generator system**. It creates new projects from skeleton templates. The architecture follows a delegation pattern where the main Makefile calls skeleton-specific Makefiles.
+This is a **Makefile-based project generator system**. It creates new projects from skeleton templates. The architecture follows a delegation pattern where the main Makefile calls skeleton-specific Makefiles. Each skeleton also provides `gen` and `test` helper scripts, and an executable `merge` script used during generation.
 
 ## Key Files to Understand
 
@@ -14,6 +14,7 @@ Before making changes, read these files:
 2. **`_skels/*/Makefile`** - Individual skeleton Makefiles (8 total)
 3. **`_docs/MAKEFILE.md`** - Makefile architecture documentation
 4. **`_docs/SKELETONS.md`** - Skeleton template details
+5. **`_bin/skel-gen`** - Relocatable generator tool (prefers per-skeleton `gen` script)
 
 ## Common Tasks
 
@@ -27,63 +28,28 @@ Before making changes, read these files:
 2. **Add skeleton source files** with working example code
 
 3. **Create skeleton Makefile** (`_skels/language-framework-skel/Makefile`):
-   ```makefile
-   # Language Framework Skeleton - Makefile
+  - Must define `gen` and `test` targets and set `MERGE := $(SKEL_DIR)/merge`.
+  - Call the merge script as: `bash $(MERGE) "$(SKEL_DIR)" "$(NAME)"`.
+  - The `test` target should delegate to `bash ./test`.
 
-   .PHONY: gen test
+  Example skeleton Makefile snippet:
+  ```makefile
+  .PHONY: gen test
+  SKEL_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+  MERGE := $(SKEL_DIR)/merge
 
-   SKEL_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+  gen: ## Generate project (NAME=myapp)
+  ifndef NAME
+  	@echo "Usage: make gen NAME=<project-name>"
+  	@exit 1
+  endif
+  	# ... framework-specific setup ...
+  	@bash $(MERGE) "$(SKEL_DIR)" "$(NAME)"
+  	# ... post-setup steps ...
 
-   GREEN := \033[0;32m
-   YELLOW := \033[0;33m
-   NC := \033[0m
-
-   define merge_skel
-       @echo "$(YELLOW)Merging skeleton files from $(1) to $(2)...$(NC)"
-       @find $(1) -type f \
-           -not -path "*/.venv/*" \
-           -not -path "*/node_modules/*" \
-           -not -path "*/target/*" \
-           -not -path "*/__pycache__/*" \
-           -not -path "*/.git/*" \
-           -not -path "*/dist/*" \
-           -not -path "*/build/*" \
-           -not -path "*/.pytest_cache/*" \
-           -not -path "*/.mypy_cache/*" \
-           -not -path "*/.ruff_cache/*" \
-           -not -path "*.egg-info/*" \
-           -not -name "*.pyc" \
-           -not -name "*.pyo" \
-           -not -name "*.class" \
-           -not -name "*.db" \
-           -not -name "*.sqlite" \
-           -not -name "*.sqlite3" \
-           -not -name "Makefile" \
-           | while read src; do \
-           rel=$${src#$(1)}; \
-           dst="$(2)/$$rel"; \
-           if [ ! -f "$$dst" ]; then \
-               mkdir -p "$$(dirname "$$dst")"; \
-               cp "$$src" "$$dst"; \
-               echo "  + $$rel"; \
-           fi; \
-       done
-   endef
-
-   gen: ## Generate project (NAME=myapp)
-   ifndef NAME
-       @echo "Usage: make gen NAME=<project-name>"
-       @exit 1
-   endif
-       @echo "$(GREEN)Generating project: $(NAME)$(NC)"
-       # ... framework-specific setup commands ...
-       $(call merge_skel,$(SKEL_DIR),$(NAME))
-       # ... post-setup commands ...
-       @echo "$(GREEN)Project $(NAME) created!$(NC)"
-
-   test: ## Run tests
-       # ... test commands ...
-   ```
+  test: ## Generate a temp project and run its tests (e2e)
+  	@bash ./test
+  ```
 
 4. **Update main Makefile**:
    - Add variable: `NEW_SKEL := $(SKEL_DIR)/language-framework-skel`
@@ -93,7 +59,12 @@ Before making changes, read these files:
    - Add `test-gen-new` target
    - Add `test-new` target
 
-5. **Test**: `make test-generators`
+5. **Add helper scripts** in the skeleton directory:
+   - `merge` (executable Bash): copy auxiliary files; exclude generator-owned files.
+   - `gen` (executable Bash): wrapper that runs `make -C "$SKEL_DIR" gen NAME="$TARGET"`.
+   - `test` (executable Bash): generates into a temp dir, runs tests, performs a non-interactive run/build check.
+
+6. **Test**: `make test-generators`
 
 6. **Update documentation** in `_docs/SKELETONS.md`
 
@@ -102,22 +73,23 @@ Before making changes, read these files:
 ### Task: Update Dependencies in a Skeleton
 
 **For Python skeletons**:
-- Update pip install command in skeleton's Makefile `gen` target
-- Test with `make test-gen-<name>`
+- Update the pip install lines in the skeleton's Makefile `gen` target.
+- Prefer Python 3.11+.
+- Test with `make test-gen-<name>` and `make test-<name>`.
 
 **For Node.js skeletons**:
-- Update package.json in skeleton (if present)
-- Or update npm install commands in Makefile
-- Test with `make test-gen-<name>`
+- Update `package.json` in the skeleton when appropriate.
+- Or update the `npm` commands in the skeleton Makefile.
+- Test with `make test-gen-<name>` and `make test-<name>`.
 
 **For Java skeletons**:
-- Update `pom.xml` in skeleton
-- Test with `make test-gen-spring`
+- Update `pom.xml` in the skeleton.
+- Test with `make test-gen-spring` and `make test-spring`.
 
 **For Rust skeletons**:
-- Update `Cargo.toml` in skeleton
-- Regenerate `Cargo.lock`: `cd _skels/rust-*-skel && cargo update`
-- Test with `make test-gen-<name>`
+- Update `Cargo.toml` in the skeleton.
+- Regenerate `Cargo.lock`: `cd _skels/rust-*-skel && cargo update`.
+- Test with `make test-gen-<name>` and `make test-<name>`.
 
 ---
 
@@ -129,16 +101,16 @@ Before making changes, read these files:
    make gen-<name> NAME=_test_projects/debug-app 2>&1 | tee debug.log
    ```
 
-2. Check the skeleton Makefile for issues:
-   - Path handling in `merge_skel`
-   - Command sequences in `gen` target
-   - File exclusions
+2. Check the skeleton Makefile and scripts for issues:
+   - Path handling in `merge` script and its exclusions
+   - Command sequences in `gen` target and pre/post steps
+   - Test script behavior and non-interactive checks
 
 3. Common issues:
-   - **Path issues**: Ensure `SKEL_DIR` ends with `/` (it does via `$(dir ...)`)
-   - **File not copied**: Check exclusion patterns in `merge_skel`
-   - **File overwritten**: `merge_skel` only copies if file doesn't exist
-   - **Wrong directory**: Ensure commands use `$(NAME)` not relative paths
+   - **Path issues**: Ensure `SKEL_DIR` is resolved via `$(dir $(abspath $(lastword $(MAKEFILE_LIST))))`.
+   - **File not copied**: Check exclusion patterns in the `merge` script.
+   - **File overwritten**: `merge` must only copy when destination does not exist.
+   - **Wrong directory**: Ensure commands use `$(NAME)` or absolute paths, not relative ones.
 
 4. After fixing, run full test suite:
    ```bash
@@ -163,47 +135,34 @@ Before making changes, read these files:
    ```
 
 4. **For ts-vite-react-skel** specifically:
-   - Don't commit `package.json`, `package-lock.json`, `tsconfig.json`
-   - These are generated by Vite and excluded from merge
-   - Only `vite.config.ts` and `tsconfig.node.json` are copied from skeleton
+   - Do not overwrite generator-owned files: `package.json`, `package-lock.json`, `tsconfig.json`, `tsconfig.node.json`, `vite.config.ts` (see the skeleton `merge` script for exact rules).
 
 ---
 
 ## Critical Implementation Details
 
-### merge_skel Path Handling
+### merge script contract
 
-The `merge_skel` macro handles paths carefully:
-
-```makefile
-SKEL_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
-# Results in: /absolute/path/to/skel/  (with trailing slash)
-
-# In merge_skel:
-rel=$${src#$(1)};     # Strip SKEL_DIR prefix (including trailing /)
-dst="$(2)/$$rel";     # NAME + / + relative path
-```
-
-**Why this matters**:
-- `$(dir ...)` always includes trailing slash
-- Shell substitution `${src#pattern}` removes prefix
-- Destination needs explicit `/` between NAME and rel
+- The `merge` script signature is: `merge <SKEL_DIR> <TARGET_DIR>`.
+- It must:
+  - Echo progress and copied relative paths (optional but helpful).
+  - Exclude generator-owned files for that stack (see `_skels/*/merge`).
+  - Only copy if destination file does not exist (never overwrite).
+  - Create parent directories as needed.
 
 ### Framework-Specific Considerations
 
 **ts-vite-react-skel**:
 - Uses `npm create vite@latest` which creates its own config files
-- Must remove `vite.config.ts` and `tsconfig.node.json` before merge
-- Uses `vitest/config` import (not `vite`) for test config
-- Excludes `package.json`, `package-lock.json`, `tsconfig.json` from merge
+- Excludes `package.json`, `package-lock.json`, `tsconfig.json`, `tsconfig.node.json`, `vite.config.ts` from merge
 
 **python-django-skel**:
 - Uses `django-admin startproject` then overlays skeleton
-- Removes generated `urls.py` before merge
+- Excludes `manage.py` and key `myproject/*` files from merge
 
 **rust-*-skel**:
 - Uses `cargo new` then overlays skeleton
-- Removes generated `Cargo.toml` and `src/main.rs` before merge
+- Excludes `Cargo.toml` and `src/main.rs` from merge
 
 ---
 
@@ -258,7 +217,7 @@ Flask generator test passed
 - **Do NOT** modify files in `_test_projects/` - it's auto-generated
 - **Do NOT** commit `node_modules/`, `.venv/`, `target/` directories
 - **Do NOT** change the `SKEL_DIR` detection pattern - it's carefully designed
-- **Do NOT** remove the trailing slash handling in path operations
+- Prefer absolute/abspath usage to avoid relative path issues
 - **Do NOT** add interactive prompts to generators (must work non-interactively)
 
 ---
@@ -269,7 +228,7 @@ When maintaining this project, ensure:
 
 - [ ] All 8 generators pass: `make test-generators`
 - [ ] No hardcoded absolute paths in Makefiles
-- [ ] `merge_skel` exclusions are up to date
+- [ ] `merge` scripts' exclusions are up to date
 - [ ] Documentation reflects current state
 - [ ] Skeleton source code is functional and follows best practices
 - [ ] Dependencies are reasonably current (check for security issues)

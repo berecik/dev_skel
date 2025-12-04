@@ -2,7 +2,7 @@
 
 ## Overview
 
-The main `Makefile` orchestrates project generation by delegating to individual skeleton Makefiles. Each skeleton contains its own `Makefile` with a `gen` target that handles the actual project creation.
+The main `Makefile` orchestrates project generation by delegating to individual skeleton Makefiles. Each skeleton contains its own `Makefile` with a `gen` target that delegates to the skeleton's Bash `gen` script (which contains the full generation logic) and a `test` target that runs an end-to-end validation via `bash ./test`.
 
 ## Architecture
 
@@ -80,7 +80,7 @@ All generator targets:
 | `test-gen-spring` | Test Spring Boot generator |
 | `test-gen-actix` | Test Actix generator |
 | `test-gen-axum` | Test Axum generator |
-| `test-all` | Run tests within each skeleton directory |
+| `test-all` | Run tests within each skeleton directory (calls `bash ./test`) |
 | `test-fastapi` | Run FastAPI skeleton tests |
 | `test-flask` | Run Flask skeleton tests |
 | `test-django` | Run Django skeleton tests |
@@ -118,64 +118,67 @@ GREEN := \033[0;32m
 YELLOW := \033[0;33m
 NC := \033[0m
 
-# merge_skel macro - copies files from skeleton to target
-define merge_skel
-    @echo "$(YELLOW)Merging skeleton files from $(1) to $(2)...$(NC)"
-    @find $(1) -type f \
-        -not -path "*/.venv/*" \
-        -not -path "*/node_modules/*" \
-        ... (exclusions) ...
-        | while read src; do \
-        rel=$${src#$(1)}; \
-        dst="$(2)/$$rel"; \
-        if [ ! -f "$$dst" ]; then \
-            mkdir -p "$$(dirname "$$dst")"; \
-            cp "$$src" "$$dst"; \
-            echo "  + $$rel"; \
-        fi; \
-    done
-endef
+# Standard scripts
+GEN := $(SKEL_DIR)/gen
+MERGE := $(SKEL_DIR)/merge
 
 gen: ## Generate project (NAME=myapp)
 ifndef NAME
     @echo "Usage: make gen NAME=<project-name>"
     @exit 1
 endif
-    # ... project-specific setup ...
-    $(call merge_skel,$(SKEL_DIR),$(NAME))
-    # ... post-setup steps ...
+    @bash $(GEN) "$(NAME)"
 
-test: ## Run tests
-    # ... test commands ...
+test: ## Generate a temp project and run its tests (e2e)
+    @bash ./test
 ```
 
 ### Key Points
 
 1. **SKEL_DIR Detection**: Uses `$(dir $(abspath $(lastword $(MAKEFILE_LIST))))` to auto-detect the skeleton directory path, ensuring correct operation whether called directly or via the main Makefile.
 
-2. **merge_skel Macro**: 
-   - Copies files from skeleton to target directory
-   - Only copies files that don't exist in target (won't overwrite)
-   - Excludes build artifacts, caches, and the Makefile itself
-   - Shows progress with `+ filename` output
+2. **gen Script**:
+   - Each skeleton ships an executable `gen` Bash script that contains ALL generation logic (scaffolding, dependency installation, and calling `merge`).
+   - Skeleton Makefiles must delegate to it with: `bash $(SKEL_DIR)/gen "$(NAME)"`.
+
+3. **merge Script**:
+   - Each skeleton ships an executable `merge` script that copies auxiliary files into the newly generated project without overwriting generator-owned files (e.g., `Cargo.toml`, `package.json`, framework-initialized sources).
+   - The `gen` script invokes it with: `bash "$SKEL_DIR/merge" "$SKEL_DIR" "$TARGET"`.
 
 3. **NAME Parameter**: All `gen` targets require `NAME` to be set and should be an absolute path when called from the main Makefile.
+
+4. **Test Scripts**: Each skeleton contains a `test` Bash script that generates into a temporary directory, runs the project's tests, and performs a non-interactive run/build check. The skeleton `Makefile` simply delegates to `bash ./test`.
 
 ## Adding a New Skeleton
 
 1. Create new directory: `_skels/language-framework-skel/`
 2. Add skeleton files with working example code
 3. Create `Makefile` with `gen` and `test` targets
-4. Add variables to main Makefile:
+   - Use `GEN := $(SKEL_DIR)/gen` and delegate `gen` to `@bash $(GEN) "$(NAME)"`.
+   - Keep `test` delegating to `bash ./test`.
+4. Add an executable `merge` script that implements copy logic and excludes generator-owned files.
+5. Add an executable `gen` script that wraps `make -C "$SKEL_DIR" gen NAME="$TARGET"`.
+6. Add an executable `test` script that generates into a temp dir and validates non-interactively.
+7. Add variables to main Makefile:
    ```makefile
    NEW_SKEL := $(SKEL_DIR)/language-framework-skel
    SKELETONS := ... $(NEW_SKEL)
    ```
-5. Add generator target:
+8. Add generator target:
    ```makefile
    gen-new: ## Generate New Framework project (NAME=myapp)
        @$(MAKE) -C $(NEW_SKEL) gen NAME=$(abspath $(NAME))
    ```
-6. Add test targets (`test-gen-new`, `test-new`)
-7. Update `.PHONY` declarations
-8. Run `make test-generators` to verify
+9. Add test targets (`test-gen-new`, `test-new`)
+10. Update `.PHONY` declarations
+11. Run `make test-generators` to verify
+
+## Generator Tool
+
+You can also generate projects from anywhere using the relocatable tool:
+
+```bash
+_bin/skel-gen <skel-name> <target-path>
+```
+
+The tool prefers a skeleton's `gen` script (which contains all logic) and falls back to `make -C <skel> gen NAME=<target>` if missing.

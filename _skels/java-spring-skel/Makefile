@@ -17,15 +17,7 @@ ifndef NAME
 	@exit 1
 endif
 	@echo "$(GREEN)Generating Spring Boot project: $(NAME)$(NC)"
-	@mkdir -p $(NAME)
-	@tmpzip=$$(mktemp -t spring-XXXXXX.zip); tmpdir=$$(mktemp -dt spring-unzip-XXXXXX); \
-	 echo "Downloading Spring Initializr..."; \
-	 curl -fsSL "https://start.spring.io/starter.zip?type=maven-project&language=java&groupId=com.example&artifactId=$(notdir $(NAME))&name=$(notdir $(NAME))&packageName=com.example.$(notdir $(NAME))&packaging=jar&javaVersion=21&dependencies=web" -o $$tmpzip; \
-	 unzip -q $$tmpzip -d $$tmpdir; \
-	 rsync -a $$tmpdir/*/ $(NAME)/; \
-	 rm -rf $$tmpzip $$tmpdir
-	@bash $(MERGE) "$(SKEL_DIR)" "$(NAME)"
-	@cd $(NAME) && mvn -q -e -DskipTests dependency:resolve || true
+	@bash $(SKEL_DIR)/gen "$(NAME)"
 	@echo "$(GREEN)Spring Boot project $(NAME) created!$(NC)"
 
 test: ## Generate a temp project and run its tests (e2e)

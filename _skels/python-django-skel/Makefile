@@ -17,11 +17,7 @@ ifndef NAME
 	@exit 1
 endif
 	@echo "$(GREEN)Generating Django project: $(NAME)$(NC)"
-	@mkdir -p $(NAME)
-	@cd $(NAME) && python3 -m venv .venv
-	@cd $(NAME) && . .venv/bin/activate && pip install django python-dotenv gunicorn
-	@cd $(NAME) && . .venv/bin/activate && django-admin startproject myproject .
-	@bash $(MERGE) "$(SKEL_DIR)" "$(NAME)"
+	@bash $(SKEL_DIR)/gen "$(NAME)"
 	@echo "$(GREEN)Django project $(NAME) created!$(NC)"
 
 test: ## Generate a temp project and run its tests (e2e)

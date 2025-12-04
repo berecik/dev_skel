@@ -2,11 +2,29 @@
 set -euo pipefail
 
 SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
-TARGET="${1:-}"
+RAW_TARGET="${1:-}"
 
-if [[ -z "$TARGET" ]]; then
+if [[ -z "$RAW_TARGET" ]]; then
   echo "Usage: $(basename "$0") <target-path>"
   exit 1
 fi
 
-make -C "$SKEL_DIR" gen NAME="$TARGET"
+if [[ "$RAW_TARGET" = /* ]]; then
+  TARGET="$RAW_TARGET"
+else
+  TARGET="$(pwd)/$RAW_TARGET"
+fi
+
+echo "[flask] Generating into: $TARGET"
+mkdir -p "$TARGET"
+
+(
+  cd "$TARGET"
+  python3 -m venv .venv
+  . .venv/bin/activate
+  pip install -q flask flask-sqlalchemy flask-migrate python-dotenv gunicorn
+)
+
+bash "$SKEL_DIR/merge" "$SKEL_DIR" "$TARGET"
+
+echo "[flask] Done."

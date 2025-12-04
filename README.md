@@ -30,25 +30,26 @@ A curated collection of production-ready project skeletons for rapid development
 
 ## Quick Start
 
-### Installation
+### Install or Update locally
 
-Install dev_skel to your development directory:
-
-```bash
-./install.sh
-```
-
-This copies all skeleton templates to `~/dev/` (excludes test projects and scripts).
-
-### Update Existing Installation
-
-Sync updates from dev_skel to your installation:
+Use the provided helper scripts in `_bin/`:
 
 ```bash
-./update.sh
+# First-time install to your development directory (default: "$HOME/dev_skel")
+_bin/install-dev-skel
+
+# Later, to pull updates from this repo into your local installation
+_bin/update-dev-skel
+
+# If you keep this repo and your installed copy in sync manually
+_bin/sync-dev-skel
 ```
 
 ### Generate a New Project
+
+Two equivalent ways:
+
+1) From the repo root via the main Makefile targets
 
 ```bash
 # Python FastAPI
@@ -76,6 +77,16 @@ make gen-actix NAME=myapp
 make gen-axum NAME=myapp
 ```
 
+2) With the generator tool (relocatable) from anywhere
+
+```bash
+_bin/skel-gen <skel-name> <target-path>
+
+# Examples
+_bin/skel-gen python-fastapi-skel ~/work/myapi
+_bin/skel-gen ts-vite-react-skel ./frontend
+```
+
 ## Makefile Commands
 
 ### Project Generation
@@ -83,8 +94,13 @@ make gen-axum NAME=myapp
 
 ### Testing
 - `make test-generators` - Test all skeleton generators
-- `make test-all` - Run tests for all skeleton projects
+- `make test-all` - Run tests inside each skeleton (end-to-end)
 - `make test-<framework>` - Run tests for a specific skeleton
+
+Each skeleton has a `test` script that:
+- Generates a temporary project
+- Runs its test suite
+- Performs a non-interactive run/build check (e.g., `manage.py check`, `cargo build`, `npm run -s build`)
 
 ### Maintenance
 - `make list` - List all available skeletons
@@ -97,8 +113,7 @@ make gen-axum NAME=myapp
 ```
 dev_skel/
 ├── Makefile                  # Main orchestration Makefile
-├── install.sh                # Install skeletons to ~/dev
-├── update.sh                 # Update ~/dev from dev_skel
+├── _bin/                     # Helper tools (install, update, list, generate, etc.)
 ├── .editorconfig             # Editor configuration
 ├── .gitignore                # Git ignore patterns
 ├── _skels/                   # Skeleton templates
@@ -121,10 +136,10 @@ dev_skel/
 
 Each framework has specific requirements:
 
-- **Python**: Python 3.10+ with venv
-- **Node.js**: Node.js 18+ with npm
-- **Java**: JDK 17+ with Maven
-- **Rust**: Rust 1.70+ with Cargo
+- **Python**: Python 3.11+ with venv
+- **Node.js**: Node.js 20+ with npm
+- **Java**: JDK 21+ with Maven
+- **Rust**: A recent stable Rust with Cargo
 - **Make**: GNU Make 4.0+
 
 ## Documentation
@@ -143,7 +158,7 @@ Detailed documentation is available in the `_docs/` directory:
 make gen-fastapi NAME=my-api
 cd my-api
 source .venv/bin/activate
-pytest
+pytest -q
 uvicorn app.main:app --reload
 ```
 
@@ -162,6 +177,16 @@ make test-generators
 ```
 
 This creates test projects for all frameworks and verifies they build correctly.
+
+## Implementation details (for contributors)
+
+- Each skeleton defines a `merge` script used during generation. Skeleton Makefiles reference it as:
+  - `MERGE := $(SKEL_DIR)/merge`
+  - `bash $(MERGE) "$(SKEL_DIR)" "$(NAME)"`
+- Each skeleton includes:
+  - `gen` script: contains ALL generation logic; skeleton Makefiles delegate to it via `bash $(SKEL_DIR)/gen "$(NAME)"`
+  - `test` script: end-to-end test that generates into a temp dir and validates the project
+- The `_bin/skel-gen` tool prefers a skeleton's `gen` script when present and falls back to `make -C <skel> gen NAME=<target>`.
 
 ## License
 

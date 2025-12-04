@@ -2,11 +2,32 @@
 set -euo pipefail
 
 SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
-TARGET="${1:-}"
+RAW_TARGET="${1:-}"
 
-if [[ -z "$TARGET" ]]; then
+if [[ -z "$RAW_TARGET" ]]; then
   echo "Usage: $(basename "$0") <target-path>"
   exit 1
 fi
 
-make -C "$SKEL_DIR" gen NAME="$TARGET"
+if [[ "$RAW_TARGET" = /* ]]; then
+  TARGET="$RAW_TARGET"
+else
+  TARGET="$(pwd)/$RAW_TARGET"
+fi
+
+echo "[js] Generating into: $TARGET"
+mkdir -p "$TARGET"
+
+(
+  cd "$TARGET"
+  npm init -y >/dev/null 2>&1
+)
+
+bash "$SKEL_DIR/merge" "$SKEL_DIR" "$TARGET"
+
+(
+  cd "$TARGET"
+  npm install >/dev/null 2>&1
+)
+
+echo "[js] Done."

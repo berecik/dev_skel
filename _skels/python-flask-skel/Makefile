@@ -17,10 +17,7 @@ ifndef NAME
 	@exit 1
 endif
 	@echo "$(GREEN)Generating Flask project: $(NAME)$(NC)"
-	@mkdir -p $(NAME)
-	@cd $(NAME) && python3 -m venv .venv
-	@cd $(NAME) && . .venv/bin/activate && pip install flask flask-sqlalchemy flask-migrate python-dotenv gunicorn
-	@bash $(MERGE) "$(SKEL_DIR)" "$(NAME)"
+	@bash $(SKEL_DIR)/gen "$(NAME)"
 	@echo "$(GREEN)Flask project $(NAME) created!$(NC)"
 
 test: ## Generate a temp project and run its tests (e2e)

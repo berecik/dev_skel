@@ -17,12 +17,7 @@ ifndef NAME
 	@exit 1
 endif
 	@echo "$(GREEN)Generating Vite+React+TypeScript project: $(NAME)$(NC)"
-	@mkdir -p $(dir $(NAME))
-	@cd $(dir $(NAME)) && printf 'n\nn\n' | npm create vite@latest $(notdir $(NAME)) -- --template react-ts
-	@cd $(NAME) && npm install
-	@bash $(MERGE) "$(SKEL_DIR)" "$(NAME)"
-	@cd $(NAME) && npm install vitest @testing-library/react @testing-library/jest-dom jsdom --save-dev
-	@cd $(NAME) && npm pkg set scripts.test="vitest run" scripts.test:watch="vitest"
+	@bash $(SKEL_DIR)/gen "$(NAME)"
 	@echo "$(GREEN)Vite+React+TypeScript project $(NAME) created!$(NC)"
 
 test: ## Generate a temp project and run its tests (e2e)

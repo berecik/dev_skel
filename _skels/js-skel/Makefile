@@ -17,10 +17,7 @@ ifndef NAME
 	@exit 1
 endif
 	@echo "$(GREEN)Generating JavaScript project: $(NAME)$(NC)"
-	@mkdir -p $(NAME)
-	@cd $(NAME) && npm init -y
-	@bash $(MERGE) "$(SKEL_DIR)" "$(NAME)"
-	@cd $(NAME) && npm install
+	@bash $(SKEL_DIR)/gen "$(NAME)"
 	@echo "$(GREEN)JavaScript project $(NAME) created!$(NC)"
 
 test: ## Generate a temp project and run its tests (e2e)

@@ -17,9 +17,7 @@ ifndef NAME
 	@exit 1
 endif
 	@echo "$(GREEN)Generating Rust Actix-web project: $(NAME)$(NC)"
-	@cargo new $(NAME)
-	@bash $(MERGE) "$(SKEL_DIR)" "$(NAME)"
-	@cd $(NAME) && cargo fetch
+	@bash $(SKEL_DIR)/gen "$(NAME)"
 	@echo "$(GREEN)Rust Actix-web project $(NAME) created!$(NC)"
 
 test: ## Generate a temp project and run its tests (e2e)

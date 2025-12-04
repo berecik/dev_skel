@@ -2,11 +2,29 @@
 set -euo pipefail
 
 SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
-TARGET="${1:-}"
+RAW_TARGET="${1:-}"
 
-if [[ -z "$TARGET" ]]; then
+if [[ -z "$RAW_TARGET" ]]; then
   echo "Usage: $(basename "$0") <target-path>"
   exit 1
 fi
 
-make -C "$SKEL_DIR" gen NAME="$TARGET"
+if [[ "$RAW_TARGET" = /* ]]; then
+  TARGET="$RAW_TARGET"
+else
+  TARGET="$(pwd)/$RAW_TARGET"
+fi
+
+echo "[axum] Generating into: $TARGET"
+
+cargo new "$TARGET" >/dev/null 2>&1
+
+# Merge skeleton overlays (do not overwrite Cargo.toml or src/main.rs per merge rules)
+bash "$SKEL_DIR/merge" "$SKEL_DIR" "$TARGET"
+
+(
+  cd "$TARGET"
+  cargo fetch -q || true
+)
+
+echo "[axum] Done."

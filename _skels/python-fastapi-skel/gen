@@ -2,11 +2,32 @@
 set -euo pipefail
 
 SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
-TARGET="${1:-}"
+RAW_TARGET="${1:-}"
 
-if [[ -z "$TARGET" ]]; then
+if [[ -z "$RAW_TARGET" ]]; then
   echo "Usage: $(basename "$0") <target-path>"
   exit 1
 fi
 
-make -C "$SKEL_DIR" gen NAME="$TARGET"
+# Compute absolute target path
+if [[ "$RAW_TARGET" = /* ]]; then
+  TARGET="$RAW_TARGET"
+else
+  TARGET="$(pwd)/$RAW_TARGET"
+fi
+
+echo "[fastapi] Generating into: $TARGET"
+mkdir -p "$TARGET"
+
+# Python environment and deps
+(
+  cd "$TARGET"
+  python3 -m venv .venv
+  . .venv/bin/activate
+  pip install -q fastapi uvicorn sqlalchemy aiosqlite pydantic-settings alembic python-dotenv
+)
+
+# Merge skeleton files
+bash "$SKEL_DIR/merge" "$SKEL_DIR" "$TARGET"
+
+echo "[fastapi] Done."

@@ -2,11 +2,42 @@
 set -euo pipefail
 
 SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
-TARGET="${1:-}"
+RAW_TARGET="${1:-}"
 
-if [[ -z "$TARGET" ]]; then
+if [[ -z "$RAW_TARGET" ]]; then
   echo "Usage: $(basename "$0") <target-path>"
   exit 1
 fi
 
-make -C "$SKEL_DIR" gen NAME="$TARGET"
+if [[ "$RAW_TARGET" = /* ]]; then
+  TARGET="$RAW_TARGET"
+else
+  TARGET="$(pwd)/$RAW_TARGET"
+fi
+
+echo "[spring] Generating into: $TARGET"
+mkdir -p "$TARGET"
+
+# Use Spring Initializr to scaffold base project matching our exclusions
+tmpzip="$(mktemp -t spring-XXXXXX.zip)"
+tmpdir="$(mktemp -dt spring-unzip-XXXXXX)"
+
+GROUP_ID="com.example"
+ARTIFACT_ID="$(basename "$TARGET")"
+NAME="$ARTIFACT_ID"
+PACKAGE="${GROUP_ID}.${ARTIFACT_ID}"
+
+curl -fsSL "https://start.spring.io/starter.zip?type=maven-project&language=java&groupId=${GROUP_ID}&artifactId=${ARTIFACT_ID}&name=${NAME}&packageName=${PACKAGE}&packaging=jar&javaVersion=21&dependencies=web" -o "$tmpzip"
+unzip -q "$tmpzip" -d "$tmpdir"
+rsync -a "$tmpdir"/*/ "$TARGET"/
+rm -rf "$tmpzip" "$tmpdir"
+
+# Merge skeleton overlays
+bash "$SKEL_DIR/merge" "$SKEL_DIR" "$TARGET"
+
+(
+  cd "$TARGET"
+  mvn -q -e -DskipTests dependency:resolve || true
+)
+
+echo "[spring] Done."
