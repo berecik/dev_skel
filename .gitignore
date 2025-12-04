@@ -12,3 +12,6 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+#LLM
+/.claude

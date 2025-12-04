@@ -30,6 +30,27 @@ A curated collection of production-ready project skeletons for rapid development
 
 ## Quick Start
 
+### Install System Dependencies
+
+Install required system dependencies for all skeletons or specific frameworks:
+
+```bash
+# List all available skeletons and their dependency status
+./skel-deps --list
+
+# Install dependencies for all frameworks
+./skel-deps --all
+
+# Install dependencies for a specific framework
+./skel-deps java-spring-skel
+./skel-deps python-django
+./skel-deps rust-actix
+```
+
+Supported systems: macOS (Homebrew), Ubuntu/Debian (apt), Arch Linux (pacman), Fedora/RHEL (dnf)
+
+See [DEPENDENCIES.md](_docs/DEPENDENCIES.md) for detailed information.
+
 ### Install or Update locally
 
 Use the provided helper scripts in `_bin/`:
@@ -113,11 +134,17 @@ Each skeleton has a `test` script that:
 ```
 dev_skel/
 ├── Makefile                  # Main orchestration Makefile
+├── skel-deps                 # Main dependency installer (all skeletons)
 ├── _bin/                     # Helper tools (install, update, list, generate, etc.)
 ├── .editorconfig             # Editor configuration
 ├── .gitignore                # Git ignore patterns
 ├── _skels/                   # Skeleton templates
 │   ├── python-fastapi-skel/
+│   │   ├── deps              # System dependency installer
+│   │   ├── install-deps      # Project dependency installer (copied to generated projects)
+│   │   ├── gen               # Project generator
+│   │   ├── merge             # File merging script
+│   │   └── test              # Test script
 │   ├── python-flask-skel/
 │   ├── python-django-skel/
 │   ├── ts-vite-react-skel/
@@ -127,6 +154,7 @@ dev_skel/
 │   └── rust-axum-skel/
 └── _docs/                    # Documentation
     ├── README.md
+    ├── DEPENDENCIES.md
     ├── MAKEFILE.md
     ├── SKELETONS.md
     └── LLM-MAINTENANCE.md
@@ -134,18 +162,21 @@ dev_skel/
 
 ## Requirements
 
-Each framework has specific requirements:
+Each framework has specific requirements. Use `./skel-deps` to install them automatically:
 
-- **Python**: Python 3.11+ with venv
+- **Python**: Python 3.10+ with pip and venv
 - **Node.js**: Node.js 20+ with npm
 - **Java**: JDK 21+ with Maven
-- **Rust**: A recent stable Rust with Cargo
+- **Rust**: Stable Rust with Cargo (via rustup)
 - **Make**: GNU Make 4.0+
+
+Run `./skel-deps --all` to install all dependencies, or `./skel-deps <skeleton-name>` for a specific framework. See [DEPENDENCIES.md](_docs/DEPENDENCIES.md) for details.
 
 ## Documentation
 
 Detailed documentation is available in the `_docs/` directory:
 
+- [Dependencies](_docs/DEPENDENCIES.md) - System dependency installation guide
 - [Makefile Reference](_docs/MAKEFILE.md) - Complete documentation of all Makefile targets
 - [Skeleton Templates](_docs/SKELETONS.md) - Detailed information about each skeleton
 - [LLM Maintenance Guide](_docs/LLM-MAINTENANCE.md) - Guide for AI assistants maintaining this project
@@ -155,8 +186,14 @@ Detailed documentation is available in the `_docs/` directory:
 ### Create and Test a New FastAPI Project
 
 ```bash
+# Generate the project
 make gen-fastapi NAME=my-api
 cd my-api
+
+# Install project dependencies
+./install-deps
+
+# Activate virtual environment and run
 source .venv/bin/activate
 pytest -q
 uvicorn app.main:app --reload
@@ -165,8 +202,14 @@ uvicorn app.main:app --reload
 ### Create a New React Frontend
 
 ```bash
+# Generate the project
 make gen-vite-react NAME=my-frontend
 cd my-frontend
+
+# Install project dependencies
+./install-deps
+
+# Start development server
 npm run dev
 ```
 

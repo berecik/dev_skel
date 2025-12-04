@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import '@testing-library/jest-dom';
 import App from './App';
 
 describe('App', () => {
@@ -9,18 +8,18 @@ describe('App', () => {
     expect(document.body).toBeInTheDocument();
   });
 
-  it('renders Vite + React heading', () => {
+  it('renders project name', () => {
     render(<App />);
-    expect(screen.getByText(/Vite \+ React/)).toBeInTheDocument();
+    expect(screen.getByText('ts-vite-react-skel')).toBeInTheDocument();
   });
 
   it('increments counter on button click', () => {
     render(<App />);
     const button = screen.getByRole('button', { name: /count/i });
-    expect(button).toHaveTextContent('count is 0');
+    expect(button).toHaveTextContent('Count: 0');
     fireEvent.click(button);
-    expect(button).toHaveTextContent('count is 1');
+    expect(button).toHaveTextContent('Count: 1');
     fireEvent.click(button);
-    expect(button).toHaveTextContent('count is 2');
+    expect(button).toHaveTextContent('Count: 2');
   });
 });

@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# Dependency installer for Rust Actix skeleton
+set -euo pipefail
+
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+info() { echo -e "${GREEN}[INFO]${NC} $*"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+error() { echo -e "${RED}[ERROR]${NC} $*"; }
+
+# Detect OS
+detect_os() {
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "macos"
+  elif [[ -f /etc/os-release ]]; then
+    . /etc/os-release
+    case "$ID" in
+      ubuntu|debian) echo "ubuntu" ;;
+      arch|manjaro) echo "arch" ;;
+      fedora|rhel|centos) echo "fedora" ;;
+      *) echo "unknown" ;;
+    esac
+  else
+    echo "unknown"
+  fi
+}
+
+# Check if command exists
+command_exists() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+# Install Rust via rustup
+install_rust() {
+  if command_exists rustup; then
+    info "Rust is already installed, updating..."
+    rustup update
+    return
+  fi
+
+  info "Installing Rust via rustup..."
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+  # Source cargo env
+  if [[ -f "$HOME/.cargo/env" ]]; then
+    # shellcheck source=/dev/null
+    . "$HOME/.cargo/env"
+  fi
+}
+
+# Install system dependencies based on OS
+install_deps() {
+  local os="$1"
+
+  info "Installing Rust dependencies for $os..."
+
+  case "$os" in
+    macos)
+      if ! command_exists brew; then
+        error "Homebrew is required but not installed. Visit https://brew.sh"
+        exit 1
+      fi
+      # Rust compiler needs some build tools
+      info "Ensuring build tools are available..."
+      xcode-select --install 2>/dev/null || true
+      ;;
+
+    ubuntu)
+      info "Installing build-essential and pkg-config..."
+      sudo apt-get update
+      sudo apt-get install -y build-essential pkg-config libssl-dev
+      ;;
+
+    arch)
+      info "Installing base-devel..."
+      sudo pacman -S --needed --noconfirm base-devel
+      ;;
+
+    fedora)
+      info "Installing development tools and openssl-devel..."
+      sudo dnf groupinstall -y "Development Tools"
+      sudo dnf install -y openssl-devel pkg-config
+      ;;
+
+    *)
+      error "Unsupported OS: $os"
+      exit 1
+      ;;
+  esac
+
+  install_rust
+}
+
+# Verify installation
+verify_deps() {
+  info "Verifying installations..."
+
+  if command_exists cargo; then
+    info "Cargo: $(cargo --version)"
+  else
+    error "Cargo not found. You may need to restart your shell or run: source \$HOME/.cargo/env"
+    return 1
+  fi
+
+  if command_exists rustc; then
+    info "Rust: $(rustc --version)"
+  else
+    error "rustc not found"
+    return 1
+  fi
+
+  info "All dependencies verified successfully!"
+  warn "If cargo/rustc are not found, restart your shell or run: source \$HOME/.cargo/env"
+}
+
+# Main
+main() {
+  local os
+  os=$(detect_os)
+
+  if [[ "$os" == "unknown" ]]; then
+    error "Unable to detect OS"
+    exit 1
+  fi
+
+  info "Detected OS: $os"
+
+  # Check if dependencies are already installed
+  if command_exists cargo && command_exists rustc; then
+    info "All dependencies already installed!"
+    verify_deps
+    return 0
+  fi
+
+  install_deps "$os"
+  verify_deps
+}
+
+main "$@"

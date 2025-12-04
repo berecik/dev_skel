@@ -15,8 +15,8 @@ trap cleanup EXIT
 
 cd "$TARGET"
 
-. . .venv/bin/activate
+. .venv/bin/activate
 pip install -q pytest pytest-django
 pytest -q
-python manage.py check -q
+python manage.py check --verbosity 0
 echo "OK: Django skeleton generated, tests ran, and manage.py check passed."

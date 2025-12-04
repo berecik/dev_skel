@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Install project dependencies for Node.js project
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Colors
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+info() { echo -e "${GREEN}[INFO]${NC} $*"; }
+header() { echo -e "${BLUE}=== $* ===${NC}"; }
+
+cd "$SCRIPT_DIR"
+
+header "Installing Node.js Project Dependencies"
+
+# Check if npm is available
+if ! command -v npm >/dev/null 2>&1; then
+  echo "ERROR: npm not found. Please install Node.js and npm first."
+  echo "Run: ../skel-deps js-skel  (if using dev_skel structure)"
+  exit 1
+fi
+
+info "Node.js version: $(node --version)"
+info "npm version: $(npm --version)"
+
+info "Installing npm packages..."
+npm install
+
+header "Dependencies Installed Successfully"
+info "Project is ready for development"
+info "Run tests with: npm test"
+info "Start development with: npm run dev"

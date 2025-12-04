@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Install project dependencies for Java Spring project
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Colors
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+info() { echo -e "${GREEN}[INFO]${NC} $*"; }
+header() { echo -e "${BLUE}=== $* ===${NC}"; }
+
+cd "$SCRIPT_DIR"
+
+header "Installing Java Spring Project Dependencies"
+
+# Check if Maven is available
+if ! command -v mvn >/dev/null 2>&1; then
+  echo "ERROR: Maven not found. Please install Maven first."
+  echo "Run: ../skel-deps java-spring-skel  (if using dev_skel structure)"
+  exit 1
+fi
+
+info "Resolving Maven dependencies..."
+mvn dependency:resolve
+
+info "Installing Maven dependencies..."
+mvn install -DskipTests
+
+header "Dependencies Installed Successfully"
+info "Project is ready for development"
+info "Run tests with: mvn test"
+info "Run application with: mvn spring-boot:run"

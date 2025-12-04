@@ -1,0 +1,218 @@
+#!/usr/bin/env bash
+# Main dependency installer for all skeletons
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKELS_DIR="$SCRIPT_DIR/_skels"
+
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+info() { echo -e "${GREEN}[INFO]${NC} $*"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+error() { echo -e "${RED}[ERROR]${NC} $*"; }
+header() { echo -e "${BLUE}=== $* ===${NC}"; }
+
+# Detect OS
+detect_os() {
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "macos"
+  elif [[ -f /etc/os-release ]]; then
+    . /etc/os-release
+    case "$ID" in
+      ubuntu|debian) echo "ubuntu" ;;
+      arch|manjaro) echo "arch" ;;
+      fedora|rhel|centos) echo "fedora" ;;
+      *) echo "unknown" ;;
+    esac
+  else
+    echo "unknown"
+  fi
+}
+
+# Get OS display name
+get_os_name() {
+  local os="$1"
+  case "$os" in
+    macos) echo "macOS" ;;
+    ubuntu) echo "Ubuntu/Debian" ;;
+    arch) echo "Arch Linux" ;;
+    fedora) echo "Fedora/RHEL" ;;
+    *) echo "Unknown" ;;
+  esac
+}
+
+# List available skeletons
+list_skels() {
+  header "Available Skeletons"
+  local count=0
+  for skel_dir in "$SKELS_DIR"/*-skel; do
+    if [[ -d "$skel_dir" ]]; then
+      local skel_name
+      skel_name=$(basename "$skel_dir")
+      local has_deps=""
+      if [[ -x "$skel_dir/deps" ]]; then
+        has_deps=" ${GREEN}✓${NC}"
+      else
+        has_deps=" ${RED}✗${NC}"
+      fi
+      echo -e "  $skel_name$has_deps"
+      count=$((count + 1))
+    fi
+  done
+  echo ""
+  echo "Total: $count skeletons"
+}
+
+# Install dependencies for a single skeleton
+install_skel_deps() {
+  local skel_name="$1"
+  local skel_dir="$SKELS_DIR/$skel_name"
+
+  if [[ ! -d "$skel_dir" ]]; then
+    error "Skeleton not found: $skel_name"
+    return 1
+  fi
+
+  local deps_script="$skel_dir/deps"
+  if [[ ! -f "$deps_script" ]]; then
+    error "No deps script found for $skel_name"
+    return 1
+  fi
+
+  if [[ ! -x "$deps_script" ]]; then
+    chmod +x "$deps_script"
+  fi
+
+  header "Installing dependencies for $skel_name"
+  if bash "$deps_script"; then
+    info "✓ Successfully installed dependencies for $skel_name"
+    return 0
+  else
+    error "✗ Failed to install dependencies for $skel_name"
+    return 1
+  fi
+}
+
+# Install dependencies for all skeletons
+install_all_deps() {
+  header "Installing dependencies for all skeletons"
+
+  local success=0
+  local failed=0
+  local skipped=0
+
+  for skel_dir in "$SKELS_DIR"/*-skel; do
+    if [[ ! -d "$skel_dir" ]]; then
+      continue
+    fi
+
+    local skel_name
+    skel_name=$(basename "$skel_dir")
+
+    if [[ ! -f "$skel_dir/deps" ]]; then
+      warn "Skipping $skel_name (no deps script)"
+      skipped=$((skipped + 1))
+      continue
+    fi
+
+    echo ""
+    if install_skel_deps "$skel_name"; then
+      success=$((success + 1))
+    else
+      failed=$((failed + 1))
+    fi
+  done
+
+  echo ""
+  header "Summary"
+  info "Successful: $success"
+  if [[ $failed -gt 0 ]]; then
+    error "Failed: $failed"
+  fi
+  if [[ $skipped -gt 0 ]]; then
+    warn "Skipped: $skipped"
+  fi
+
+  return "$failed"
+}
+
+# Show help
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [OPTIONS] [SKELETON]
+
+Install system dependencies for skeleton projects.
+
+OPTIONS:
+  -h, --help       Show this help message
+  -l, --list       List available skeletons
+  -a, --all        Install dependencies for all skeletons
+
+SKELETON:
+  Specific skeleton name (e.g., java-spring-skel, js-skel, python-django-skel)
+
+EXAMPLES:
+  $(basename "$0") --list                    # List all skeletons
+  $(basename "$0") java-spring-skel         # Install Java Spring dependencies
+  $(basename "$0") --all                     # Install all dependencies
+
+SUPPORTED SYSTEMS:
+  - macOS (via Homebrew)
+  - Ubuntu/Debian (via apt)
+  - Arch Linux (via pacman)
+  - Fedora/RHEL (via dnf)
+
+EOF
+}
+
+# Main
+main() {
+  local os
+  os=$(detect_os)
+
+  if [[ "$os" == "unknown" ]]; then
+    error "Unable to detect OS or OS not supported"
+    error "Supported: macOS, Ubuntu/Debian, Arch Linux, Fedora/RHEL"
+    exit 1
+  fi
+
+  info "Detected OS: $(get_os_name "$os")"
+
+  # Parse arguments
+  if [[ $# -eq 0 ]]; then
+    show_help
+    exit 0
+  fi
+
+  case "$1" in
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    -l|--list)
+      list_skels
+      exit 0
+      ;;
+    -a|--all)
+      install_all_deps
+      exit $?
+      ;;
+    *)
+      # Assume it's a skeleton name
+      local skel_name="$1"
+      # Add -skel suffix if not present
+      if [[ ! "$skel_name" =~ -skel$ ]]; then
+        skel_name="${skel_name}-skel"
+      fi
+      install_skel_deps "$skel_name"
+      exit $?
+      ;;
+  esac
+}
+
+main "$@"
