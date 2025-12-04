@@ -4,12 +4,12 @@ set -euo pipefail
 SKEL_DIR="${1:?skel_dir missing}"
 TARGET_DIR="${2:?target_dir missing}"
 
-echo "Merging additional files from $SKEL_DIR to $TARGET_DIR (FastAPI)..."
+echo "Merging additional files from $SKEL_DIR to $TARGET_DIR (Java Spring)..."
 
 while IFS= read -r -d '' src; do
   rel="${src#"$SKEL_DIR"}"
   case "$rel" in
-    */Makefile|*/merge.sh)
+    */Makefile|*/merge)
       continue ;;
   esac
   dst="$TARGET_DIR/$rel"

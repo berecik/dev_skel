@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+TMP_ROOT="${TMPDIR:-/tmp}"
+WORK_DIR="$(mktemp -d "$TMP_ROOT/fastapi-skel-test-XXXXXX")"
+TARGET="$WORK_DIR/proj"
+
+cleanup() {
+  rm -rf "$WORK_DIR" || true
+}
+trap cleanup EXIT
+
+"$SKEL_DIR/gen" "$TARGET"
+
+cd "$TARGET"
+
+. . .venv/bin/activate
+pip install -q pytest
+pytest -q
+python - <<'PY'
+import importlib
+import sys
+try:
+    importlib.import_module('app.main')
+    print('OK: FastAPI import succeeded')
+except Exception as e:
+    print('ERROR: FastAPI import failed:', e)
+    sys.exit(1)
+PY
+echo "OK: FastAPI skeleton generated and tests ran."

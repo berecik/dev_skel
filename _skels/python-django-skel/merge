@@ -9,7 +9,7 @@ echo "Merging additional files from $SKEL_DIR to $TARGET_DIR (Django)..."
 exclude_generated() {
   local rel="$1"
   case "$rel" in
-    */Makefile|*/merge.sh)
+    */Makefile|*/merge)
       return 0 ;;
     /manage.py)
       return 0 ;;

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+TMP_ROOT="${TMPDIR:-/tmp}"
+WORK_DIR="$(mktemp -d "$TMP_ROOT/js-skel-test-XXXXXX")"
+TARGET="$WORK_DIR/proj"
+
+cleanup() {
+  rm -rf "$WORK_DIR" || true
+}
+trap cleanup EXIT
+
+"$SKEL_DIR/gen" "$TARGET"
+
+cd "$TARGET"
+
+npm test --silent
+npm run -s info
+echo "OK: JS skeleton generated and tests ran."

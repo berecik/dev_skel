@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+TMP_ROOT="${TMPDIR:-/tmp}"
+WORK_DIR="$(mktemp -d "$TMP_ROOT/java-spring-skel-test-XXXXXX")"
+TARGET="$WORK_DIR/proj"
+
+cleanup() {
+  rm -rf "$WORK_DIR" || true
+}
+trap cleanup EXIT
+
+"$SKEL_DIR/gen" "$TARGET"
+
+cd "$TARGET"
+
+# Run tests (quiet)
+mvn -q test
+
+# Non-interactive run check: build the jar without running tests again
+mvn -q -DskipTests package
+echo "OK: Java Spring skeleton generated, tests ran, and package built."

@@ -69,7 +69,11 @@ if ! command -v make >/dev/null 2>&1; then
   exit 1
 fi
 
-# Delegate to the skeleton's Makefile gen target
-make -C "$SKEL_PATH" gen NAME="$TARGET"
+# Prefer per-skeleton gen script if present; fallback to Makefile target
+if [[ -f "$SKEL_PATH/gen" ]]; then
+  bash "$SKEL_PATH/gen" "$TARGET"
+else
+  make -C "$SKEL_PATH" gen NAME="$TARGET"
+fi
 
 echo "Done."

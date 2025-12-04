@@ -9,7 +9,7 @@ GREEN := \033[0;32m
 YELLOW := \033[0;33m
 NC := \033[0m
 
-MERGE := $(SKEL_DIR)/merge.sh
+MERGE := $(SKEL_DIR)/merge
 
 gen: ## Generate Rust Actix-web project (NAME=myapp)
 ifndef NAME
@@ -22,5 +22,5 @@ endif
 	@cd $(NAME) && cargo fetch
 	@echo "$(GREEN)Rust Actix-web project $(NAME) created!$(NC)"
 
-test: ## Run tests
-	@cargo test
+test: ## Generate a temp project and run its tests (e2e)
+	@bash ./test
