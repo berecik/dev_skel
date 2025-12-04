@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Install now simply delegates to update to keep behavior in one place
+
+set -euo pipefail
+
+# Resolve SKEL_DIR and source common config from there
+SKEL_DIR="${SKEL_DIR:=$HOME/dev_skel}"
+# shellcheck source=/dev/null
+. "${SKEL_DIR}/_bin/common.sh"
+
+echo "Installing dev skeleton to ${DEV_DIR} (delegating to update)..."
+
+# Ensure target directory exists so update can proceed
+ensure_dir "${DEV_DIR}"
+
+# Delegate to update script living in the same SKEL_DIR
+exec "${SKEL_DIR}/_bin/update-dev-skel"

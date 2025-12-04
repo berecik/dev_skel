@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Sync a directory to a remote host. Default: from $DIR_NAME to $HOST:$DIR_NAME
+
+set -euo pipefail
+
+# Resolve SKEL_DIR and source common config from there
+SKEL_DIR="${SKEL_DIR:=$HOME/dev_skel}"
+# shellcheck source=/dev/null
+. "${SKEL_DIR}/_bin/common.sh"
+
+print_usage() {
+  cat <<EOF
+Usage: $(basename "$0") <host> [source_dir] [dest_dir]
+
+Sync a directory to a remote host using rsync over ssh.
+
+Defaults:
+  - If only <host> is provided, source_dir defaults to SKEL_DIR ("${SKEL_DIR}").
+  - dest_dir defaults to the basename of source_dir (DIR_NAME), i.e. <host>:DIR_NAME
+  - Uses common rsync excludes from: ${EXCLUDES_FILE}
+
+Examples:
+  $(basename "$0") user@server             # sync ${SKEL_DIR} -> user@server:$(basename "${SKEL_DIR}")
+  $(basename "$0") user@server ./project   # sync ./project -> user@server:project
+  $(basename "$0") user@server ./project /data/project  # sync ./project -> user@server:/data/project
+EOF
+}
+
+HOST="${1:-}"
+if [[ -z "$HOST" ]] || [[ "$HOST" == "-h" ]] || [[ "$HOST" == "--help" ]]; then
+  print_usage
+  [[ -n "$HOST" ]] || exit 2
+  exit 0
+fi
+
+SRC_DIR="${2:-$SKEL_DIR}"
+# Normalize source to absolute path
+if [[ ! "$SRC_DIR" = /* ]]; then
+  SRC_DIR="$(cd "$SRC_DIR" && pwd)"
+fi
+
+if [[ ! -d "$SRC_DIR" ]]; then
+  echo "Error: source_dir '$SRC_DIR' does not exist or is not a directory." >&2
+  exit 2
+fi
+
+DIR_NAME="$(basename "$SRC_DIR")"
+DEST_DIR="${3:-$DIR_NAME}"
+
+echo "Syncing ${SRC_DIR} -> ${HOST}:${DEST_DIR}"
+
+rsync -az --delete --progress \
+  --exclude-from "${EXCLUDES_FILE}" \
+  -e ssh \
+  "${SRC_DIR}/" "${HOST}:${DEST_DIR}/"
+
+echo "Sync complete."
