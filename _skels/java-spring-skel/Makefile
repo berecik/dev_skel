@@ -9,38 +9,7 @@ GREEN := \033[0;32m
 YELLOW := \033[0;33m
 NC := \033[0m
 
-# Merges non-existing files from skeleton to target directory
-define merge_skel
-	@echo "$(YELLOW)Merging skeleton files from $(1) to $(2)...$(NC)"
-	@find $(1) -type f \
-		-not -path "*/.venv/*" \
-		-not -path "*/node_modules/*" \
-		-not -path "*/target/*" \
-		-not -path "*/__pycache__/*" \
-		-not -path "*/.git/*" \
-		-not -path "*/dist/*" \
-		-not -path "*/build/*" \
-		-not -path "*/.pytest_cache/*" \
-		-not -path "*/.mypy_cache/*" \
-		-not -path "*/.ruff_cache/*" \
-		-not -path "*.egg-info/*" \
-		-not -name "*.pyc" \
-		-not -name "*.pyo" \
-		-not -name "*.class" \
-		-not -name "*.db" \
-		-not -name "*.sqlite" \
-		-not -name "*.sqlite3" \
-		-not -name "Makefile" \
-		| while read src; do \
-		rel=$${src#$(1)}; \
-		dst="$(2)/$$rel"; \
-		if [ ! -f "$$dst" ]; then \
-			mkdir -p "$$(dirname "$$dst")"; \
-			cp "$$src" "$$dst"; \
-			echo "  + $$rel"; \
-		fi; \
-	done
-endef
+MERGE := $(SKEL_DIR)/merge.sh
 
 gen: ## Generate Spring Boot project (NAME=myapp)
 ifndef NAME
@@ -49,8 +18,14 @@ ifndef NAME
 endif
 	@echo "$(GREEN)Generating Spring Boot project: $(NAME)$(NC)"
 	@mkdir -p $(NAME)
-	$(call merge_skel,$(SKEL_DIR),$(NAME))
-	@cd $(NAME) && mvn dependency:resolve -q
+	@tmpzip=$$(mktemp -t spring-XXXXXX.zip); tmpdir=$$(mktemp -dt spring-unzip-XXXXXX); \
+	 echo "Downloading Spring Initializr..."; \
+	 curl -fsSL "https://start.spring.io/starter.zip?type=maven-project&language=java&groupId=com.example&artifactId=$(notdir $(NAME))&name=$(notdir $(NAME))&packageName=com.example.$(notdir $(NAME))&packaging=jar&javaVersion=21&dependencies=web" -o $$tmpzip; \
+	 unzip -q $$tmpzip -d $$tmpdir; \
+	 rsync -a $$tmpdir/*/ $(NAME)/; \
+	 rm -rf $$tmpzip $$tmpdir
+	@bash $(MERGE) "$(SKEL_DIR)" "$(NAME)"
+	@cd $(NAME) && mvn -q -e -DskipTests dependency:resolve || true
 	@echo "$(GREEN)Spring Boot project $(NAME) created!$(NC)"
 
 test: ## Run tests
