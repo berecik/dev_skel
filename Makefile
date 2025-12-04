@@ -151,15 +151,15 @@ test-all: ## Run tests for all skeleton projects
 
 test-fastapi: ## Run FastAPI skeleton tests
 	@echo "$(GREEN)Running FastAPI tests...$(NC)"
-	@cd $(FASTAPI_SKEL) && . .venv/bin/activate && pytest
+	$(MAKE) -C $(FASTAPI_SKEL) test
 
 test-flask: ## Run Flask skeleton tests
 	@echo "$(GREEN)Running Flask tests...$(NC)"
-	@cd $(FLASK_SKEL) && . .venv/bin/activate && pytest
+	$(MAKE) -C $(FLASK_SKEL) test
 
 test-django: ## Run Django skeleton tests
 	@echo "$(GREEN)Running Django tests...$(NC)"
-	@cd $(DJANGO_SKEL) && . .venv/bin/activate && pytest
+	$(MAKE) -C $(DJANGO_SKEL) test
 
 test-vite-react: ## Run Vite+React skeleton tests
 	@echo "$(GREEN)Running Vite+React tests...$(NC)"
@@ -171,15 +171,15 @@ test-js: ## Run JavaScript skeleton tests
 
 test-spring: ## Run Spring Boot skeleton tests
 	@echo "$(GREEN)Running Spring Boot tests...$(NC)"
-	@cd $(SPRING_SKEL) && mvn test -q
+	$(MAKE) -C $(SPRING_SKEL) test
 
 test-actix: ## Run Rust Actix skeleton tests
 	@echo "$(GREEN)Running Rust Actix tests...$(NC)"
-	@cd $(ACTIX_SKEL) && cargo test
+	$(MAKE) -C $(ACTIX_SKEL) test
 
 test-axum: ## Run Rust Axum skeleton tests
 	@echo "$(GREEN)Running Rust Axum tests...$(NC)"
-	@cd $(AXUM_SKEL) && cargo test
+	$(MAKE) -C $(AXUM_SKEL) test
 
 #
 # === INFO TARGETS ===
