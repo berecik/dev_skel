@@ -20,8 +20,8 @@ echo "[test_skel] Generating Spring Boot project in $TARGET..."
 cd "$TARGET"
 
 echo ""
-echo "[test_skel] Running project tests via ./test script..."
-./test
+echo "[test_skel] Running project tests via Maven..."
+mvn test
 
 echo ""
 echo "[test_skel] Building JAR via ./build --jar..."

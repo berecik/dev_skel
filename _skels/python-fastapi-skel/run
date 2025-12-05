@@ -1,62 +1,93 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run script for FastAPI project
-# Usage: ./run [mode]
+# Run FastAPI DDD project in Docker container
+# Usage: ./run [options]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-MODE="${1:-dev}"
+# Default values
 HOST="0.0.0.0"
 PORT="8000"
+DETACH=false
+TAG="fastapi-ddd:latest"
 
-case $MODE in
-    dev)
-        echo "Starting development server..."
-        echo "  API docs: http://localhost:$PORT/docs"
-        echo ""
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --host=*)
+            HOST="${1#*=}"
+            shift
+            ;;
+        --port=*)
+            PORT="${1#*=}"
+            shift
+            ;;
+        --tag=*)
+            TAG="${1#*=}"
+            shift
+            ;;
+        -d|--detach)
+            DETACH=true
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: ./run [options]"
+            echo ""
+            echo "Options:"
+            echo "  --host=HOST  Bind to host (default: 0.0.0.0)"
+            echo "  --port=PORT  Bind to port (default: 8000)"
+            echo "  --tag=TAG    Docker image tag (default: fastapi-ddd:latest)"
+            echo "  -d, --detach Run in detached mode"
+            echo ""
+            echo "Examples:"
+            echo "  ./run                         # Run in Docker"
+            echo "  ./run --port=8080             # Run on port 8080"
+            echo "  ./run -d                      # Run in background"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
 
-        if [[ -d ".venv" ]]; then
-            source .venv/bin/activate
-        fi
+# Check if image exists
+if ! docker images "$TAG" --format "{{.Repository}}" | grep -q .; then
+    echo "Image not found. Building..."
+    ./build --tag="$TAG"
+fi
 
-        uvicorn app.main:app --reload --host "$HOST" --port "$PORT"
-        ;;
+# Check for .env file
+ENV_FILE_ARG=""
+if [[ -f ".env" ]]; then
+    ENV_FILE_ARG="--env-file .env"
+elif [[ -f ".env.example" ]]; then
+    echo "No .env file found. Copying from .env.example..."
+    cp .env.example .env
+    ENV_FILE_ARG="--env-file .env"
+fi
 
-    prod)
-        echo "Starting production server..."
+echo "Running in Docker container..."
 
-        if [[ -d ".venv" ]]; then
-            source .venv/bin/activate
-        fi
+DOCKER_ARGS="-p ${PORT}:8000 $ENV_FILE_ARG --name fastapi-ddd-app --rm"
 
-        uvicorn app.main:app --host "$HOST" --port "$PORT" --workers 4
-        ;;
-
-    docker)
-        echo "Running in Docker..."
-
-        if ! docker images fastapi-app:latest --format "{{.Repository}}" | grep -q "fastapi-app"; then
-            echo "Image not found. Building..."
-            ./build
-        fi
-
-        docker run --rm -p "${PORT}:8000" --name fastapi-app fastapi-app:latest
-        ;;
-
-    -h|--help)
-        echo "Usage: ./run [mode]"
-        echo ""
-        echo "Modes:"
-        echo "  dev     Development server with hot reload (default)"
-        echo "  prod    Production server with multiple workers"
-        echo "  docker  Run in Docker container"
-        exit 0
-        ;;
-
-    *)
-        echo "Unknown mode: $MODE"
-        exit 1
-        ;;
-esac
+if [[ "$DETACH" == true ]]; then
+    DOCKER_ARGS="-d $DOCKER_ARGS"
+    docker run $DOCKER_ARGS "$TAG"
+    echo ""
+    echo "Container started in background"
+    echo "  URL: http://localhost:$PORT"
+    echo "  Docs: http://localhost:$PORT/docs"
+    echo "  View logs: docker logs -f fastapi-ddd-app"
+    echo "  Stop: ./stop"
+else
+    echo "  URL: http://localhost:$PORT"
+    echo "  Docs: http://localhost:$PORT/docs"
+    echo "Press Ctrl+C to stop"
+    echo ""
+    docker run $DOCKER_ARGS "$TAG"
+fi

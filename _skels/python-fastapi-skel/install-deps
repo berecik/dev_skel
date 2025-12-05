@@ -1,68 +1,143 @@
 #!/usr/bin/env bash
-# Install project dependencies for FastAPI project
+# Dependency installer for Python FastAPI DDD skeleton
 set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Colors
 GREEN='\033[0;32m'
-BLUE='\033[0;34m'
 YELLOW='\033[0;33m'
+RED='\033[0;31m'
 NC='\033[0m'
 
 info() { echo -e "${GREEN}[INFO]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
-header() { echo -e "${BLUE}=== $* ===${NC}"; }
+error() { echo -e "${RED}[ERROR]${NC} $*"; }
 
-cd "$SCRIPT_DIR"
+detect_os() {
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "macos"
+  elif [[ -f /etc/os-release ]]; then
+    . /etc/os-release
+    case "$ID" in
+      ubuntu|debian) echo "ubuntu" ;;
+      arch|manjaro) echo "arch" ;;
+      fedora|rhel|centos) echo "fedora" ;;
+      *) echo "unknown" ;;
+    esac
+  else
+    echo "unknown"
+  fi
+}
 
-header "Installing FastAPI Project Dependencies"
+command_exists() {
+  command -v "$1" >/dev/null 2>&1
+}
 
-# Check if Python is available
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "ERROR: python3 not found. Please install Python first."
-  echo "Run: ../skel-deps python-fastapi-skel  (if using dev_skel structure)"
-  exit 1
-fi
+install_uv() {
+  info "Installing uv (fast Python package manager)..."
+  if command_exists curl; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+  elif command_exists wget; then
+    wget -qO- https://astral.sh/uv/install.sh | sh
+  else
+    warn "Neither curl nor wget found, installing uv via pip..."
+    pip3 install uv
+  fi
+}
 
-info "Python version: $(python3 --version)"
+install_deps() {
+  local os="$1"
 
-# Create virtual environment if it doesn't exist
-if [[ ! -d .venv ]]; then
-  info "Creating virtual environment..."
-  python3 -m venv .venv
-else
-  info "Virtual environment already exists"
-fi
+  info "Installing Python dependencies for $os..."
 
-# Activate virtual environment
-info "Activating virtual environment..."
-# shellcheck source=/dev/null
-. .venv/bin/activate
+  case "$os" in
+    macos)
+      if ! command_exists brew; then
+        error "Homebrew is required but not installed. Visit https://brew.sh"
+        exit 1
+      fi
+      info "Installing python3 and uv..."
+      brew install python3 uv
+      ;;
 
-# Upgrade pip
-info "Upgrading pip..."
-pip install --upgrade pip
+    ubuntu)
+      info "Installing python3, python3-pip, and python3-venv..."
+      sudo apt-get update
+      sudo apt-get install -y python3 python3-pip python3-venv
+      install_uv
+      ;;
 
-# Install dependencies
-if [[ -f requirements.txt ]]; then
-  info "Installing dependencies from requirements.txt..."
-  pip install -r requirements.txt
-elif [[ -f pyproject.toml ]]; then
-  info "Installing dependencies from pyproject.toml..."
-  pip install -e .
-else
-  warn "No requirements.txt or pyproject.toml found"
-  info "Installing FastAPI manually..."
-  pip install django
-fi
+    arch)
+      info "Installing python, python-pip, and uv..."
+      sudo pacman -S --needed --noconfirm python python-pip uv
+      ;;
 
-header "Dependencies Installed Successfully"
-info "Virtual environment is ready at: .venv"
-info ""
-info "To activate the virtual environment:"
-info "  source .venv/bin/activate"
-info ""
-info "Then you can:"
-info "  uvicorn app.main:app --reload    # Start development server"
-info "  pytest         # Run tests"
+    fedora)
+      info "Installing python3 and python3-pip..."
+      sudo dnf install -y python3 python3-pip
+      install_uv
+      ;;
+
+    *)
+      error "Unsupported OS: $os"
+      exit 1
+      ;;
+  esac
+}
+
+verify_deps() {
+  info "Verifying installations..."
+
+  if command_exists python3; then
+    info "Python: $(python3 --version)"
+  else
+    error "Python3 not found"
+    return 1
+  fi
+
+  if command_exists uv; then
+    info "uv: $(uv --version)"
+  elif command_exists pip3; then
+    warn "uv not found, but pip3 is available as fallback"
+    info "pip: $(pip3 --version)"
+  else
+    error "Neither uv nor pip3 found"
+    return 1
+  fi
+
+  if python3 -m venv --help >/dev/null 2>&1; then
+    info "venv: available"
+  else
+    error "venv module not found"
+    return 1
+  fi
+
+  info "All dependencies verified successfully!"
+}
+
+main() {
+  local os
+  os=$(detect_os)
+
+  if [[ "$os" == "unknown" ]]; then
+    error "Unable to detect OS"
+    exit 1
+  fi
+
+  info "Detected OS: $os"
+
+  # Check if dependencies are already installed
+  if command_exists python3 && (command_exists uv || command_exists pip3) && python3 -m venv --help >/dev/null 2>&1; then
+    info "Core dependencies already installed!"
+    # Still try to install uv if missing
+    if ! command_exists uv; then
+      install_uv
+    fi
+    verify_deps
+    return 0
+  fi
+
+  install_deps "$os"
+  verify_deps
+}
+
+main "$@"

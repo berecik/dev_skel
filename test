@@ -20,15 +20,14 @@ NC='\033[0m'
 
 # All skeletons to test
 SKELETONS=(
-    "_skels/python-fastapi-skel"
-    "_skels/python-fastapi-ddd-skel"
-    "_skels/python-flask-skel"
-    "_skels/python-django-skel"
-    "_skels/ts-react-skel"
-    "_skels/js-skel"
-    "_skels/java-spring-skel"
-    "_skels/rust-actix-skel"
-    "_skels/rust-axum-skel"
+	"_skels/python-fastapi-skel"
+	"_skels/python-flask-skel"
+	"_skels/python-django-skel"
+	"_skels/ts-react-skel"
+	"_skels/js-skel"
+	"_skels/java-spring-skel"
+	"_skels/rust-actix-skel"
+	"_skels/rust-axum-skel"
 )
 
 # Parse arguments

@@ -10,6 +10,6 @@ cd "$SCRIPT_DIR"
 echo "Stopping local development server..."
 
 # Find and kill uvicorn processes for this project
-pkill -f "uvicorn app.main:app" 2>/dev/null || true
+pkill -f "uvicorn main:app" 2>/dev/null || true
 
 echo "Done"

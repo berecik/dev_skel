@@ -1,18 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stop script for FastAPI project
+# Stop FastAPI DDD Docker container
 # Usage: ./stop
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-echo "Stopping services..."
+echo "Stopping Docker container..."
 
-# Stop Docker container if running
-if docker ps -q -f name=fastapi-app | grep -q .; then
-    echo "Stopping Docker container..."
-    docker stop fastapi-app
-fi
+docker stop fastapi-ddd-app 2>/dev/null || echo "Container not running"
 
 echo "Done"

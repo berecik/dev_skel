@@ -1,48 +1,84 @@
-[build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "python-fastapi-skel"
-version = "1.0.0"
-description = "Python/FastAPI/SQLAlchemy skeleton project"
+[tool.poetry]
+name = "fastapi-ddd-project"
+version = "0.1.0"
+description = "FastAPI DDD project skeleton"
+authors = ["Your Name <your@email.com>"]
+packages = [{include = "core", from = "."}, {include = "app", from = "."}]
 readme = "README.md"
-license = {text = "MIT"}
-requires-python = ">=3.11"
-dependencies = [
-    "fastapi>=0.109.0",
-    "uvicorn[standard]>=0.27.0",
-    "sqlalchemy>=2.0.0",
-    "alembic>=1.13.0",
-    "pydantic>=2.0.0",
-    "pydantic-settings>=2.0.0",
-    "python-dotenv>=1.0.0",
-    "asyncpg>=0.29.0",
-    "aiosqlite>=0.19.0",
-]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.23.0",
-    "pytest-cov>=4.0.0",
-    "httpx>=0.26.0",
-    "ruff>=0.1.0",
-    "mypy>=1.0.0",
-]
+[tool.poetry.dependencies]
+# Supports Python 3.11+, recommended: 3.14
+python = ">=3.11,<4.0"
+
+# FastAPI and web
+fastapi = {extras = ["all"], version = ">=0.115"}
+uvicorn = "*"
+httpx = "*"
+httpx-ws = "*"
+asgi-lifespan = "*"
+requests = "*"
+
+# Pydantic
+pydantic = {extras = ["email"], version = ">=2.10"}
+pydantic-settings = "*"
+
+# Security
+python-jose = {extras = ["cryptography"], version = "*"}
+passlib = {extras = ["bcrypt"], version = "*"}
+bcrypt = "==4.0.1"  # Pin exactly for passlib compatibility
+
+# Telemetry
+fastapi-healthchecks = "*"
+fastapi-events = {extras = ["otel"], version = "*"}
+opentelemetry-api = "*"
+opentelemetry-sdk = "*"
+opentelemetry-instrumentation-fastapi = "*"
+loguru = "*"
+
+# Database
+sqlmodel = "*"
+sqlalchemy = {extras = ["asyncio"], version = ">=2.0"}
+sqlalchemy-utils = "*"
+aiosqlite = "*"
+asyncpg = "*"
+alembic = "*"
+
+# Redis
+redis = "*"
+hiredis = "*"
+
+# Geolocation
+geoalchemy2 = "*"
+geopy = "*"
+haversine = "*"
+
+# AI
+openai = "*"
+
+# Email
+emails = "*"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "*"
+pytest-cov = "*"
+pytest-asyncio = "*"
+ruff = "*"
+ipdb = "*"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
 
 [tool.ruff]
-line-length = 100
-target-version = "py311"
+line-length = 120
+target-version = "py314"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-python_files = ["test_*.py", "*_test.py"]
-addopts = "-v --tb=short"
-
-[tool.mypy]
-python_version = "3.11"
-strict = true
+testpaths = ["tests", "app", "core"]
+python_files = "test_*.py"
+python_functions = "test_*"

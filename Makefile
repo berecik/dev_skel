@@ -2,13 +2,12 @@
 # Generate, test, and run projects across all skeleton templates
 
 .PHONY: help list test test-all run info info-all clean clean-all status \
-        gen-fastapi gen-fastapi-ddd gen-flask gen-django gen-react gen-js gen-spring gen-actix gen-axum \
-        test-fastapi test-fastapi-ddd test-flask test-django test-react test-js test-spring test-actix test-axum
+        gen-fastapi gen-flask gen-django gen-react gen-js gen-spring gen-actix gen-axum \
+        test-fastapi test-flask test-django test-react test-js test-spring test-actix test-axum
 
 # Skeleton directories
 SKEL_DIR := _skels
 FASTAPI_SKEL := $(SKEL_DIR)/python-fastapi-skel
-FASTAPI_DDD_SKEL := $(SKEL_DIR)/python-fastapi-ddd-skel
 FLASK_SKEL := $(SKEL_DIR)/python-flask-skel
 DJANGO_SKEL := $(SKEL_DIR)/python-django-skel
 REACT_SKEL := $(SKEL_DIR)/ts-react-skel
@@ -18,7 +17,7 @@ ACTIX_SKEL := $(SKEL_DIR)/rust-actix-skel
 AXUM_SKEL := $(SKEL_DIR)/rust-axum-skel
 
 # All skeletons
-SKELETONS := $(FASTAPI_SKEL) $(FASTAPI_DDD_SKEL) $(FLASK_SKEL) $(DJANGO_SKEL) $(REACT_SKEL) $(JS_SKEL) $(SPRING_SKEL) $(ACTIX_SKEL) $(AXUM_SKEL)
+SKELETONS := $(FASTAPI_SKEL) $(FLASK_SKEL) $(DJANGO_SKEL) $(REACT_SKEL) $(JS_SKEL) $(SPRING_SKEL) $(ACTIX_SKEL) $(AXUM_SKEL)
 
 # Test output directory
 TEST_OUTPUT := _test_projects
@@ -50,9 +49,6 @@ list: ## List all skeleton projects
 gen-fastapi: ## Generate FastAPI project (NAME=myapp)
 	@$(MAKE) -C $(FASTAPI_SKEL) gen NAME=$(abspath $(NAME))
 
-gen-fastapi-ddd: ## Generate FastAPI DDD project (NAME=myapp)
-	@$(MAKE) -C $(FASTAPI_DDD_SKEL) gen NAME=$(abspath $(NAME))
-
 gen-flask: ## Generate Flask project (NAME=myapp)
 	@$(MAKE) -C $(FLASK_SKEL) gen NAME=$(abspath $(NAME))
 
@@ -82,7 +78,6 @@ test-generators: ## Test all generators by creating test projects
 	@rm -rf $(TEST_OUTPUT)
 	@mkdir -p $(TEST_OUTPUT)
 	$(MAKE) test-gen-fastapi
-	$(MAKE) test-gen-fastapi-ddd
 	$(MAKE) test-gen-flask
 	$(MAKE) test-gen-django
 	$(MAKE) test-gen-react
@@ -95,15 +90,9 @@ test-generators: ## Test all generators by creating test projects
 
 test-gen-fastapi: ## Test FastAPI generator
 	@echo "$(YELLOW)>>> Testing FastAPI generator$(NC)"
-	@$(MAKE) gen-fastapi NAME=$(TEST_OUTPUT)/test-fastapi-app
-	@cd $(TEST_OUTPUT)/test-fastapi-app && . .venv/bin/activate && python -c "from fastapi import FastAPI; print('FastAPI import OK')"
+	@$(MAKE) gen-fastapi NAME=$(TEST_OUTPUT)/test-fastapi-ddd-app
+	@cd $(TEST_OUTPUT)/test-fastapi-ddd-app && . .venv/bin/activate && python -c "from app import get_app; from core.repository import AbstractRepository; print('FastAPI import OK')"
 	@echo "$(GREEN)FastAPI generator test passed$(NC)"
-
-test-gen-fastapi-ddd: ## Test FastAPI DDD generator
-	@echo "$(YELLOW)>>> Testing FastAPI DDD generator$(NC)"
-	@$(MAKE) gen-fastapi-ddd NAME=$(TEST_OUTPUT)/test-fastapi-ddd-app
-	@cd $(TEST_OUTPUT)/test-fastapi-ddd-app && . .venv/bin/activate && python -c "from app import get_app; from core.repository import AbstractRepository; print('FastAPI DDD import OK')"
-	@echo "$(GREEN)FastAPI DDD generator test passed$(NC)"
 
 test-gen-flask: ## Test Flask generator
 	@echo "$(YELLOW)>>> Testing Flask generator$(NC)"
@@ -159,10 +148,6 @@ test-all: ## Alias for 'test'
 test-fastapi: ## Run FastAPI skeleton tests
 	@echo "$(GREEN)Running FastAPI tests...$(NC)"
 	$(MAKE) -C $(FASTAPI_SKEL) test
-
-test-fastapi-ddd: ## Run FastAPI DDD skeleton tests
-	@echo "$(GREEN)Running FastAPI DDD tests...$(NC)"
-	$(MAKE) -C $(FASTAPI_DDD_SKEL) test
 
 test-flask: ## Run Flask skeleton tests
 	@echo "$(GREEN)Running Flask tests...$(NC)"

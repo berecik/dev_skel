@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run script for local development
+# Run script for local development using Poetry
+# Poetry virtual environment is in .venv directory
 # Usage: ./run-dev [--host HOST] [--port PORT]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-HOST="127.0.0.1"
+HOST="0.0.0.0"
 PORT="8000"
 
 while [[ $# -gt 0 ]]; do
@@ -22,7 +23,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         -h|--help)
             echo "Usage: ./run-dev [--host=HOST] [--port=PORT]"
-            echo "  --host=HOST  Bind to host (default: 127.0.0.1)"
+            echo "  --host=HOST  Bind to host (default: 0.0.0.0)"
             echo "  --port=PORT  Bind to port (default: 8000)"
             exit 0
             ;;
@@ -32,16 +33,20 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Build if needed
+# Generate .env if not exists
+if [[ ! -f ".env" ]] && [[ -f ".env.example" ]]; then
+    echo "Creating .env from .env.example..."
+    cp .env.example .env
+fi
+
+# Build if .venv doesn't exist
 if [[ ! -d ".venv" ]]; then
     ./build-dev
 fi
-
-source .venv/bin/activate
 
 echo "Starting development server..."
 echo "  URL: http://${HOST}:${PORT}"
 echo "  Docs: http://${HOST}:${PORT}/docs"
 echo ""
 
-uvicorn app.main:app --reload --host "$HOST" --port "$PORT"
+poetry run uvicorn main:app --reload --host "$HOST" --port "$PORT"

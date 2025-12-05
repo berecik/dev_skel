@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build script for local development
+# Build script for local development using Poetry
+# Poetry creates virtual environment in .venv directory
 # Usage: ./build-dev
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,18 +10,33 @@ cd "$SCRIPT_DIR"
 
 echo "Building for local development..."
 
-# Create virtual environment if it doesn't exist
-if [[ ! -d ".venv" ]]; then
-    echo "Creating virtual environment..."
-    python3 -m venv .venv
+# Generate .env if not exists
+if [[ ! -f ".env" ]] && [[ -f ".env.example" ]]; then
+    echo "Creating .env from .env.example..."
+    cp .env.example .env
 fi
 
-# Activate and install dependencies
-source .venv/bin/activate
-pip install -q --upgrade pip
-pip install -q fastapi uvicorn sqlalchemy aiosqlite pydantic-settings alembic python-dotenv
+# Generate requirements.txt from pyproject.toml
+echo "Generating requirements from pyproject.toml..."
+./gen-requirements --dev -o requirements.txt
 
-# Install dev dependencies
-pip install -q pytest httpx pytest-asyncio pytest-cov
+# Install Poetry if not available
+if ! command -v poetry &> /dev/null; then
+    echo "Installing Poetry..."
+    pip install --upgrade pip
+    pip install poetry
+fi
 
-echo "Build complete. Run './run-dev' to start the server."
+# Configure Poetry to create virtualenv in project directory
+poetry config virtualenvs.in-project true
+
+# Install dependencies with Poetry
+echo "Installing dependencies with Poetry..."
+poetry install --with dev
+
+echo ""
+echo "Build complete."
+echo "  Virtual environment: .venv"
+echo "  Requirements: requirements.txt"
+echo ""
+echo "Run './run-dev' to start the server."
