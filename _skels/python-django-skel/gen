@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+COMMON_DIR="$SKEL_DIR/../_common"
 RAW_TARGET="${1:-}"
 
 if [[ -z "$RAW_TARGET" ]]; then
@@ -9,23 +10,31 @@ if [[ -z "$RAW_TARGET" ]]; then
   exit 1
 fi
 
+# MAIN_DIR is the wrapper directory; actual Django app lives in backend/ inside it
 if [[ "$RAW_TARGET" = /* ]]; then
-  TARGET="$RAW_TARGET"
+  MAIN_DIR="$RAW_TARGET"
 else
-  TARGET="$(pwd)/$RAW_TARGET"
+  MAIN_DIR="$(pwd)/$RAW_TARGET"
 fi
 
-echo "[django] Generating into: $TARGET"
-mkdir -p "$TARGET"
+PROJECT_SUBDIR="backend"
+PROJECT_DIR="$MAIN_DIR/$PROJECT_SUBDIR"
+
+echo "[django] Generating into: $MAIN_DIR (project dir: $PROJECT_SUBDIR)"
+mkdir -p "$PROJECT_DIR"
 
 (
-  cd "$TARGET"
+  cd "$PROJECT_DIR"
   python3 -m venv .venv
   . .venv/bin/activate
   pip install -q django python-dotenv gunicorn
   django-admin startproject myproject .
 )
 
-bash "$SKEL_DIR/merge" "$SKEL_DIR" "$TARGET"
+# Merge overlays into inner project directory
+bash "$SKEL_DIR/merge" "$SKEL_DIR" "$PROJECT_DIR"
+
+# Create wrapper-level README, Makefile, and thin scripts
+bash "$COMMON_DIR/common-wrapper.sh" "$MAIN_DIR" "$PROJECT_SUBDIR" "Django Backend"
 
 echo "[django] Done."

@@ -9,7 +9,11 @@ WORK_DIR="$(mktemp -d "$TMP_ROOT/rust-actix-skel-test-XXXXXX")"
 TARGET="$WORK_DIR/proj"
 
 cleanup() {
-  ./stop 2>/dev/null || true
+  if [[ -d "$TARGET" ]]; then
+    (
+      cd "$TARGET" && ./stop 2>/dev/null || true
+    )
+  fi
   rm -rf "$WORK_DIR" || true
 }
 trap cleanup EXIT
@@ -17,7 +21,10 @@ trap cleanup EXIT
 echo "[test_skel] Generating Rust Actix-web project in $TARGET..."
 "$SKEL_DIR/gen" "$TARGET"
 
-cd "$TARGET"
+MAIN_DIR="$TARGET"
+PROJECT_DIR="$MAIN_DIR/service"
+
+cd "$MAIN_DIR"
 
 echo ""
 echo "[test_skel] Running project tests via ./test script..."

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+COMMON_DIR="$SKEL_DIR/../_common"
 RAW_TARGET="${1:-}"
 
 if [[ -z "$RAW_TARGET" ]]; then
@@ -9,35 +10,42 @@ if [[ -z "$RAW_TARGET" ]]; then
   exit 1
 fi
 
+# MAIN_DIR is the wrapper directory; actual Spring Boot app lives in service/ inside it
 if [[ "$RAW_TARGET" = /* ]]; then
-  TARGET="$RAW_TARGET"
+  MAIN_DIR="$RAW_TARGET"
 else
-  TARGET="$(pwd)/$RAW_TARGET"
+  MAIN_DIR="$(pwd)/$RAW_TARGET"
 fi
 
-echo "[spring] Generating into: $TARGET"
-mkdir -p "$TARGET"
+PROJECT_SUBDIR="service"
+PROJECT_DIR="$MAIN_DIR/$PROJECT_SUBDIR"
+
+echo "[spring] Generating into: $MAIN_DIR (project dir: $PROJECT_SUBDIR)"
+mkdir -p "$PROJECT_DIR"
 
 # Use Spring Initializr to scaffold base project matching our exclusions
 tmpzip="$(mktemp -t spring-XXXXXX.zip)"
 tmpdir="$(mktemp -dt spring-unzip-XXXXXX)"
 
 GROUP_ID="com.example"
-ARTIFACT_ID="$(basename "$TARGET")"
+ARTIFACT_ID="$(basename "$PROJECT_DIR")"
 NAME="$ARTIFACT_ID"
 PACKAGE="${GROUP_ID}.${ARTIFACT_ID}"
 
 curl -fsSL "https://start.spring.io/starter.zip?type=maven-project&language=java&groupId=${GROUP_ID}&artifactId=${ARTIFACT_ID}&name=${NAME}&packageName=${PACKAGE}&packaging=jar&javaVersion=21&dependencies=web" -o "$tmpzip"
 unzip -q "$tmpzip" -d "$tmpdir"
-rsync -a "$tmpdir"/*/ "$TARGET"/
+rsync -a "$tmpdir"/*/ "$PROJECT_DIR"/
 rm -rf "$tmpzip" "$tmpdir"
 
-# Merge skeleton overlays
-bash "$SKEL_DIR/merge" "$SKEL_DIR" "$TARGET"
+# Merge skeleton overlays into inner project directory
+bash "$SKEL_DIR/merge" "$SKEL_DIR" "$PROJECT_DIR"
 
 (
-  cd "$TARGET"
+  cd "$PROJECT_DIR"
   mvn -q -e -DskipTests dependency:resolve || true
 )
+
+# Create wrapper-level README, Makefile, and thin scripts
+bash "$COMMON_DIR/common-wrapper.sh" "$MAIN_DIR" "$PROJECT_SUBDIR" "Spring Service"
 
 echo "[spring] Done."

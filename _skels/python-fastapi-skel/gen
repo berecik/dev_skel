@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+COMMON_DIR="$SKEL_DIR/../_common"
 RAW_TARGET="${1:-}"
 
 if [[ -z "$RAW_TARGET" ]]; then
@@ -9,27 +10,30 @@ if [[ -z "$RAW_TARGET" ]]; then
   exit 1
 fi
 
-# Compute absolute target path
+# Compute absolute main directory path (wrapper directory)
 if [[ "$RAW_TARGET" = /* ]]; then
-  TARGET="$RAW_TARGET"
+  MAIN_DIR="$RAW_TARGET"
 else
-  TARGET="$(pwd)/$RAW_TARGET"
+  MAIN_DIR="$(pwd)/$RAW_TARGET"
 fi
 
-echo "[fastapi-ddd] Generating into: $TARGET"
-mkdir -p "$TARGET"
+PROJECT_SUBDIR="backend"
+PROJECT_DIR="$MAIN_DIR/$PROJECT_SUBDIR"
 
-# Merge skeleton files first
-bash "$SKEL_DIR/merge" "$SKEL_DIR" "$TARGET"
+echo "[fastapi-ddd] Generating into: $MAIN_DIR (project dir: $PROJECT_SUBDIR)"
+mkdir -p "$PROJECT_DIR"
+
+# Merge skeleton files first into inner project directory
+bash "$SKEL_DIR/merge" "$SKEL_DIR" "$PROJECT_DIR"
 
 # Generate .env from example if not exists
-if [[ ! -f "$TARGET/.env" && -f "$TARGET/.env.example" ]]; then
-  cp "$TARGET/.env.example" "$TARGET/.env"
+if [[ ! -f "$PROJECT_DIR/.env" && -f "$PROJECT_DIR/.env.example" ]]; then
+  cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
 fi
 
 # Create Python environment and install deps using uv
 (
-  cd "$TARGET"
+  cd "$PROJECT_DIR"
 
   # Check if uv is available
   if command -v uv >/dev/null 2>&1; then
@@ -44,5 +48,8 @@ fi
     pip install -q -r requirements.txt
   fi
 )
+
+# Create wrapper-level README, Makefile, and thin scripts
+bash "$COMMON_DIR/common-wrapper.sh" "$MAIN_DIR" "$PROJECT_SUBDIR" "FastAPI DDD Backend"
 
 echo "[fastapi-ddd] Done."

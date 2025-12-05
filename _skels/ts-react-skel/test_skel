@@ -18,7 +18,10 @@ echo "[test_skel] Generating TS React project in $TARGET ..."
 rm -rf "$TARGET"
 "$SKEL_DIR/gen" "$TARGET" --template react-swc-ts
 
-cd "$TARGET"
+MAIN_DIR="$TARGET"
+PROJECT_DIR="$MAIN_DIR/frontend"
+
+cd "$PROJECT_DIR"
 
 echo ""
 echo "[test_skel] Building project..."

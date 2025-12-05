@@ -9,7 +9,11 @@ WORK_DIR="$(mktemp -d "$TMP_ROOT/django-skel-test-XXXXXX")"
 TARGET="$WORK_DIR/proj"
 
 cleanup() {
-  ./stop 2>/dev/null || true
+  if [[ -d "$TARGET" ]]; then
+    (
+      cd "$TARGET" && ./stop 2>/dev/null || true
+    )
+  fi
   rm -rf "$WORK_DIR" || true
 }
 trap cleanup EXIT
@@ -17,7 +21,10 @@ trap cleanup EXIT
 echo "[test_skel] Generating Django project in $TARGET..."
 "$SKEL_DIR/gen" "$TARGET"
 
-cd "$TARGET"
+MAIN_DIR="$TARGET"
+PROJECT_DIR="$MAIN_DIR/backend"
+
+cd "$PROJECT_DIR"
 
 . .venv/bin/activate
 pip install -q pytest pytest-django
@@ -27,11 +34,12 @@ echo "[test_skel] Running Django system checks..."
 python manage.py check --verbosity 0
 
 echo ""
-echo "[test_skel] Running project tests via ./test script..."
+echo "[test_skel] Running project tests via ./test script (wrapper in main dir)..."
+cd "$MAIN_DIR"
 ./test -q
 
 echo ""
-echo "[test_skel] Building Docker image via ./build script..."
+echo "[test_skel] Building Docker image via ./build script (wrapper in main dir)..."
 ./build --tag=django-test:latest
 
 echo ""

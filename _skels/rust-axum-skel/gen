@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+COMMON_DIR="$SKEL_DIR/../_common"
 RAW_TARGET="${1:-}"
 
 if [[ -z "$RAW_TARGET" ]]; then
@@ -9,22 +10,34 @@ if [[ -z "$RAW_TARGET" ]]; then
   exit 1
 fi
 
+# MAIN_DIR is the wrapper directory; actual Axum service lives in service/ inside it
 if [[ "$RAW_TARGET" = /* ]]; then
-  TARGET="$RAW_TARGET"
+  MAIN_DIR="$RAW_TARGET"
 else
-  TARGET="$(pwd)/$RAW_TARGET"
+  MAIN_DIR="$(pwd)/$RAW_TARGET"
 fi
 
-echo "[axum] Generating into: $TARGET"
+PROJECT_SUBDIR="service"
+PROJECT_DIR="$MAIN_DIR/$PROJECT_SUBDIR"
 
-cargo new "$TARGET" >/dev/null 2>&1
+echo "[axum] Generating into: $MAIN_DIR (project dir: $PROJECT_SUBDIR)"
+
+cargo new "$PROJECT_DIR" >/dev/null 2>&1
 
 # Merge skeleton overlays (do not overwrite Cargo.toml or src/main.rs per merge rules)
-bash "$SKEL_DIR/merge" "$SKEL_DIR" "$TARGET"
+bash "$SKEL_DIR/merge" "$SKEL_DIR" "$PROJECT_DIR"
+
+# Ensure Cargo.toml uses a stable edition supported by Docker base image
+if [[ -f "$PROJECT_DIR/Cargo.toml" ]]; then
+  sed -i '' 's/^edition *= *.*/edition = "2021"/' "$PROJECT_DIR/Cargo.toml" || true
+fi
 
 (
-  cd "$TARGET"
+  cd "$PROJECT_DIR"
   cargo fetch -q || true
 )
+
+# Create wrapper-level README, Makefile, and thin scripts
+bash "$COMMON_DIR/common-wrapper.sh" "$MAIN_DIR" "$PROJECT_SUBDIR" "Axum Service"
 
 echo "[axum] Done."

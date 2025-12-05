@@ -26,7 +26,10 @@ echo "[test_skel] Generating FastAPI DDD project in $TARGET..."
 rm -rf "$TARGET"
 "$SKEL_DIR/gen" "$TARGET"
 
-cd "$TARGET"
+MAIN_DIR="$TARGET"
+PROJECT_DIR="$MAIN_DIR/backend"
+
+cd "$PROJECT_DIR"
 
 . .venv/bin/activate
 
@@ -78,14 +81,17 @@ print('  OK: FastAPI liveness check passed')
 PY
 
 echo ""
-echo "[test_skel] Running project tests via ./test script..."
+echo "[test_skel] Running project tests via ./test script (wrapper in main dir)..."
+cd "$MAIN_DIR"
 ./test --quick || {
     echo "[test_skel] Quick tests failed, running smoke tests only..."
+    cd "$PROJECT_DIR"
     pytest core/tests/test_crud.py core/tests/test_pagination_behavior.py -q --tb=short 2>/dev/null || true
 }
 
 echo ""
-echo "[test_skel] Building Docker image via ./build script..."
+echo "[test_skel] Building Docker image via ./build script (wrapper in main dir)..."
+cd "$MAIN_DIR"
 ./build --tag=fastapi-ddd-test:latest
 
 echo ""

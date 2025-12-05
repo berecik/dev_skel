@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+COMMON_DIR="$SKEL_DIR/../_common"
 RAW_TARGET="${1:-}"
 
 if [[ -z "$RAW_TARGET" ]]; then
@@ -9,25 +10,33 @@ if [[ -z "$RAW_TARGET" ]]; then
   exit 1
 fi
 
+# MAIN_DIR is the wrapper directory; actual Node app lives in app/ inside it
 if [[ "$RAW_TARGET" = /* ]]; then
-  TARGET="$RAW_TARGET"
+  MAIN_DIR="$RAW_TARGET"
 else
-  TARGET="$(pwd)/$RAW_TARGET"
+  MAIN_DIR="$(pwd)/$RAW_TARGET"
 fi
 
-echo "[js] Generating into: $TARGET"
-mkdir -p "$TARGET"
+PROJECT_SUBDIR="app"
+PROJECT_DIR="$MAIN_DIR/$PROJECT_SUBDIR"
+
+echo "[js] Generating into: $MAIN_DIR (project dir: $PROJECT_SUBDIR)"
+mkdir -p "$PROJECT_DIR"
 
 (
-  cd "$TARGET"
+  cd "$PROJECT_DIR"
   npm init -y >/dev/null 2>&1
 )
 
-bash "$SKEL_DIR/merge" "$SKEL_DIR" "$TARGET"
+# Merge overlays into inner project directory
+bash "$SKEL_DIR/merge" "$SKEL_DIR" "$PROJECT_DIR"
 
 (
-  cd "$TARGET"
+  cd "$PROJECT_DIR"
   npm install >/dev/null 2>&1
 )
+
+# Create wrapper-level README, Makefile, and thin scripts
+bash "$COMMON_DIR/common-wrapper.sh" "$MAIN_DIR" "$PROJECT_SUBDIR" "Node App"
 
 echo "[js] Done."

@@ -91,49 +91,49 @@ test-generators: ## Test all generators by creating test projects
 test-gen-fastapi: ## Test FastAPI generator
 	@echo "$(YELLOW)>>> Testing FastAPI generator$(NC)"
 	@$(MAKE) gen-fastapi NAME=$(TEST_OUTPUT)/test-fastapi-ddd-app
-	@cd $(TEST_OUTPUT)/test-fastapi-ddd-app && . .venv/bin/activate && python -c "from app import get_app; from core.repository import AbstractRepository; print('FastAPI import OK')"
+	@cd $(TEST_OUTPUT)/test-fastapi-ddd-app/backend && . .venv/bin/activate && python -c "from app import get_app; from core.repository import AbstractRepository; print('FastAPI import OK')"
 	@echo "$(GREEN)FastAPI generator test passed$(NC)"
 
 test-gen-flask: ## Test Flask generator
 	@echo "$(YELLOW)>>> Testing Flask generator$(NC)"
 	@$(MAKE) gen-flask NAME=$(TEST_OUTPUT)/test-flask-app
-	@cd $(TEST_OUTPUT)/test-flask-app && . .venv/bin/activate && python -c "from flask import Flask; print('Flask import OK')"
+	@cd $(TEST_OUTPUT)/test-flask-app/backend && . .venv/bin/activate && python -c "from flask import Flask; print('Flask import OK')"
 	@echo "$(GREEN)Flask generator test passed$(NC)"
 
 test-gen-django: ## Test Django generator
 	@echo "$(YELLOW)>>> Testing Django generator$(NC)"
 	@$(MAKE) gen-django NAME=$(TEST_OUTPUT)/test-django-app
-	@cd $(TEST_OUTPUT)/test-django-app && . .venv/bin/activate && python -c "import django; print('Django import OK')"
+	@cd $(TEST_OUTPUT)/test-django-app/backend && . .venv/bin/activate && python -c "import django; print('Django import OK')"
 	@echo "$(GREEN)Django generator test passed$(NC)"
 
 test-gen-react: ## Test React+Vite generator
 	@echo "$(YELLOW)>>> Testing React+Vite generator$(NC)"
 	@$(MAKE) gen-react NAME=$(TEST_OUTPUT)/test-react-app
-	@cd $(TEST_OUTPUT)/test-react-app && npm run build
+	@cd $(TEST_OUTPUT)/test-react-app/frontend && npm run build
 	@echo "$(GREEN)React+Vite generator test passed$(NC)"
 
 test-gen-js: ## Test JavaScript generator
 	@echo "$(YELLOW)>>> Testing JavaScript generator$(NC)"
 	@$(MAKE) gen-js NAME=$(TEST_OUTPUT)/test-js-app
-	@cd $(TEST_OUTPUT)/test-js-app && node -e "console.log('Node.js OK')"
+	@cd $(TEST_OUTPUT)/test-js-app/app && node -e "console.log('Node.js OK')"
 	@echo "$(GREEN)JavaScript generator test passed$(NC)"
 
 test-gen-spring: ## Test Spring Boot generator
 	@echo "$(YELLOW)>>> Testing Spring Boot generator$(NC)"
 	@$(MAKE) gen-spring NAME=$(TEST_OUTPUT)/test-spring-app
-	@cd $(TEST_OUTPUT)/test-spring-app && mvn compile -q
+	@cd $(TEST_OUTPUT)/test-spring-app/service && mvn compile -q
 	@echo "$(GREEN)Spring Boot generator test passed$(NC)"
 
 test-gen-actix: ## Test Rust Actix generator
 	@echo "$(YELLOW)>>> Testing Rust Actix generator$(NC)"
 	@$(MAKE) gen-actix NAME=$(TEST_OUTPUT)/test-actix-app
-	@cd $(TEST_OUTPUT)/test-actix-app && cargo build --release 2>/dev/null
+	@cd $(TEST_OUTPUT)/test-actix-app/service && cargo build --release 2>/dev/null
 	@echo "$(GREEN)Rust Actix generator test passed$(NC)"
 
 test-gen-axum: ## Test Rust Axum generator
 	@echo "$(YELLOW)>>> Testing Rust Axum generator$(NC)"
 	@$(MAKE) gen-axum NAME=$(TEST_OUTPUT)/test-axum-app
-	@cd $(TEST_OUTPUT)/test-axum-app && cargo build --release 2>/dev/null
+	@cd $(TEST_OUTPUT)/test-axum-app/service && cargo build --release 2>/dev/null
 	@echo "$(GREEN)Rust Axum generator test passed$(NC)"
 
 #
