@@ -36,20 +36,28 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install global dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y make docker.io
+          sudo apt-get install -y python3-venv python3-pip build-essential pkg-config libssl-dev
 
-      - name: Start Docker service
+      - name: Install uv (Python package manager)
         run: |
-          sudo systemctl start docker || true
-          sudo usermod -aG docker "$USER" || true
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Install skeleton dependencies
+      - name: Verify dependencies
         run: |
-          chmod +x skel-deps
-          ./skel-deps --all
+          echo "=== Verifying installed dependencies ==="
+          python3 --version
+          pip3 --version || pip --version
+          node --version
+          npm --version
+          java -version
+          mvn -version
+          rustc --version
+          cargo --version
+          uv --version || echo "uv not in path yet"
 
       - name: Run maintenance test suite
         run: |

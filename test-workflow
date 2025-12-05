@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# Test GitHub workflow by pushing changes and monitoring the run
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+info() { echo -e "${GREEN}[INFO]${NC} $*"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+error() { echo -e "${RED}[ERROR]${NC} $*"; }
+header() { echo -e "${BLUE}=== $* ===${NC}"; }
+
+# Check if gh CLI is installed
+check_gh_cli() {
+  if ! command -v gh &>/dev/null; then
+    error "GitHub CLI (gh) is not installed."
+    echo ""
+    echo "Install it with:"
+    echo "  macOS:  brew install gh"
+    echo "  Ubuntu: sudo apt install gh"
+    echo ""
+    echo "Then authenticate with: gh auth login"
+    exit 1
+  fi
+
+  if ! gh auth status &>/dev/null; then
+    error "GitHub CLI is not authenticated."
+    echo "Run: gh auth login"
+    exit 1
+  fi
+}
+
+# Get repository info
+get_repo() {
+  gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null || {
+    error "Could not determine repository. Make sure you're in a git repo with a GitHub remote."
+    exit 1
+  }
+}
+
+# Trigger workflow by pushing current changes
+trigger_workflow() {
+  local repo="$1"
+  local branch
+  branch=$(git branch --show-current)
+
+  header "Triggering workflow"
+
+  # Check for uncommitted changes
+  if [[ -n $(git status --porcelain) ]]; then
+    info "Found uncommitted changes. Committing..."
+    git add -A
+    git commit -m "test: trigger workflow test
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+  else
+    info "No uncommitted changes."
+  fi
+
+  # Push to trigger workflow
+  info "Pushing to $branch..."
+  git push origin "$branch"
+
+  # Wait a moment for GitHub to register the push
+  info "Waiting for workflow to start..."
+  sleep 5
+}
+
+# Get the latest workflow run
+get_latest_run() {
+  local repo="$1"
+  gh run list --repo "$repo" --workflow=maintenance.yml --limit 1 --json databaseId,status,conclusion,headBranch,createdAt -q '.[0]'
+}
+
+# Watch workflow progress
+watch_workflow() {
+  local repo="$1"
+  local run_id="$2"
+
+  header "Watching workflow run #$run_id"
+
+  gh run watch "$run_id" --repo "$repo" --exit-status || {
+    local exit_code=$?
+    echo ""
+    error "Workflow failed!"
+    echo ""
+    header "Fetching logs for failed jobs"
+    gh run view "$run_id" --repo "$repo" --log-failed 2>/dev/null | tail -100 || true
+    return $exit_code
+  }
+
+  echo ""
+  info "Workflow completed successfully!"
+}
+
+# Main
+main() {
+  header "GitHub Workflow Tester"
+
+  check_gh_cli
+
+  local repo
+  repo=$(get_repo)
+  info "Repository: $repo"
+
+  # Check if workflow file exists
+  if [[ ! -f ".github/workflows/maintenance.yml" ]]; then
+    error "Workflow file not found: .github/workflows/maintenance.yml"
+    exit 1
+  fi
+
+  trigger_workflow "$repo"
+
+  # Get latest run
+  local run_info
+  run_info=$(get_latest_run "$repo")
+
+  if [[ -z "$run_info" ]]; then
+    error "Could not find workflow run. The workflow might not have triggered."
+    echo "Check manually at: https://github.com/$repo/actions"
+    exit 1
+  fi
+
+  local run_id
+  run_id=$(echo "$run_info" | jq -r '.databaseId')
+
+  info "Found workflow run: #$run_id"
+  echo "View at: https://github.com/$repo/actions/runs/$run_id"
+  echo ""
+
+  watch_workflow "$repo" "$run_id"
+}
+
+main "$@"
