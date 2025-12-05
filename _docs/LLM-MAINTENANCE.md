@@ -6,6 +6,18 @@ Instructions for AI assistants (Claude, GPT, Gemini, etc.) maintaining this proj
 
 This is a **Makefile-based project generator system**. It creates new projects from skeleton templates. The architecture follows a delegation pattern where the main Makefile calls skeleton-specific Makefiles. Each skeleton also provides `gen` and `test` helper scripts, and an executable `merge` script used during generation.
 
+LLM assistants (including Junie) also have a small hierarchy of rules
+documents:
+
+1. Global rules: `_docs/JUNIE-RULES.md` (loaded first).
+2. General maintenance guide: this file (`_docs/LLM-MAINTENANCE.md`).
+3. Per-skeleton rules: `_skels/<name>/JUNIE-RULES.md`.
+4. Per-skeleton docs under `_docs/` (for example `python-fastapi-skel.md`).
+
+When maintaining this project, always read `_docs/JUNIE-RULES.md` and this
+file first, then load any skeleton-specific rules file for the skeleton you
+are working on.
+
 ## Key Files to Understand
 
 Before making changes, read these files:
