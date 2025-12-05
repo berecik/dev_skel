@@ -14,9 +14,19 @@ Each skeleton is a complete, working project template that can be used to bootst
   - From repo root: `make gen-<name> NAME=<target-path>` (delegates to the skeleton's `gen` script)
   - From anywhere: `_bin/skel-gen <skel-name> <target-path>` (prefers per-skeleton `gen` script)
   - From skeleton dir: `bash ./gen <target-path>` (the `gen` script contains ALL generation logic)
+- **Generated layout (wrapper + inner project)**
+  - The `NAME` / `target-path` you pass is the **wrapper directory** (`main_dir`).
+  - The real framework-specific project lives in a per-skeleton subdirectory (`project_dir`) inside `main_dir`:
+    - Python backends (FastAPI, Flask, Django): `backend/`
+    - React frontend (ts-react-skel): `frontend/`
+    - Node.js (js-skel): `app/`
+    - Java Spring, Rust Actix, Rust Axum: `service/`
+  - A common wrapper script (`_skels/_common/common-wrapper.sh`) creates in `main_dir`:
+    - A generic `README.md` and `Makefile`.
+    - Thin wrapper scripts (`./run`, `./test`, `./build`, `./stop`, `./install-deps`, etc.) that **forward all arguments** to matching scripts in `project_dir/`.
 - **Testing**
   - From skeleton dir: `make test` which runs `bash ./test`
-  - E2E skeleton tests: `./test_skel` generates into a temporary directory, runs tests, and builds Docker image
+  - E2E skeleton tests: `./test_skel` generates into a temporary directory, uses the wrapper layout, runs tests, and builds Docker image
 - **Build/Run/Stop**
   - `./build` - Build Docker image (with options like `--no-cache`, `--tag=`, framework-specific like `--jar`, `--release`, `--local`)
   - `./run` - Run development server (modes: `dev`, `prod`, `docker`)

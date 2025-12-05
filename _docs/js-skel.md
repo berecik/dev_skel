@@ -42,15 +42,29 @@ From skeleton dir:
 ./gen <target-path>
 ```
 
+## Generated Project Layout
+
+When you generate a JS/Node.js project, the target path is the **wrapper directory** (`main_dir`) and the real Node app lives in an inner `app/` directory (`project_dir`):
+
+```text
+myapp/
+  README.md      # generic wrapper README (created by common-wrapper.sh)
+  Makefile       # generic wrapper Makefile
+  run test ...   # thin wrapper scripts that call ./app/run, ./app/test, ...
+  app/           # real Node.js project (package.json, src/, etc.)
+```
+
+Wrapper scripts in `myapp/` forward all arguments to the corresponding scripts in `app/`.
+
 ## Generated Project Usage
 
 ```bash
 cd myapp
 
-# Run tests
+# Run tests (delegates to ./app/test)
 ./test
 
-# Start development server
+# Start development server (delegates to ./app/run)
 ./run dev
 
 # Start production server

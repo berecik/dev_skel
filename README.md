@@ -191,14 +191,14 @@ Detailed documentation is available in the `_docs/` directory:
 ### Create and Test a New FastAPI Project
 
 ```bash
-# Generate the project
+# Generate the project (wrapper directory)
 make gen-fastapi NAME=my-api
 cd my-api
 
-# Run tests
+# Run tests via wrapper script (delegates to ./backend/test)
 ./test
 
-# Start development server
+# Start development server (delegates to ./backend/run)
 ./run dev
 
 # Or run in Docker
@@ -209,26 +209,30 @@ cd my-api
 ./stop
 ```
 
+The real FastAPI project lives under `./backend/` inside `my-api/`.
+
 ### Create a New React Frontend
 
 ```bash
-# Generate the project
+# Generate the project (wrapper directory)
 make gen-react NAME=my-frontend
 cd my-frontend
 
-# Run tests
+# Run tests via wrapper script (delegates to ./frontend/test)
 ./test
 
-# Start development server
+# Start development server (delegates to ./frontend/run or npm scripts)
 ./run dev
 
-# Build for production
+# Build for production (local Vite build)
 ./build --local
 
 # Or build and run in Docker
 ./build
 ./run docker
 ```
+
+The real React app lives under `./frontend/` inside `my-frontend/`.
 
 ### Generated Project Scripts
 
@@ -240,6 +244,8 @@ Every generated project includes these scripts:
 | `./build` | Build Docker image (or local build with `--local`/`--jar`/`--release`) |
 | `./run` | Run server (modes: `dev`, `prod`, `docker`) |
 | `./stop` | Stop running Docker containers |
+
+These scripts live in the top-level wrapper directory you passed as `NAME` and **forward all arguments** to matching scripts in the inner project directory (`backend/`, `frontend/`, `app/`, or `service/`).
 
 Run any script with `-h` or `--help` to see available options.
 

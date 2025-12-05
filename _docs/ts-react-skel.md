@@ -69,19 +69,33 @@ From skeleton dir:
 | `--template` | Vite template (defaults to react-swc-ts) |
 | `--no-install` | Skip dependency installation |
 
+## Generated Project Layout
+
+When you generate a TS React project, the target path is the **wrapper directory** (`main_dir`) and the real Vite app lives in an inner `frontend/` directory (`project_dir`):
+
+```text
+myapp/
+  README.md      # generic wrapper README (created by common-wrapper.sh)
+  Makefile       # generic wrapper Makefile
+  run test ...   # thin wrapper scripts that call ./frontend/run, ./frontend/test, ... (or underlying npm scripts)
+  frontend/      # real Vite React project (package.json, src/, etc.)
+```
+
+Wrapper scripts in `myapp/` forward all arguments to the corresponding scripts in `frontend/`.
+
 ## Generated Project Usage
 
 ```bash
 cd myapp
 
-# Run tests
+# Run tests (delegates to ./frontend/test / npm test)
 ./test
 
-# Start development server
-npm run dev
+# Start development server (delegates to ./frontend/run / npm run dev)
+./run dev
 
-# Build for production
-npm run build
+# Build for production (local Vite build)
+./build --local
 
 # Preview production build
 npm run preview

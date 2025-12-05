@@ -49,15 +49,29 @@ From skeleton dir:
 ./gen <target-path>
 ```
 
+## Generated Project Layout
+
+When you generate an Axum service, the target path is the **wrapper directory** (`main_dir`) and the real service lives in an inner `service/` directory (`project_dir`):
+
+```text
+myapp/
+  README.md      # generic wrapper README (created by common-wrapper.sh)
+  Makefile       # generic wrapper Makefile
+  run test ...   # thin wrapper scripts that call ./service/run, ./service/test, ...
+  service/       # real Axum project (Cargo.toml, src/, etc.)
+```
+
+Wrapper scripts in `myapp/` forward all arguments to the corresponding scripts in `service/`.
+
 ## Generated Project Usage
 
 ```bash
 cd myapp
 
-# Run tests
+# Run tests (delegates to ./service/test / cargo test)
 ./test
 
-# Start development server
+# Start development server (delegates to ./service/run)
 ./run dev
 
 # Start production server (release binary)

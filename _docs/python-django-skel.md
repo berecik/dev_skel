@@ -53,15 +53,29 @@ From skeleton dir:
 ./gen <target-path>
 ```
 
+## Generated Project Layout
+
+When you generate a Django project, the target path is the **wrapper directory** (`main_dir`) and the real project lives in an inner `backend/` directory (`project_dir`):
+
+```text
+myapp/
+  README.md      # generic wrapper README (created by common-wrapper.sh)
+  Makefile       # generic wrapper Makefile
+  run test ...   # thin wrapper scripts that call ./backend/run, ./backend/test, ...
+  backend/       # real Django project (venv, manage.py, settings, etc.)
+```
+
+Wrapper scripts in `myapp/` forward all arguments to the corresponding scripts in `backend/`.
+
 ## Generated Project Usage
 
 ```bash
 cd myapp
 
-# Run tests
+# Run tests (delegates to ./backend/test)
 ./test
 
-# Start development server
+# Start development server (delegates to ./backend/run)
 ./run dev
 
 # Start production server (gunicorn)

@@ -8,14 +8,11 @@ A Makefile-based project generator system that creates new projects from skeleto
 .
 ├── Makefile              # Main orchestration Makefile
 ├── skel-deps             # Dependency installer for all skeletons
+├── maintenance           # One-shot maintenance test runner (make clean-test, make test-generators, ./test)
+├── test                  # Root script that runs all skeleton e2e tests
 ├── _bin/                 # Helper tools
 ├── _skels/               # Skeleton templates directory
 │   ├── python-fastapi-skel/
-│   │   ├── deps          # System dependency installer
-│   │   ├── install-deps  # Project dependency installer (copied to generated projects)
-│   │   ├── gen           # Project generator
-│   │   ├── merge         # File merger
-│   │   └── test          # Test script
 │   ├── python-flask-skel/
 │   ├── python-django-skel/
 │   ├── ts-react-skel/
@@ -96,26 +93,48 @@ _bin/skel-gen python-fastapi-skel ~/work/myapi
 _bin/skel-gen ts-react-skel ./frontend
 ```
 
+### Generated Project Layout
+
+Every generator treats the user-provided path as a **wrapper directory** (`main_dir`) and creates the real framework-specific project inside a **project subdirectory** (`project_dir`) derived from the skeleton:
+
+- Python backends (FastAPI, Flask, Django): `backend/`
+- React frontend (ts-react-skel): `frontend/`
+- Node.js (js-skel): `app/`
+- Java Spring / Rust services: `service/`
+
+Example (FastAPI):
+
+```text
+my-api/
+  README.md      # generic wrapper README
+  Makefile       # generic wrapper Makefile
+  run test ...   # thin wrapper scripts
+  backend/       # real FastAPI project
+```
+
+Wrapper-level scripts like `./run`, `./test`, `./build`, `./stop` live in `main_dir` and **forward all arguments** to the corresponding scripts in `project_dir`.
+
 ### Install Project Dependencies
 
-After generating a project, install its dependencies using the included `install-deps` script:
+After generating a project, install its dependencies using the included `install-deps` script from the wrapper directory:
 
 ```bash
 # Generate a project
 make gen-fastapi NAME=myapp
 cd myapp
 
-# Install project dependencies
+# Install project dependencies (delegates into backend/install-deps)
 ./install-deps
 
-# For Python projects, activate the virtual environment
+# For Python projects, activate the virtual environment from project_dir
+cd backend
 source .venv/bin/activate
 
 # Start development
 uvicorn app.main:app --reload
 ```
 
-Each generated project includes an `install-deps` script that:
+Each generated project includes an `install-deps` script (in `project_dir`, plus a wrapper in `main_dir`) that:
 - **Python projects**: Creates virtual environment, installs from requirements.txt
 - **Node.js projects**: Runs npm install
 - **Java projects**: Runs Maven dependency resolution and installation
@@ -129,13 +148,30 @@ See [DEPENDENCIES.md](DEPENDENCIES.md) for more information.
 make test-generators
 ```
 
-### Run a skeleton's E2E tests
+This creates wrapper+inner projects under `_test_projects/` and performs basic import/build checks inside the appropriate `project_dir` (for example, `backend/`, `frontend/`, `service/`).
 
-```bash
-# From the skeleton directory
-cd _skels/python-fastapi-skel
-make test   # calls: bash ./test
-```
+### Run Skeleton E2E Tests and Maintenance Suite
+
+- Run all skeleton E2E tests:
+
+  ```bash
+  ./test
+  ```
+
+  This calls each skeleton's `test_skel` script, which generates a temporary project using the wrapper layout and runs its tests plus Docker build checks.
+
+- Run the full maintenance workflow (used by CI):
+
+  ```bash
+  ./maintenance
+  ```
+
+  This executes:
+  - `make clean-test`
+  - `make test-generators`
+  - `./test`
+
+  The GitHub Actions workflow `.github/workflows/maintenance.yml` runs this same script on pushes and pull requests to `master`.
 
 ### Show Available Commands
 
