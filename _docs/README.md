@@ -1,6 +1,8 @@
-# Developer Projects - Skeleton Generator
+# Developer Projects – Multi‑Service Skeleton Generator
 
-A Makefile-based project generator system that creates new projects from skeleton templates. Supports multiple languages and frameworks including Python (FastAPI, Flask, Django), TypeScript (Vite+React), JavaScript (Node.js), Java (Spring Boot), and Rust (Actix-web, Axum).
+A Makefile-based project generator system that creates **multi‑service projects** from reusable skeleton templates.
+
+You can start a project with a backend (Java Spring, FastAPI, or Django) and then add more services into the **same wrapper directory** – for example a React frontend, a Rust Actix service as an authorisation layer, a Rust Axum extra‑fast API, or a Flutter mobile/desktop application – without overwriting existing code. The `_bin/skel-gen` tool takes care of creating unique service subdirectories (like `backend-1/`, `frontend-1/`, `service-1/`, …) inside one project.
 
 ## Directory Structure
 
@@ -51,36 +53,28 @@ Supported: macOS (Homebrew), Ubuntu/Debian (apt), Arch Linux (pacman), Fedora/RH
 
 See [DEPENDENCIES.md](DEPENDENCIES.md) for detailed information.
 
-### Generate a New Project
+### Generate a New Project (Wrapper + Services)
 
-Two equivalent ways:
+There are two equivalent ways to generate services:
 
-1) From the repo root via the main Makefile targets
+1. From the repo root via the main Makefile targets.
+2. From anywhere using the relocatable `_bin/skel-gen` tool.
 
 ```bash
-# Python FastAPI
-make gen-fastapi NAME=myapp
+# First backend service in a new wrapper (FastAPI)
+make gen-fastapi NAME=myproj
 
-# Python Flask
-make gen-flask NAME=myapp
+# First backend service in a new wrapper (Django)
+make gen-django NAME=myproj
 
-# Python Django
-make gen-django NAME=myapp
+# Add a second backend service to the *same* wrapper
+make gen-fastapi NAME=myproj
 
-# TypeScript React+Vite
-make gen-react NAME=myapp
+# Add a React frontend service to the same wrapper
+make gen-react NAME=myproj
 
-# JavaScript/Node.js
-make gen-js NAME=myapp
-
-# Java Spring Boot
-make gen-spring NAME=myapp
-
-# Rust Actix-web
-make gen-actix NAME=myapp
-
-# Rust Axum
-make gen-axum NAME=myapp
+# Add a Rust Actix quick API to the same wrapper
+make gen-actix NAME=myproj
 ```
 
 2) With the generator tool (relocatable) from anywhere
@@ -88,39 +82,49 @@ make gen-axum NAME=myapp
 ```bash
 _bin/skel-gen <skel_type> <proj_name> [service_in_proj_name]
 
-# Examples
-_bin/skel-gen python-fastapi-skel my-api            # → $PWD/my-api/backend/...
-_bin/skel-gen python-fastapi-skel my-api api       # → $PWD/my-api/api/...
-_bin/skel-gen ts-react-skel frontend               # → $PWD/frontend/frontend/...
-_bin/skel-gen ts-react-skel frontend ui            # → $PWD/frontend/ui/...
+# Create a new project wrapper with its first FastAPI backend
+_bin/skel-gen python-fastapi-skel myproj           # → $PWD/myproj/backend-1/...
+
+# Add another backend service into the same wrapper
+_bin/skel-gen python-fastapi-skel myproj           # → $PWD/myproj/backend-2/...
+
+# Add a React frontend service
+_bin/skel-gen ts-react-skel myproj                 # → $PWD/myproj/frontend-1/...
+
+# Add a Rust Actix quick API service
+_bin/skel-gen rust-actix-skel myproj               # → $PWD/myproj/service-1/...
 ```
 
 Parameters:
 
 - `skel_type` – skeleton directory name under `_skels/` (for example `python-fastapi-skel`, `ts-react-skel`).
-- `proj_name` – **leaf** directory name (no `/`), created under the current working directory.
-- `service_in_proj_name` – optional inner service directory name; if omitted, each skeleton uses its historical default (`backend`, `service`, `app`, `frontend`, etc.).
+- `proj_name` – **leaf** wrapper directory name (no `/`), created under the current working directory.
+- `service_in_proj_name` – optional **service directory base name** inside the wrapper. If omitted, a generic base is used per skeleton (`backend`, `frontend`, or `service`). Dev Skel automatically appends numeric suffixes (`-1`, `-2`, …) so that service directory names are unique.
 
 ### Generated Project Layout
 
-Every generator treats the user-provided path as a **wrapper directory** (`main_dir`) and creates the real framework-specific project inside a **project subdirectory** (`project_dir`) derived from the skeleton:
+Every generator treats the user-provided path as a **wrapper directory** (`main_dir`) and creates the real framework-specific project inside one or more **service subdirectories** (`project_dir`) inside `main_dir`.
 
-- Python backends (FastAPI, Flask, Django): `backend/`
-- React frontend (ts-react-skel): `frontend/`
-- Node.js (js-skel): `app/`
-- Java Spring / Rust services: `service/`
+Typical service directories:
 
-Example (FastAPI):
+- Python backends (FastAPI, Flask, Django): `backend-1/`, `backend-2/`, …
+- React frontend (ts-react-skel): `frontend-1/`, `frontend-2/`, …
+- Node.js (js-skel): `service-1/` or `app-1/`
+- Java Spring / Rust services: `service-1/`, `service-2/`, …
+
+Example (FastAPI + React + Actix):
 
 ```text
-my-api/
+myproj/
   README.md      # generic wrapper README
   Makefile       # generic wrapper Makefile
-  run test ...   # thin wrapper scripts
-  backend/       # real FastAPI project
+  run test ...   # thin wrapper scripts (forward into a chosen service)
+  backend-1/     # real FastAPI backend
+  frontend-1/    # real React frontend
+  service-1/     # real Rust Actix quick API
 ```
 
-Wrapper-level scripts like `./run`, `./test`, `./build`, `./stop` live in `main_dir` and **forward all arguments** to the corresponding scripts in `project_dir`.
+Wrapper-level scripts like `./run`, `./test`, `./build`, `./stop` live in `main_dir` and **forward all arguments** to the scripts in a selected `project_dir`.
 
 ### Install Project Dependencies
 

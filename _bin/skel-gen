@@ -42,7 +42,7 @@ fi
 
 SKEL_NAME="$1"
 PROJ_NAME="$2"
-SERVICE_NAME="${3:-}"
+SERVICE_NAME_RAW="${3:-}"
 
 if [[ "$PROJ_NAME" == *"/"* ]]; then
   echo "Error: proj_name must be a leaf directory name (no / characters): $PROJ_NAME" >&2
@@ -62,12 +62,54 @@ fi
 
 # Compute absolute main project directory from leaf proj_name
 TARGET="$(pwd)/$PROJ_NAME"
+MAIN_DIR="$TARGET"
 
 # Ensure parent exists for generators that expect it
 PARENT_DIR="$(dirname "$TARGET")"
 mkdir -p "$PARENT_DIR"
 
-echo "Generating from skeleton '$SKEL_NAME' into: $TARGET (service: ${SERVICE_NAME:-<default>})"
+########################################
+# Resolve service directory name
+########################################
+
+# Decide generic base service name when user did not explicitly provide one
+GENERIC_BASE=""
+case "$SKEL_NAME" in
+  python-fastapi-skel|python-django-skel)
+    GENERIC_BASE="backend";;
+  ts-react-skel)
+    GENERIC_BASE="frontend";;
+  *)
+    GENERIC_BASE="service";;
+esac
+
+if [[ -n "$SERVICE_NAME_RAW" ]]; then
+  # User provided an explicit service name. Use it as a base and
+  # append a numeric suffix if that directory already exists.
+  base="$SERVICE_NAME_RAW"
+  SERVICE_SUBDIR="$base"
+
+  if [[ -d "$MAIN_DIR" ]]; then
+    n=1
+    # If "$base" exists, try "$base-1", "$base-2", ... until free.
+    while [[ -d "$MAIN_DIR/$SERVICE_SUBDIR" ]]; do
+      SERVICE_SUBDIR="${base}-${n}"
+      n=$((n + 1))
+    done
+  fi
+else
+  # No explicit service name given: choose a unique, suffixed generic name
+  # Pattern: <generic>-N, where N starts from 1 and increments until free.
+  base="$GENERIC_BASE"
+  n=1
+  SERVICE_SUBDIR="${base}-${n}"
+  while [[ -d "$MAIN_DIR/$SERVICE_SUBDIR" ]]; do
+    n=$((n + 1))
+    SERVICE_SUBDIR="${base}-${n}"
+  done
+fi
+
+echo "Generating from skeleton '$SKEL_NAME' into: $TARGET (service: $SERVICE_SUBDIR)"
 
 if ! command -v make >/dev/null 2>&1; then
   echo "Error: make is required to run skeleton generators." >&2
@@ -76,17 +118,9 @@ fi
 
 # Prefer per-skeleton gen script if present; fallback to Makefile target
 if [[ -f "$SKEL_PATH/gen" ]]; then
-  if [[ -n "$SERVICE_NAME" ]]; then
-    bash "$SKEL_PATH/gen" "$TARGET" "$SERVICE_NAME"
-  else
-    bash "$SKEL_PATH/gen" "$TARGET"
-  fi
+  bash "$SKEL_PATH/gen" "$TARGET" "$SERVICE_SUBDIR"
 else
-  if [[ -n "$SERVICE_NAME" ]]; then
-    make -C "$SKEL_PATH" gen NAME="$TARGET" SERVICE="$SERVICE_NAME"
-  else
-    make -C "$SKEL_PATH" gen NAME="$TARGET"
-  fi
+  make -C "$SKEL_PATH" gen NAME="$TARGET" SERVICE="$SERVICE_SUBDIR"
 fi
 
 echo "Done."

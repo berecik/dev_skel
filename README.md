@@ -1,34 +1,50 @@
-# Dev Skel - Multi-Framework Project Skeleton Generator
+# Dev Skel – Multi‑Service Project Skeleton Generator
 
-A curated collection of production-ready project skeletons for rapid development across multiple languages and frameworks. Generate new projects with best practices, testing infrastructure, and development tooling already configured.
+Dev Skel is a collection of opinionated project skeletons that makes it easy to create **multi‑service projects**.
 
-## Features
+You start by generating a wrapper project with a backend (Java Spring, FastAPI, or Django). Later you can add more services into the **same project** – for example a React frontend, a Rust Actix service as an authorisation layer, a Rust Axum extra‑fast API, or a Flutter mobile/desktop application – without overwriting what you already have.
 
-- **Multiple Framework Support**: 8 different skeleton templates covering popular frameworks
-- **Production Ready**: Each skeleton includes testing, linting, and build configuration
-- **Rapid Setup**: Generate new projects in seconds with a single command
-- **Makefile Automation**: Comprehensive Makefile for project generation and testing
-- **Easy Deployment**: Install scripts to sync skeletons to your development directory
+Each skeleton ships with best‑practice defaults (tests, linting, Docker build, dev tooling). The `_bin/skel-gen` tool and the main `Makefile` orchestrate how these services are created and wired into a single project directory.
 
-## Supported Frameworks
+## Core Ideas
 
-### Python
-- **FastAPI** - Modern async web framework with automatic OpenAPI documentation
-- **Flask** - Lightweight WSGI web application framework
-- **Django** - High-level web framework with batteries included
+- **One project, many services**: A project directory is a **wrapper** that can host multiple services (backend(s), frontend(s), worker APIs, etc.).
+- **Service subdirectories**: Each service lives in its own subdirectory inside the wrapper, such as `backend-1/`, `backend-2/`, `frontend-1/`, `actix-api-1/` (names are generated automatically and kept unique).
+- **Composable skeletons**: You can mix and match skeletons – e.g. FastAPI or Django backend plus React frontend plus Actix fast API – in one wrapper.
+- **Safe re‑generation**: Re‑running a skeleton against an existing wrapper **adds a new service** instead of overwriting an existing one.
+- **Common wrapper UX**: The wrapper directory gets a generic `README.md`, `Makefile`, and thin scripts (`./run`, `./test`, `./build`, `./stop`, `./install-deps`, …) that delegate into the selected service.
 
-### JavaScript/TypeScript
-- **Vite + React** - Fast modern frontend with TypeScript and React 18
-- **Node.js** - JavaScript runtime for backend development
+## Current Capabilities
 
-### Java
-- **Spring Boot** - Enterprise-grade application framework with Spring ecosystem
+Today Dev Skel focuses on these building blocks:
 
-### Rust
-- **Actix-web** - Powerful, pragmatic, and fast web framework
-- **Axum** - Ergonomic and modular web framework built with Tokio
+### Backends (Python)
 
-## Quick Start
+- **FastAPI** (`python-fastapi-skel`) – async web API with a DDD‑style layout and automatic OpenAPI docs.
+- **Django** (`python-django-skel`) – classic Django backend with batteries included.
+- **Flask** (`python-flask-skel`) – lightweight WSGI backend.
+
+### Frontends (TypeScript/JavaScript)
+
+- **React + Vite + TypeScript** (`ts-react-skel`) – modern SPA frontend with Vitest, ESLint, Prettier.
+- **Node.js backend / tools** (`js-skel`) – plain Node.js projects.
+
+### Other backends
+
+- **Java Spring Boot** (`java-spring-skel`) – production‑grade JVM backend.
+
+### Rust quick APIs / services
+
+- **Actix‑web** (`rust-actix-skel`) – fast Rust HTTP services (ideal for quick APIs or edge services).
+- **Axum** (`rust-axum-skel`) – ergonomic Rust web framework on top of Tokio.
+
+You can generate any combination of these in a single project wrapper. The recommended starting points right now are:
+
+- `python-fastapi-skel` or `python-django-skel` for the main backend.
+- `ts-react-skel` for the main frontend.
+- `rust-actix-skel` for additional quick APIs.
+
+## Quick Start – Installation
 
 ### Install System Dependencies
 
@@ -51,7 +67,7 @@ Supported systems: macOS (Homebrew), Ubuntu/Debian (apt), Arch Linux (pacman), F
 
 See [DEPENDENCIES.md](_docs/DEPENDENCIES.md) for detailed information.
 
-### Install or Update locally
+### Install or Update Dev Skel Locally
 
 Use the provided helper scripts in `_bin/`:
 
@@ -66,55 +82,67 @@ _bin/update-dev-skel
 _bin/sync-dev-skel
 ```
 
-### Generate a New Project
+## Generate Multi‑Service Projects
 
-Two equivalent ways:
+There are two equivalent ways to generate services:
 
-1) From the repo root via the main Makefile targets
+1. From the repo root via the main `Makefile` targets.
+2. From anywhere using the relocatable `_bin/skel-gen` tool.
+
+### 1) From the repo root via Makefile targets
 
 ```bash
-# Python FastAPI
-make gen-fastapi NAME=myapp
+# First backend service in a new wrapper (FastAPI)
+make gen-fastapi NAME=myproj
 
-# Python Flask
-make gen-flask NAME=myapp
+# First backend service in a new wrapper (Django)
+make gen-django NAME=myproj
 
-# Python Django
-make gen-django NAME=myapp
+# Add a second backend service to the *same* wrapper
+# (will auto-pick backend-2 as service directory)
+make gen-fastapi NAME=myproj
 
-# TypeScript React+Vite
-make gen-react NAME=myapp
+# Add a React frontend service to the same wrapper
+make gen-react NAME=myproj
 
-# JavaScript/Node.js
-make gen-js NAME=myapp
-
-# Java Spring Boot
-make gen-spring NAME=myapp
-
-# Rust Actix-web
-make gen-actix NAME=myapp
-
-# Rust Axum
-make gen-axum NAME=myapp
+# Add a Rust Actix quick API to the same wrapper
+make gen-actix NAME=myproj
 ```
 
-2) With the generator tool (relocatable) from anywhere
+### 2) Using `_bin/skel-gen` from anywhere
 
 ```bash
 _bin/skel-gen <skel_type> <proj_name> [service_in_proj_name]
 
-# Examples
-_bin/skel-gen python-fastapi-skel my-api            # → $PWD/my-api/backend/...
-_bin/skel-gen python-fastapi-skel my-api api       # → $PWD/my-api/api/...
-_bin/skel-gen ts-react-skel frontend               # → $PWD/frontend/frontend/...
-_bin/skel-gen ts-react-skel frontend ui            # → $PWD/frontend/ui/...
+# Create a new project wrapper with its first FastAPI backend
+_bin/skel-gen python-fastapi-skel myproj           # → $PWD/myproj/backend-1/...
+
+# Add another backend service into the same wrapper
+_bin/skel-gen python-fastapi-skel myproj           # → $PWD/myproj/backend-2/...
+
+# Add a Django backend service with an explicit name (auto-suffixed if taken)
+_bin/skel-gen python-django-skel myproj billing    # → $PWD/myproj/billing/ or billing-1/...
+
+# Add a React frontend service (Vite + React + TS) to the same wrapper
+_bin/skel-gen ts-react-skel myproj                 # → $PWD/myproj/frontend-1/...
+
+# Add a Rust Actix quick API service to the same wrapper
+_bin/skel-gen rust-actix-skel myproj               # → $PWD/myproj/service-1/...
 ```
 
-Where:
+Parameters:
 
-- `skel_type` is the skeleton directory name under `_skels/` (for example `python-fastapi-skel`).
-- `proj_name` is a **leaf directory name** (no `/`) created under the current working directory.
-- `service_in_proj_name` is an optional inner service directory name; if omitted, each skeleton uses its default (`backend`, `service`, `app`, `frontend`, etc.).
+- `skel_type` – skeleton directory name under `_skels/` (for example `python-fastapi-skel`, `ts-react-skel`).
+- `proj_name` – **leaf** wrapper directory name (no `/`), created under the current working directory.
+- `service_in_proj_name` – optional **service directory base name** inside the wrapper. If omitted, a generic base is used per skeleton:
+  - FastAPI/Django: `backend`
+  - React: `frontend`
+  - Others: `service`
+
+Dev Skel automatically ensures that the service directory name is unique **within the project**:
+
+- If you pass no service name, you get `backend-1`, `backend-2`, `frontend-1`, `service-1`, etc.
+- If you pass an explicit name (e.g. `api`) and `api/` already exists, Dev Skel will pick `api-1/`, `api-2/`, … instead of failing.
 
 ## Makefile Commands
 
@@ -137,7 +165,7 @@ Each skeleton has a `test` script that:
 - `make clean-all` - Clean all skeleton projects
 - `make help` - Show all available commands
 
-## Directory Structure
+## Repository Layout
 
 ```
 dev_skel/
@@ -149,15 +177,6 @@ dev_skel/
 ├── .gitignore                # Git ignore patterns
 ├── _skels/                   # Skeleton templates
 │   ├── python-fastapi-skel/
-│   │   ├── deps              # System dependency installer
-│   │   ├── install-deps      # Project dependency installer (copied to generated projects)
-│   │   ├── gen               # Project generator
-│   │   ├── merge             # File merging script
-│   │   ├── test              # Test script (for generated projects)
-│   │   ├── test_skel         # Skeleton e2e test script
-│   │   ├── build             # Build script (Docker image)
-│   │   ├── run               # Run script (dev/prod/docker modes)
-│   │   └── stop              # Stop script (stop services)
 │   ├── python-flask-skel/
 │   ├── python-django-skel/
 │   ├── ts-react-skel/
@@ -196,66 +215,56 @@ Detailed documentation is available in the `_docs/` directory:
 
 ## Common Workflows
 
-### Create and Test a New FastAPI Project
+### Create and Test a New Multi‑Service Project (FastAPI + React + Actix)
 
 ```bash
-# Generate the project (wrapper directory)
-make gen-fastapi NAME=my-api
-cd my-api
+# 1) Create wrapper + first backend (FastAPI)
+make gen-fastapi NAME=myproj
+cd myproj
 
-# Run tests via wrapper script (delegates to ./backend/test)
+# This created backend-1/ inside the wrapper
+ls
+# README.md  Makefile  run  test  build  stop  install-deps  backend-1/
+
+# 2) Add a React frontend as another service
+make gen-react NAME=myproj
+
+ls
+# README.md  Makefile  run  test  build  stop  install-deps  backend-1/  frontend-1/
+
+# 3) Add a Rust Actix quick API service
+make gen-actix NAME=myproj
+
+ls
+# ... backend-1/  frontend-1/  service-1/
+
+# 4) Run tests for the currently selected service (via wrapper script)
 ./test
 
-# Start development server (delegates to ./backend/run)
+# 5) Run the dev server (delegates to the inner backend/frontend/run script)
 ./run dev
 
-# Or run in Docker
-./build
-./run docker
-
-# Stop services
-./stop
-```
-
-The real FastAPI project lives under `./backend/` inside `my-api/`.
-
-### Create a New React Frontend
-
-```bash
-# Generate the project (wrapper directory)
-make gen-react NAME=my-frontend
-cd my-frontend
-
-# Run tests via wrapper script (delegates to ./frontend/test)
-./test
-
-# Start development server (delegates to ./frontend/run or npm scripts)
-./run dev
-
-# Build for production (local Vite build)
-./build --local
-
-# Or build and run in Docker
+# 6) Build and run via Docker (if supported by the active service)
 ./build
 ./run docker
 ```
 
-The real React app lives under `./frontend/` inside `my-frontend/`.
+Each inner service directory (`backend-1/`, `frontend-1/`, `service-1/`, etc.) contains its own framework‑specific `README.md`, configuration, and scripts. The wrapper just provides a unified entrypoint so you can work with the project as a whole.
 
-### Generated Project Scripts
+### Wrapper‑Level Scripts
 
-Every generated project includes these scripts:
+Every generated project wrapper includes these scripts:
 
 | Script | Description |
 |--------|-------------|
-| `./test` | Run project tests |
-| `./build` | Build Docker image (or local build with `--local`/`--jar`/`--release`) |
-| `./run` | Run server (modes: `dev`, `prod`, `docker`) |
-| `./stop` | Stop running Docker containers |
+| `./test` | Run project tests for the active service |
+| `./build` | Build Docker image (or local build with `--local`/`--jar`/`--release`) for the active service |
+| `./run` | Run server for the active service (modes: `dev`, `prod`, `docker`) |
+| `./stop` | Stop running Docker containers for the active service |
 
-These scripts live in the top-level wrapper directory you passed as `NAME` and **forward all arguments** to matching scripts in the inner project directory (`backend/`, `frontend/`, `app/`, or `service/`).
+These scripts live in the top‑level wrapper directory you passed as `NAME` and **forward all arguments** to matching scripts in a chosen inner service directory (for example `backend-1/`, `frontend-1/`, `service-1/`).
 
-Run any script with `-h` or `--help` to see available options.
+Run any script with `-h` or `--help` to see available options provided by the underlying skeleton.
 
 ### Test All Generators
 
@@ -265,15 +274,67 @@ make test-generators
 
 This creates test projects for all frameworks and verifies they build correctly.
 
-## Implementation details (for contributors)
+## Implementation Details (for Contributors)
 
 - Each skeleton defines a `merge` script used during generation. Skeleton Makefiles reference it as:
   - `MERGE := $(SKEL_DIR)/merge`
   - `bash $(MERGE) "$(SKEL_DIR)" "$(NAME)"`
 - Each skeleton includes:
-  - `gen` script: contains ALL generation logic; skeleton Makefiles delegate to it via `bash $(SKEL_DIR)/gen "$(NAME)"`
-  - `test` script: end-to-end test that generates into a temp dir and validates the project
-- The `_bin/skel-gen` tool prefers a skeleton's `gen` script when present and falls back to `make -C <skel> gen NAME=<target>`.
+  - `gen` script: contains **all** generation logic; skeleton Makefiles delegate to it via `bash $(SKEL_DIR)/gen "$(NAME)"`.
+  - `test` script: end‑to‑end test that generates into a temp dir and validates the project.
+- The `_bin/skel-gen` tool prefers a skeleton's `gen` script when present and falls back to `make -C <skel> gen NAME=<target> SERVICE=<service_subdir>`.
+
+The `_skels/_common/common-wrapper.sh` script is used by multiple skeletons to set up the wrapper directory. It:
+
+- Writes a generic wrapper `README.md` and `Makefile`.
+- Scans a chosen service directory and generates thin wrapper scripts in the wrapper that forward into that service.
+
+When you add additional services to the same wrapper later (for example a React frontend to a FastAPI backend project), the wrapper README/Makefile and scripts are simply refreshed.
+
+## Roadmap – Towards Fully Integrated Multi‑Service Projects
+
+The current implementation is intentionally simple: you can create multiple services under one wrapper and manage each service with its own scripts and tooling. The long‑term vision is to make Dev Skel a **full multi‑service orchestration toolkit**.
+
+Planned directions (high‑level roadmap):
+
+1. **Richer multi‑service project model**
+   - First‑class support for describing all services in a project (backends, frontends, workers, gateways) in a single project configuration file.
+   - Helpers to list and inspect services (`make services`, `./services list`).
+
+2. **Shared contracts and types between services**
+   - Central definitions for API contracts, DTOs, and domain types (for example via OpenAPI, protobuf, JSON Schema, or a dedicated schema DSL).
+   - Code generation to emit type‑safe models for multiple runtimes (Python, TypeScript, Rust) from a single source of truth.
+   - Consistent validation and serialization across services.
+
+3. **Integrated API protocols and routing**
+   - Conventions for HTTP/REST, gRPC, and messaging endpoints so services expose predictable interfaces.
+   - Automatic wiring of service URLs and ports in local dev and test environments.
+   - Optional API gateway / reverse proxy service pre‑configured for common patterns.
+
+4. **Automatic local deployment stacks**
+   - Generate Dockerfiles and Docker Compose files that spin up all services in a project together, plus supporting infrastructure like:
+     - Database server(s) (PostgreSQL, etc.).
+     - HTTP reverse proxy.
+     - Message broker / streaming (Kafka, etc.).
+     - Monitoring stack (Prometheus / Grafana or similar).
+   - Helper scripts in the wrapper to bring the whole stack up/down in one command.
+
+5. **Kubernetes and Helm integration**
+   - Optional generators that produce Kubernetes manifests and Helm charts for all services in a project.
+   - Opinionated defaults for namespaces, ingress, secrets, config maps, and per‑service autoscaling.
+   - CI‑friendly hooks to build and deploy to test clusters.
+
+6. **Built‑in observability and diagnostics**
+   - Each skeleton upgraded to emit structured logs, metrics, and traces by default.
+   - Common dashboards and alerts bundled for frequently used stacks (FastAPI + React, Django + React, Actix APIs, etc.).
+   - Helpers to correlate requests across services using trace IDs.
+
+7. **Project‑level orchestration and aggregation**
+   - Project‑level commands that operate across all services (test, lint, format, build) with clear summaries.
+   - Tools to visualize the service graph (which services talk to which, shared contracts, data flows).
+   - Improved UX for managing multiple environments (dev, staging, prod) from the same project.
+
+As these roadmap items are implemented, the documentation and individual skeleton guides will be updated to describe the new capabilities and how to opt in.
 
 ## License
 
