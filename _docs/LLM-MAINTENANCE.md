@@ -18,6 +18,43 @@ When maintaining this project, always read `_docs/JUNIE-RULES.md` and this
 file first, then load any skeleton-specific rules file for the skeleton you
 are working on.
 
+### Maintenance Scenario (What "do maintenance" Means)
+
+For this repository, "do maintenance" or "maintenance task" has a specific
+default workflow that all LLMs should follow unless the user explicitly
+requests a different order:
+
+1. **Run generator tests first**
+   - From the project root, run:
+     - `make clean-test`
+     - `make test-generators`
+   - This exercises all skeletons. If the user has requested maintenance for
+     a single skeleton only, you may instead run just the focused tests for
+     that skeleton as described later in this guide.
+
+2. **Fix all reported issues until tests are green**
+   - Investigate any failures reported by `make test-generators` or
+     skeleton-specific tests.
+   - Apply minimal, targeted fixes in the affected skeletons, scripts, or
+     configuration files.
+   - Re-run the same tests until **no issues remain**.
+
+3. **Then maintain and update LLM rules/docs**
+   - After tests are passing, review and update as needed:
+     - Global rules: `_docs/JUNIE-RULES.md`.
+     - This guide: `_docs/LLM-MAINTENANCE.md`.
+     - Any relevant `_skels/<name>/JUNIE-RULES.md` files.
+     - Per-skeleton docs under `_docs/`.
+   - Ensure that any behavioural or workflow changes made while fixing tests
+     are reflected in these documents.
+
+4. **All skeletons vs. one skeleton**
+   - If the user says "do maintenance for this project" or similar, assume
+     they mean **all skeletons** and run the global test commands above.
+   - If the user explicitly names a skeleton (for example, "maintain
+     python-fastapi-skel"), you may restrict testing and rule/doc updates to
+     that skeleton plus any global rules that must change as a result.
+
 ## Key Files to Understand
 
 Before making changes, read these files:

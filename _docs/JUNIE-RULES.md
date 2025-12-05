@@ -144,6 +144,8 @@ and/or here; skeleton-specific version rules go into each skeleton's
 
 ## 7. How Junie Should Work Day-to-Day
 
+### 7.1 General Behaviour
+
 When the user asks you to modify or extend this repository:
 
 1. Identify whether the task is **global** (root Makefile, tooling,
@@ -152,3 +154,50 @@ When the user asks you to modify or extend this repository:
 3. Follow existing patterns in the affected skeleton or scripts.
 4. Update tests and documentation as needed.
 5. Prefer incremental improvements that keep all generators passing.
+
+### 7.2 Definition of "Maintenance" for This Project
+
+For this repository, a **maintenance task** has a specific, ordered
+workflow. Unless the user explicitly asks for a different flow, treat
+"do maintenance" as meaning:
+
+1. **Run tests for generators first**
+   - From the project root, run:
+     - `make clean-test`
+     - `make test-generators`
+   - By default this exercises **all** skeletons. If the user has selected
+     a single skeleton (for example `python-fastapi-skel`), you may instead
+     run the focused targets for that skeleton as documented in
+     `_docs/LLM-MAINTENANCE.md`.
+
+2. **Fix all failures before changing rules/docs**
+   - Investigate any failing generator or skeleton tests.
+   - Apply the minimal changes needed in the relevant skeletons, scripts,
+     or configs until **no test failures remain**.
+   - Re-run the same tests after each substantive fix to confirm they are
+     green.
+
+3. **Then update LLM rules and documentation**
+   - After generators and tests are green, review and, if needed, update:
+     - `_docs/JUNIE-RULES.md` (global rules),
+     - `_docs/LLM-MAINTENANCE.md` (maintenance workflow), and
+     - any relevant `_skels/<name>/JUNIE-RULES.md` and skeleton docs
+       under `_docs/`.
+   - Ensure that any behavioural or workflow changes introduced while
+     fixing tests are clearly reflected in these files.
+
+4. **Scope: all skeletons vs. one skeleton**
+   - If the user says "maintain the whole project", assume you should run
+     tests for **all skeletons** (global `make clean-test && make
+     test-generators`) and then adjust global + per-skeleton rules/docs as
+     needed.
+   - If the user requests maintenance for **one specific skeleton**, you
+     may:
+     - Run only that skeleton's generator tests and local tests (as
+       described in `_docs/LLM-MAINTENANCE.md` and the skeleton's
+       `JUNIE-RULES.md`), and
+     - Limit rules/doc updates to that skeleton plus any global rules that
+       are directly impacted.
+
+This ordering (tests first → fixes until green → rules/docs updates) is the
+default maintenance scenario for this repository.
