@@ -1,0 +1,57 @@
+name: Maintenance Tests
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  maintenance:
+    name: Run maintenance test suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install global dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make docker.io
+
+      - name: Start Docker service
+        run: |
+          sudo systemctl start docker || true
+          sudo usermod -aG docker "$USER" || true
+
+      - name: Install skeleton dependencies
+        run: |
+          chmod +x skel-deps
+          ./skel-deps --all
+
+      - name: Run maintenance test suite
+        run: |
+          chmod +x maintenance
+          ./maintenance
