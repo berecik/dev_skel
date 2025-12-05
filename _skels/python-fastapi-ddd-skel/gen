@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+RAW_TARGET="${1:-}"
+
+if [[ -z "$RAW_TARGET" ]]; then
+  echo "Usage: $(basename "$0") <target-path>"
+  exit 1
+fi
+
+# Compute absolute target path
+if [[ "$RAW_TARGET" = /* ]]; then
+  TARGET="$RAW_TARGET"
+else
+  TARGET="$(pwd)/$RAW_TARGET"
+fi
+
+echo "[fastapi-ddd] Generating into: $TARGET"
+mkdir -p "$TARGET"
+
+# Merge skeleton files first
+bash "$SKEL_DIR/merge" "$SKEL_DIR" "$TARGET"
+
+# Generate .env from example if not exists
+if [[ ! -f "$TARGET/.env" && -f "$TARGET/.env.example" ]]; then
+  cp "$TARGET/.env.example" "$TARGET/.env"
+fi
+
+# Create Python environment and install deps using uv
+(
+  cd "$TARGET"
+
+  # Check if uv is available
+  if command -v uv >/dev/null 2>&1; then
+    echo "[fastapi-ddd] Using uv for package management..."
+    uv venv .venv
+    uv pip install -q -r requirements.txt
+  else
+    echo "[fastapi-ddd] uv not found, falling back to pip..."
+    python3 -m venv .venv
+    . .venv/bin/activate
+    pip install -q --upgrade pip
+    pip install -q -r requirements.txt
+  fi
+)
+
+echo "[fastapi-ddd] Done."

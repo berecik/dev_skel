@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Generate requirements.txt from pyproject.toml (Poetry format)
+# Usage: ./gen-requirements [--dev] [--output FILE]
+#
+# This script extracts dependencies from Poetry's pyproject.toml format
+# and generates a requirements.txt compatible with pip/uv.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+INCLUDE_DEV=false
+OUTPUT_FILE=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --dev)
+            INCLUDE_DEV=true
+            shift
+            ;;
+        --output=*)
+            OUTPUT_FILE="${1#*=}"
+            shift
+            ;;
+        -o)
+            OUTPUT_FILE="$2"
+            shift 2
+            ;;
+        -h|--help)
+            echo "Usage: ./gen-requirements [--dev] [--output FILE]"
+            echo ""
+            echo "Options:"
+            echo "  --dev           Include dev dependencies"
+            echo "  --output FILE   Write to file instead of stdout"
+            echo "  -o FILE         Same as --output"
+            echo ""
+            echo "Examples:"
+            echo "  ./gen-requirements                    # Print requirements"
+            echo "  ./gen-requirements --dev              # Include dev deps"
+            echo "  ./gen-requirements -o requirements.txt"
+            exit 0
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+if [[ ! -f "pyproject.toml" ]]; then
+    echo "Error: pyproject.toml not found" >&2
+    exit 1
+fi
+
+# Python script to parse pyproject.toml and generate requirements
+generate_requirements() {
+    local include_dev="$1"
+    python3 - "$include_dev" << 'PYTHON_SCRIPT'
+import sys
+import re
+
+def parse_pyproject():
+    with open("pyproject.toml", "r") as f:
+        content = f.read()
+
+    requirements = []
+    dev_requirements = []
+
+    # Find [tool.poetry.dependencies] section - stop at next section header
+    deps_match = re.search(
+        r'\[tool\.poetry\.dependencies\]\s*\n(.*?)(?=\n\[)',
+        content,
+        re.DOTALL
+    )
+
+    if deps_match:
+        deps_section = deps_match.group(1)
+        requirements.extend(parse_dependencies(deps_section))
+
+    # Find [tool.poetry.group.dev.dependencies] section
+    dev_deps_match = re.search(
+        r'\[tool\.poetry\.group\.dev\.dependencies\]\s*\n(.*?)(?=\n\[)',
+        content,
+        re.DOTALL
+    )
+
+    if dev_deps_match:
+        dev_section = dev_deps_match.group(1)
+        dev_requirements.extend(parse_dependencies(dev_section))
+
+    return requirements, dev_requirements
+
+def parse_dependencies(section):
+    """Parse dependency lines from a TOML section."""
+    deps = []
+
+    for line in section.strip().split('\n'):
+        line = line.strip()
+
+        # Skip empty lines and comments
+        if not line or line.startswith('#'):
+            continue
+
+        # Skip python version constraint
+        if line.startswith('python'):
+            continue
+
+        # Parse: package = "version" or package = "*"
+        simple_match = re.match(r'^([a-zA-Z0-9_-]+)\s*=\s*["\']([^"\']+)["\']', line)
+        if simple_match:
+            pkg, version = simple_match.groups()
+            deps.append(format_requirement(pkg, version, None))
+            continue
+
+        # Parse: package = {version = "...", extras = [...]}
+        complex_match = re.match(r'^([a-zA-Z0-9_-]+)\s*=\s*\{(.+)\}', line)
+        if complex_match:
+            pkg = complex_match.group(1)
+            attrs = complex_match.group(2)
+
+            # Extract version
+            version = "*"
+            version_match = re.search(r'version\s*=\s*["\']([^"\']+)["\']', attrs)
+            if version_match:
+                version = version_match.group(1)
+
+            # Extract extras
+            extras = None
+            extras_match = re.search(r'extras\s*=\s*\[([^\]]+)\]', attrs)
+            if extras_match:
+                extras_str = extras_match.group(1)
+                extras = [e.strip().strip('"\'') for e in extras_str.split(',')]
+
+            deps.append(format_requirement(pkg, version, extras))
+
+    return deps
+
+def format_requirement(pkg, version, extras):
+    """Format a requirement line for pip/uv."""
+    result = pkg
+
+    # Add extras
+    if extras:
+        result += f"[{','.join(extras)}]"
+
+    # Add version constraint
+    if version and version != "*":
+        # Handle Poetry version syntax
+        if version.startswith('^'):
+            # ^1.2.3 means >=1.2.3,<2.0.0 (for major), we simplify to >=
+            result += f">={version[1:]}"
+        elif version.startswith('~'):
+            # ~1.2.3 means >=1.2.3,<1.3.0
+            result += f">={version[1:]}"
+        elif version.startswith('>=') or version.startswith('<=') or version.startswith('=='):
+            result += version
+        else:
+            result += f">={version}"
+
+    return result
+
+if __name__ == "__main__":
+    include_dev = len(sys.argv) > 1 and sys.argv[1] == "true"
+
+    requirements, dev_requirements = parse_pyproject()
+
+    # Print requirements
+    for req in requirements:
+        print(req)
+
+    if include_dev:
+        for req in dev_requirements:
+            print(req)
+PYTHON_SCRIPT
+}
+
+# Generate and output
+if [[ -n "$OUTPUT_FILE" ]]; then
+    generate_requirements "$INCLUDE_DEV" > "$OUTPUT_FILE"
+    echo "Generated: $OUTPUT_FILE"
+else
+    generate_requirements "$INCLUDE_DEV"
+fi

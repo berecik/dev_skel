@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Root test script - runs all skeleton e2e tests
+# Usage: ./test [options]
+#
+# By default, runs test_skel for each skeleton which:
+# 1. Generates a temporary project
+# 2. Runs the project's ./test script
+# 3. Cleans up
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+# All skeletons to test
+SKELETONS=(
+    "_skels/python-fastapi-skel"
+    "_skels/python-fastapi-ddd-skel"
+    "_skels/python-flask-skel"
+    "_skels/python-django-skel"
+    "_skels/ts-react-skel"
+    "_skels/js-skel"
+    "_skels/java-spring-skel"
+    "_skels/rust-actix-skel"
+    "_skels/rust-axum-skel"
+)
+
+# Parse arguments
+SPECIFIC_SKEL=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --only)
+            SPECIFIC_SKEL="$2"
+            shift 2
+            ;;
+        -h|--help)
+            echo "Usage: ./test [options]"
+            echo "Options:"
+            echo "  --only NAME   Run tests for specific skeleton only"
+            echo "                (e.g., --only python-fastapi-skel)"
+            exit 0
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+FAILED=()
+PASSED=()
+
+run_tests() {
+    local skel="$1"
+    local skel_name
+    skel_name=$(basename "$skel")
+
+    if [[ -n "$SPECIFIC_SKEL" && "$skel_name" != "$SPECIFIC_SKEL" ]]; then
+        return 0
+    fi
+
+    echo ""
+    echo -e "${YELLOW}>>> Testing $skel_name${NC}"
+
+    if [[ -x "$skel/test_skel" ]]; then
+        if "$skel/test_skel"; then
+            PASSED+=("$skel_name")
+            echo -e "${GREEN}$skel_name: tests passed${NC}"
+        else
+            FAILED+=("$skel_name")
+            echo -e "${RED}$skel_name: tests failed${NC}"
+        fi
+    else
+        echo -e "${YELLOW}$skel_name: no test_skel script${NC}"
+    fi
+}
+
+echo -e "${GREEN}=== Running skeleton tests ===${NC}"
+
+for skel in "${SKELETONS[@]}"; do
+    run_tests "$skel"
+done
+
+echo ""
+echo -e "${GREEN}=== Test Summary ===${NC}"
+echo -e "Passed: ${#PASSED[@]}"
+echo -e "Failed: ${#FAILED[@]}"
+
+if [[ ${#FAILED[@]} -gt 0 ]]; then
+    echo ""
+    echo -e "${RED}Failed skeletons:${NC}"
+    for f in "${FAILED[@]}"; do
+        echo -e "  ${RED}✗${NC} $f"
+    done
+    exit 1
+fi
+
+echo ""
+echo -e "${GREEN}All tests passed!${NC}"

@@ -57,9 +57,32 @@ From skeleton dir:
 
 ```bash
 cd myapp
-source .venv/bin/activate
-python manage.py runserver
+
+# Run tests
+./test
+
+# Start development server
+./run dev
+
+# Start production server (gunicorn)
+./run prod
+
+# Build and run in Docker
+./build
+./run docker
+
+# Stop services
+./stop
 ```
+
+### Available Scripts
+
+| Script | Description |
+|--------|-------------|
+| `./test` | Run pytest tests |
+| `./build` | Build Docker image (`--tag=NAME`, `--no-cache`, `--push`) |
+| `./run` | Run server (`dev`, `prod`, `docker`) |
+| `./stop` | Stop Docker container |
 
 ## Testing
 

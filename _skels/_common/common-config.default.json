@@ -1,0 +1,17 @@
+{
+  "project": {
+    "name": "my-app"
+  },
+  "author": {
+    "name": "Your Name",
+    "email": "you@example.com"
+  },
+  "license": "MIT",
+  "org": "your-org",
+  "repo": "",
+  "homepage": "",
+  "bugs": {
+    "url": ""
+  },
+  "pm": "npm"
+}

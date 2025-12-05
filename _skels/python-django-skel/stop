@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Stop script for Django project
+# Usage: ./stop
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+echo "Stopping services..."
+
+# Stop Docker container if running
+if docker ps -q -f name=django-app | grep -q .; then
+    echo "Stopping Docker container..."
+    docker stop django-app
+fi
+
+echo "Done"

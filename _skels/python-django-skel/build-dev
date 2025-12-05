@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build script for local development
+# Usage: ./build-dev
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+echo "Building for local development..."
+
+# Create virtual environment if it doesn't exist
+if [[ ! -d ".venv" ]]; then
+    echo "Creating virtual environment..."
+    python3 -m venv .venv
+fi
+
+# Activate and install dependencies
+source .venv/bin/activate
+pip install -q --upgrade pip
+pip install -q django python-dotenv gunicorn
+
+# Install dev dependencies
+pip install -q pytest pytest-django pytest-cov
+
+# Run migrations
+python manage.py migrate --run-syncdb 2>/dev/null || true
+
+echo "Build complete. Run './run-dev' to start the server."

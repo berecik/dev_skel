@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+COMMON_DIR="$SKEL_DIR/../_common"
+. "$COMMON_DIR/common-config.sh"
+
+RAW_TARGET="${1:-}"
+shift || true
+
+NAME_OVERRIDE=""
+PM_OVERRIDE=""
+TEMPLATE="react-swc-ts"
+NO_INSTALL=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --name)
+      NAME_OVERRIDE="${2:-}"; shift 2;;
+    --pm)
+      PM_OVERRIDE="${2:-}"; shift 2;;
+    --template)
+      TEMPLATE="${2:-}"; shift 2;;
+    --no-install)
+      NO_INSTALL=true; shift;;
+    *)
+      echo "Unknown option: $1"; exit 1;;
+  esac
+done
+
+if [[ -z "$RAW_TARGET" ]]; then
+  echo "Usage: $(basename "$0") <target-path> [--name <name>] [--pm npm|pnpm|yarn|bun] [--template react-swc-ts|react-ts] [--no-install]"
+  exit 1
+fi
+
+if [[ "$RAW_TARGET" = /* ]]; then
+  TARGET="$RAW_TARGET"
+else
+  TARGET="$(pwd)/$RAW_TARGET"
+fi
+
+PARENT_DIR="$(dirname "$TARGET")"
+BASENAME="$(basename "$TARGET")"
+
+PM="${PM_OVERRIDE:-${SKEL_PM:-npm}}"
+PROJECT_NAME="${NAME_OVERRIDE:-${SKEL_PROJECT_NAME:-$BASENAME}}"
+
+echo "[ts-react-skel] Generating into: $TARGET (pm=$PM, template=$TEMPLATE)"
+mkdir -p "$PARENT_DIR"
+
+run_vite() {
+  local dir="$1"; shift
+  case "$PM" in
+    pnpm)
+      if command -v pnpm >/dev/null 2>&1; then
+        pnpm create vite "$dir" --template "$TEMPLATE"
+      else
+        npx create-vite "$dir" -- --template "$TEMPLATE"
+      fi
+      ;;
+    yarn)
+      if command -v yarn >/dev/null 2>&1; then
+        yarn create vite "$dir" --template "$TEMPLATE"
+      else
+        npx create-vite "$dir" -- --template "$TEMPLATE"
+      fi
+      ;;
+    bun)
+      if command -v bun >/dev/null 2>&1; then
+        bunx create-vite "$dir" -- --template "$TEMPLATE"
+      else
+        npx create-vite "$dir" -- --template "$TEMPLATE"
+      fi
+      ;;
+    npm|*)
+      printf 'n\n' | npm create vite@latest "$dir" -- --template "$TEMPLATE"
+      ;;
+  esac
+}
+
+(
+  cd "$PARENT_DIR"
+  run_vite "$BASENAME" >/dev/null 2>&1
+)
+
+# Merge overlay (none by default, but keep hook)
+bash "$SKEL_DIR/merge" "$SKEL_DIR" "$TARGET"
+
+# Patch package.json with common metadata and scripts
+node - "$TARGET" "$PROJECT_NAME" "${SKEL_AUTHOR_NAME:-}" "${SKEL_AUTHOR_EMAIL:-}" "${SKEL_LICENSE:-}" "${SKEL_ORG:-}" "${SKEL_REPO:-}" "${SKEL_HOMEPAGE:-}" "${SKEL_BUGS_URL:-}" <<'NODE'
+const fs = require('fs');
+const path = require('path');
+const pkgPath = path.join(process.argv[2], 'package.json');
+const name = process.argv[3];
+const authorName = process.argv[4];
+const authorEmail = process.argv[5];
+const license = process.argv[6];
+const org = process.argv[7];
+const repo = process.argv[8];
+const homepage = process.argv[9];
+const bugsUrl = process.argv[10];
+
+const pkg = JSON.parse(fs.readFileSync(pkgPath,'utf8'));
+pkg.name = name || pkg.name;
+pkg.license = license || pkg.license || 'MIT';
+if (authorName) {
+  pkg.author = authorEmail ? `${authorName} <${authorEmail}>` : authorName;
+}
+if (org || repo) {
+  pkg.repository = pkg.repository || {};
+  pkg.repository.type = pkg.repository.type || 'git';
+  pkg.repository.url = pkg.repository.url || (org && repo ? `https://github.com/${org}/${repo}.git` : undefined);
+}
+if (homepage) pkg.homepage = homepage;
+if (bugsUrl) pkg.bugs = { url: bugsUrl };
+pkg.scripts = pkg.scripts || {};
+pkg.scripts.test = pkg.scripts.test || 'vitest run';
+pkg.scripts["test:watch"] = pkg.scripts["test:watch"] || 'vitest';
+pkg.scripts.lint = pkg.scripts.lint || 'eslint .';
+pkg.scripts.format = pkg.scripts.format || 'prettier -w .';
+fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
+NODE
+
+# Add standard files
+cat >"$TARGET/.editorconfig" <<'EC'
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = true
+EC
+
+if [[ ! -f "$TARGET/LICENSE" ]]; then
+  YEAR=$(date +%Y)
+  AUTHOR="${SKEL_AUTHOR_NAME:-Your Name}"
+  case "${SKEL_LICENSE:-MIT}" in
+    MIT)
+      cat >"$TARGET/LICENSE" <<LIC
+MIT License
+
+Copyright (c) $YEAR $AUTHOR
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+LIC
+      ;;
+    *)
+      echo "${SKEL_LICENSE:-} License" >"$TARGET/LICENSE"
+      ;;
+  esac
+fi
+
+# Ensure dev deps for eslint/vitest/testing-library exist
+(
+  cd "$TARGET"
+  if [[ "$NO_INSTALL" == false ]]; then
+    case "$PM" in
+      pnpm) INSTALL="pnpm add -D" ; RUNI="pnpm install" ;;
+      yarn) INSTALL="yarn add -D" ; RUNI="yarn install" ;;
+      bun) INSTALL="bun add -d" ; RUNI="bun install" ;;
+      npm|*) INSTALL="npm i -D" ; RUNI="npm install" ;;
+    esac
+    $RUNI >/dev/null 2>&1 || true
+    $INSTALL eslint @types/node vitest jsdom @testing-library/react @testing-library/jest-dom >/dev/null 2>&1 || true
+  fi
+)
+
+echo "[ts-react-skel] Done."

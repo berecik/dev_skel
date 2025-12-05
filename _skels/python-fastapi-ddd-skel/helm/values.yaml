@@ -1,0 +1,48 @@
+replicaCount: 1
+name: example-project
+namespace: default
+image:
+  repository: beret/example-project-api
+  pullPolicy: Always
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: 0.1.0
+svc:
+  port: 8000
+  name: example-project-api-svc
+  target-tag: 0.1.0
+mtls:
+  exampleproject_client_secret: exampleproject-tls-secret
+envs:
+    PROJECT_NAME: Example Project
+    VERSION: 0.1.0
+    API_PREFIX: "/api/v1"
+    DATABASE_URL: sqlite:///./example-project.db
+    DATABASE_TEST_URL: sqlite:///./test.db
+    SECRET_KEY: ala_ma_kota
+    USERS_OPEN_REGISTRATION: false
+    EMAILS_ENABLED: false
+    EMAILS_FROM_NAME: Example Project
+    EMAILS_FROM_EMAIL: "Example Author <example@hipisi.org.pl>"
+    SMTP_HOST: Example Project
+    SMTP_TLS: true
+    SMTP_PORT: 587
+    SMTP_USER: example@hipisi.org.pl
+    SMTP_PASSWORD: ""
+    SUPERUSER_EMAIL: example@hipisi.org.pl
+    SUPERUSER_PASSWORD: test
+    SUPERUSER_FULL_NAME: Example Author
+ingress:
+  target: example-project-api-svc
+  domain: example-project.marysia.app
+  tls_secret:
+  annotations:
+
+debug: disable
+production: false
+healtcheck:
+  failure_threshold: 3
+  initial_delay_seconds: 1
+  startup_delay_seconds: 30
+  period_seconds: 30
+  success_rhreshold: 1
+  timeout_econds: 2

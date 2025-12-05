@@ -69,9 +69,35 @@ From skeleton dir:
 
 ```bash
 cd myapp
-mvn spring-boot:run
-mvn test
+
+# Run tests
+./test
+
+# Start development server
+./run dev
+
+# Start production server (from JAR)
+./run prod
+
+# Build JAR only
+./build --jar
+
+# Build and run in Docker
+./build
+./run docker
+
+# Stop services
+./stop
 ```
+
+### Available Scripts
+
+| Script | Description |
+|--------|-------------|
+| `./test` | Run Maven tests |
+| `./build` | Build Docker image (`--jar` for JAR only, `--tag=NAME`, `--no-cache`) |
+| `./run` | Run server (`dev`, `prod`, `docker`) |
+| `./stop` | Stop Docker container |
 
 ## Testing
 

@@ -53,9 +53,38 @@ From skeleton dir:
 
 ```bash
 cd myapp
-cargo run
-cargo test
+
+# Run tests
+./test
+
+# Start development server
+./run dev
+
+# Start production server (release binary)
+./run prod
+
+# Run with cargo-watch (auto-reload)
+./run watch
+
+# Build release binary only
+./build --release
+
+# Build and run in Docker
+./build
+./run docker
+
+# Stop services
+./stop
 ```
+
+### Available Scripts
+
+| Script | Description |
+|--------|-------------|
+| `./test` | Run cargo tests |
+| `./build` | Build Docker image (`--release` for binary only, `--tag=NAME`, `--no-cache`) |
+| `./run` | Run server (`dev`, `prod`, `watch`, `docker`) |
+| `./stop` | Stop Docker container |
 
 ## Testing
 

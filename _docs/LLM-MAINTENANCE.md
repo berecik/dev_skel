@@ -149,7 +149,7 @@ Before making changes, read these files:
    make clean-test && make test-gen-<name>
    ```
 
-4. **For ts-vite-react-skel** specifically:
+4. **For ts-react-skel** specifically:
    - Do not overwrite generator-owned files: `package.json`, `package-lock.json`, `tsconfig.json`, `tsconfig.node.json`, `vite.config.ts` (see the skeleton `merge` script for exact rules).
 
 ---
@@ -304,7 +304,7 @@ The `skel-deps` script will automatically detect the new `deps` script.
 - JDK (OpenJDK 21+)
 - Maven
 
-**JavaScript/Node.js** (`js-skel/deps`, `ts-vite-react-skel/deps`):
+**JavaScript/Node.js** (`js-skel/deps`, `ts-react-skel/deps`):
 - Node.js 20+
 - npm
 
@@ -515,7 +515,7 @@ When changing deps scripts, update:
 
 ### Framework-Specific Considerations
 
-**ts-vite-react-skel**:
+**ts-react-skel**:
 - Uses `npm create vite@latest` which creates its own config files
 - Excludes `package.json`, `package-lock.json`, `tsconfig.json`, `tsconfig.node.json`, `vite.config.ts` from merge
 

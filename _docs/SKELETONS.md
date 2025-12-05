@@ -16,10 +16,28 @@ Each skeleton is a complete, working project template that can be used to bootst
   - From skeleton dir: `bash ./gen <target-path>` (the `gen` script contains ALL generation logic)
 - **Testing**
   - From skeleton dir: `make test` which runs `bash ./test`
-  - Each `test` script generates into a temporary directory, runs the tests, and performs a non-interactive run/build check
+  - E2E skeleton tests: `./test_skel` generates into a temporary directory, runs tests, and builds Docker image
+- **Build/Run/Stop**
+  - `./build` - Build Docker image (with options like `--no-cache`, `--tag=`, framework-specific like `--jar`, `--release`, `--local`)
+  - `./run` - Run development server (modes: `dev`, `prod`, `docker`)
+  - `./stop` - Stop running Docker containers
 - **Merge script**
   - Each skeleton uses an executable `merge` script referenced by its Makefile as `MERGE := $(SKEL_DIR)/merge`
   - It copies auxiliary files into the generated project without overwriting generator-owned files
+
+### Scripts available in generated projects
+
+| Script | Description | Common Options |
+|--------|-------------|----------------|
+| `./test` | Run project tests | `-q` (quiet), `--cov` (coverage) |
+| `./build` | Build Docker image | `--tag=NAME`, `--no-cache`, `--push` |
+| `./run` | Run server | `dev`, `prod`, `docker` |
+| `./stop` | Stop services | - |
+
+Framework-specific build options:
+- **Java Spring**: `./build --jar` - Build JAR only
+- **Rust**: `./build --release` - Build release binary
+- **Vite/React**: `./build --local` - Build locally (npm run build)
 
 ## Available Skeletons
 
@@ -31,7 +49,7 @@ Each skeleton is a complete, working project template that can be used to bootst
 
 ### TypeScript/JavaScript
 
-- [ts-vite-react-skel](./ts-vite-react-skel.md) - Vite + React + TypeScript + Vitest
+- [ts-react-skel](./ts-react-skel.md) - React + Vite + TypeScript + Vitest
 - [js-skel](./js-skel.md) - Plain JavaScript/Node.js
 
 ### Java
@@ -56,6 +74,6 @@ Each skeleton ships a `merge` Bash script to copy auxiliary files into the gener
 **Stack-specific exclusions:**
 - Python Django: `manage.py`, `myproject/__init__.py`, `myproject/asgi.py`, `myproject/settings.py`, `myproject/urls.py`, `myproject/wsgi.py`
 - JavaScript (Node): `package.json`, `package-lock.json`
-- TS Vite React: `package.json`, `package-lock.json`, `tsconfig.json`, `tsconfig.node.json`, `vite.config.ts`
+- TS React: `package.json`, `package-lock.json`, `tsconfig.json` (vite.config.ts and src files are overwritten)
 - Rust (Actix, Axum): `Cargo.toml`, `src/main.rs` (leave these from `cargo new`)
 - Java Spring: generally exclude `Makefile` and `merge` only (project content comes from Spring Initializr)

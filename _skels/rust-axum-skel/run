@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run script for Rust Axum project
+# Usage: ./run [mode]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+MODE="${1:-dev}"
+PORT="3000"
+
+case $MODE in
+    dev)
+        echo "Starting development server..."
+        echo "  URL: http://localhost:$PORT"
+        echo ""
+
+        cargo run
+        ;;
+
+    prod)
+        echo "Starting production server..."
+
+        # Build if binary doesn't exist
+        if [[ ! -f "target/release/app" ]]; then
+            echo "Building release binary first..."
+            cargo build --release
+        fi
+
+        ./target/release/app
+        ;;
+
+    watch)
+        echo "Starting with cargo-watch..."
+        echo "  URL: http://localhost:$PORT"
+        echo ""
+
+        cargo watch -x run
+        ;;
+
+    docker)
+        echo "Running in Docker..."
+
+        if ! docker images axum-app:latest --format "{{.Repository}}" | grep -q "axum-app"; then
+            echo "Image not found. Building..."
+            ./build
+        fi
+
+        docker run --rm -p "${PORT}:3000" --name axum-app axum-app:latest
+        ;;
+
+    -h|--help)
+        echo "Usage: ./run [mode]"
+        echo ""
+        echo "Modes:"
+        echo "  dev     Development server with cargo run (default)"
+        echo "  prod    Production server from release binary"
+        echo "  watch   Development with cargo-watch (auto-reload)"
+        echo "  docker  Run in Docker container"
+        exit 0
+        ;;
+
+    *)
+        echo "Unknown mode: $MODE"
+        exit 1
+        ;;
+esac

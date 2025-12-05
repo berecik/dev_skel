@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+OK=0
+
+if have node && have npm; then
+  echo "[deps] Found Node: $(node -v), npm: $(npm -v)"
+else
+  echo "[deps] Node.js and npm are required."
+  OK=1
+fi
+
+if have pnpm; then echo "[deps] pnpm: $(pnpm -v) (optional)"; fi
+if have yarn; then echo "[deps] yarn: $(yarn -v) (optional)"; fi
+if have bun; then echo "[deps] bun: $(bun -v) (optional)"; fi
+
+exit $OK

@@ -1,31 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
-TMP_ROOT="${TMPDIR:-/tmp}"
-WORK_DIR="$(mktemp -d "$TMP_ROOT/fastapi-skel-test-XXXXXX")"
-TARGET="$WORK_DIR/proj"
+# Test script for running project tests
+# Usage: ./test [options]
 
-cleanup() {
-  rm -rf "$WORK_DIR" || true
-}
-trap cleanup EXIT
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
-"$SKEL_DIR/gen" "$TARGET"
+# Activate virtual environment if exists
+if [[ -d ".venv" ]]; then
+    source .venv/bin/activate
+elif [[ -n "${VIRTUAL_ENV:-}" ]]; then
+    : # Already in a virtual environment
+fi
 
-cd "$TARGET"
+# Parse arguments
+PYTEST_ARGS=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --cov|--coverage)
+            PYTEST_ARGS="$PYTEST_ARGS --cov=app --cov-report=term-missing"
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: ./test [options] [pytest-args]"
+            echo "Options:"
+            echo "  --cov   Run with coverage"
+            exit 0
+            ;;
+        *)
+            PYTEST_ARGS="$PYTEST_ARGS $1"
+            shift
+            ;;
+    esac
+done
 
-. .venv/bin/activate
-pip install -q pytest httpx pytest-asyncio
-pytest -q
-python - <<'PY'
-import importlib
-import sys
-try:
-    importlib.import_module('app.main')
-    print('OK: FastAPI import succeeded')
-except Exception as e:
-    print('ERROR: FastAPI import failed:', e)
-    sys.exit(1)
-PY
-echo "OK: FastAPI skeleton generated and tests ran."
+pytest $PYTEST_ARGS

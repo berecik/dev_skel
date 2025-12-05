@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SKEL_DIR="${1:?skel_dir missing}"
+TARGET_DIR="${2:?target_dir missing}"
+
+echo "Merging overlays from $SKEL_DIR into $TARGET_DIR (ts-react-skel)..."
+
+# Files to exclude from merge (generator-specific, not part of generated project)
+EXCLUDE_FILES="Makefile merge gen test_skel deps install-deps"
+
+EXCLUDE_DIRS=(
+  ".git"
+  "node_modules"
+  ".pnpm-store"
+  ".yarn"
+)
+
+# Files that should always overwrite (skeleton customizations)
+OVERWRITE_PATTERN="^/(vite\.config\.ts|src/App\.tsx|src/App\.css|src/App\.test\.tsx|src/setupTests\.ts)$"
+
+while IFS= read -r -d '' src; do
+  rel="${src#"$SKEL_DIR"}"
+  filename="$(basename "$rel")"
+
+  # Skip excluded files (exact match on filename)
+  skip=false
+  for f in $EXCLUDE_FILES; do
+    if [[ "$filename" == "$f" ]]; then
+      skip=true
+      break
+    fi
+  done
+  if [[ "$skip" == true ]]; then
+    continue
+  fi
+
+  # Skip excluded directories
+  for d in "${EXCLUDE_DIRS[@]}"; do
+    if [[ "$rel" == *"/$d/"* || "$rel" == *"/$d" || "$rel" == "/$d/"* || "$rel" == "/$d" ]]; then
+      skip=true
+      break
+    fi
+  done
+  if [[ "$skip" == true ]]; then
+    continue
+  fi
+
+  dst="$TARGET_DIR/$rel"
+  should_copy=false
+
+  # Check if file should always overwrite
+  if [[ "$rel" =~ $OVERWRITE_PATTERN ]]; then
+    should_copy=true
+  elif [[ ! -f "$dst" ]]; then
+    # Only copy if destination doesn't exist
+    should_copy=true
+  fi
+
+  if [[ "$should_copy" == true ]]; then
+    mkdir -p "$(dirname "$dst")"
+    cp "$src" "$dst"
+    echo "  + $rel"
+  fi
+done < <(find "$SKEL_DIR" -type f -print0)
+
+echo "Done."

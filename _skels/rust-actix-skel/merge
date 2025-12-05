@@ -10,7 +10,7 @@ while IFS= read -r -d '' src; do
   rel="${src#"$SKEL_DIR"}"
   # Exclude generator-owned files and helper scripts
   case "$rel" in
-    /Makefile|*/Makefile|/merge|*/merge|/Cargo.toml|/src/main.rs)
+    /Makefile|*/Makefile|/merge|*/merge|/test_skel|*/test_skel|/Cargo.toml|/src/main.rs)
       continue ;;
   esac
   dst="$TARGET_DIR/$rel"

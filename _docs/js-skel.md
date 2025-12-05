@@ -46,9 +46,32 @@ From skeleton dir:
 
 ```bash
 cd myapp
-node src/index.js
-npm test
+
+# Run tests
+./test
+
+# Start development server
+./run dev
+
+# Start production server
+./run prod
+
+# Build and run in Docker
+./build
+./run docker
+
+# Stop services
+./stop
 ```
+
+### Available Scripts
+
+| Script | Description |
+|--------|-------------|
+| `./test` | Run Node.js tests |
+| `./build` | Build Docker image (`--tag=NAME`, `--no-cache`, `--push`) |
+| `./run` | Run server (`dev`, `prod`, `docker`) |
+| `./stop` | Stop Docker container |
 
 ## Testing
 

@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run script for local development
+# Usage: ./run-dev [--host HOST] [--port PORT]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+HOST="127.0.0.1"
+PORT="8000"
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --host=*)
+            HOST="${1#*=}"
+            shift
+            ;;
+        --port=*)
+            PORT="${1#*=}"
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: ./run-dev [--host=HOST] [--port=PORT]"
+            echo "  --host=HOST  Bind to host (default: 127.0.0.1)"
+            echo "  --port=PORT  Bind to port (default: 8000)"
+            exit 0
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+# Build if needed
+if [[ ! -d ".venv" ]]; then
+    ./build-dev
+fi
+
+source .venv/bin/activate
+
+echo "Starting development server..."
+echo "  URL: http://${HOST}:${PORT}"
+echo ""
+
+python manage.py runserver "${HOST}:${PORT}"

@@ -9,7 +9,7 @@ echo "Merging additional files from $SKEL_DIR to $TARGET_DIR (JS Node)..."
 while IFS= read -r -d '' src; do
   rel="${src#"$SKEL_DIR"}"
   case "$rel" in
-    */Makefile|*/merge|/package-lock.json)
+    */Makefile|*/merge|*/test_skel|/package-lock.json)
       continue ;;
   esac
   dst="$TARGET_DIR/$rel"

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+echo "[install-deps] Checking Node.js toolchain..."
+bash "$SCRIPT_DIR/deps" || {
+  echo "Install Node.js and npm first (e.g., via nvm, asdf, or your OS package manager).";
+  exit 1;
+}
+
+echo "[install-deps] Nothing to install globally. Ensure your preferred package manager is available if not npm (pnpm/yarn/bun)."

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build script for local development
+# Usage: ./build-dev
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+echo "Building for local development..."
+
+# Check Java version
+JAVA_VERSION=$(java -version 2>&1 | head -n1 | cut -d'"' -f2 | cut -d'.' -f1)
+if [[ -z "$JAVA_VERSION" ]] || [[ "$JAVA_VERSION" -lt 21 ]]; then
+    echo "Error: Java 21+ is required"
+    exit 1
+fi
+
+# Build with Maven
+./mvnw clean compile -q
+
+echo "Build complete. Run './run-dev' to start the server."

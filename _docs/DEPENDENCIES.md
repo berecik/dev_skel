@@ -88,7 +88,7 @@ cd myapi
 - Installs packages from `requirements.txt` or `pyproject.toml`
 - Provides instructions for activating venv
 
-**For Node.js projects** (js-skel, ts-vite-react-skel):
+**For Node.js projects** (js-skel, ts-react-skel):
 - Runs `npm install`
 - Installs all packages from `package.json`
 - Displays project info
@@ -163,7 +163,7 @@ python manage.py runserver
 - All platforms: Uses [rustup](https://rustup.rs/) installer
 - Additional build dependencies installed per platform
 
-### TypeScript Vite React (`ts-vite-react-skel`)
+### TypeScript Vite React (`ts-react-skel`)
 - **Node.js** (v20+)
 - **npm**
 

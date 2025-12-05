@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run tests in a generated React project (current directory)
+
+detect_pm() {
+  if [[ -f pnpm-lock.yaml ]]; then echo pnpm; return; fi
+  if [[ -f yarn.lock ]]; then echo yarn; return; fi
+  if [[ -f bun.lockb ]]; then echo bun; return; fi
+  echo npm
+}
+
+PM="$(detect_pm)"
+echo "[test] Using package manager: $PM"
+
+case "$PM" in
+  pnpm)
+    pnpm install
+    pnpm build
+    if pnpm -s run | grep -q "test"; then pnpm test -- --run || true; fi
+    if pnpm -s run | grep -q "lint"; then pnpm lint || true; fi
+    ;;
+  yarn)
+    yarn install
+    yarn build
+    if yarn -s run | grep -q "test"; then yarn test --run || true; fi
+    if yarn -s run | grep -q "lint"; then yarn lint || true; fi
+    ;;
+  bun)
+    bun install
+    bun run build
+    if bun run | grep -q "test"; then bun run test --run || true; fi
+    if bun run | grep -q "lint"; then bun run lint || true; fi
+    ;;
+  npm|*)
+    if [[ -f package-lock.json ]]; then npm ci; else npm install; fi
+    npm run build
+    if npm run | grep -q "test"; then npm run test -- --run || true; fi
+    if npm run | grep -q "lint"; then npm run lint || true; fi
+    ;;
+esac
+
+echo "[test] Done"

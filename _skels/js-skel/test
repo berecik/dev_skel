@@ -1,20 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
-TMP_ROOT="${TMPDIR:-/tmp}"
-WORK_DIR="$(mktemp -d "$TMP_ROOT/js-skel-test-XXXXXX")"
-TARGET="$WORK_DIR/proj"
+# Test script for running project tests
+# Usage: ./test [options]
 
-cleanup() {
-  rm -rf "$WORK_DIR" || true
-}
-trap cleanup EXIT
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
-"$SKEL_DIR/gen" "$TARGET"
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --coverage)
+            npm test -- --coverage
+            exit 0
+            ;;
+        -h|--help)
+            echo "Usage: ./test [options]"
+            echo "Options:"
+            echo "  --coverage   Run with coverage"
+            exit 0
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
 
-cd "$TARGET"
-
-npm test --silent
-npm run -s info
-echo "OK: JS skeleton generated and tests ran."
+npm test

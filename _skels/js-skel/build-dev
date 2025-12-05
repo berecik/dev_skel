@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build script for local development
+# Usage: ./build-dev
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+echo "Building for local development..."
+
+# Check Node.js version
+NODE_VERSION=$(node --version 2>/dev/null | sed 's/v//' | cut -d. -f1)
+if [[ -z "$NODE_VERSION" ]] || [[ "$NODE_VERSION" -lt 20 ]]; then
+    echo "Error: Node.js 20+ is required"
+    exit 1
+fi
+
+# Install dependencies
+npm install
+
+echo "Build complete. Run './run-dev' to start the server."

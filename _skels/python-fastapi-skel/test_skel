@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Skeleton test script - tests skeleton generation and project functionality
+
+SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+TMP_ROOT="${TMPDIR:-/tmp}"
+WORK_DIR="$(mktemp -d "$TMP_ROOT/fastapi-skel-test-XXXXXX")"
+TARGET="$WORK_DIR/proj"
+
+cleanup() {
+  ./stop 2>/dev/null || true
+  rm -rf "$WORK_DIR" || true
+}
+trap cleanup EXIT
+
+echo "[test_skel] Generating FastAPI project in $TARGET..."
+"$SKEL_DIR/gen" "$TARGET"
+
+cd "$TARGET"
+
+. .venv/bin/activate
+pip install -q pytest httpx pytest-asyncio
+
+echo ""
+echo "[test_skel] Verifying imports..."
+python - <<'PY'
+import importlib
+import sys
+try:
+    importlib.import_module('app.main')
+    print('  OK: FastAPI import succeeded')
+except Exception as e:
+    print('  ERROR: FastAPI import failed:', e)
+    sys.exit(1)
+PY
+
+echo ""
+echo "[test_skel] Running project tests via ./test script..."
+./test -q
+
+echo ""
+echo "[test_skel] Building Docker image via ./build script..."
+./build --tag=fastapi-test:latest
+
+echo ""
+echo "[test_skel] Cleaning up Docker image..."
+docker rmi fastapi-test:latest 2>/dev/null || true
+
+echo ""
+echo "[test_skel] FastAPI skeleton tests passed!"

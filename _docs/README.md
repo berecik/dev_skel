@@ -18,7 +18,7 @@ A Makefile-based project generator system that creates new projects from skeleto
 │   │   └── test          # Test script
 │   ├── python-flask-skel/
 │   ├── python-django-skel/
-│   ├── ts-vite-react-skel/
+│   ├── ts-react-skel/
 │   ├── js-skel/
 │   ├── java-spring-skel/
 │   ├── rust-actix-skel/
@@ -70,8 +70,8 @@ make gen-flask NAME=myapp
 # Python Django
 make gen-django NAME=myapp
 
-# TypeScript Vite+React
-make gen-vite-react NAME=myapp
+# TypeScript React+Vite
+make gen-react NAME=myapp
 
 # JavaScript/Node.js
 make gen-js NAME=myapp
@@ -93,7 +93,7 @@ _bin/skel-gen <skel-name> <target-path>
 
 # Examples
 _bin/skel-gen python-fastapi-skel ~/work/myapi
-_bin/skel-gen ts-vite-react-skel ./frontend
+_bin/skel-gen ts-react-skel ./frontend
 ```
 
 ### Install Project Dependencies

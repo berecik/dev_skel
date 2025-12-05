@@ -82,8 +82,8 @@ make gen-flask NAME=myapp
 # Python Django
 make gen-django NAME=myapp
 
-# TypeScript Vite+React
-make gen-vite-react NAME=myapp
+# TypeScript React+Vite
+make gen-react NAME=myapp
 
 # JavaScript/Node.js
 make gen-js NAME=myapp
@@ -105,7 +105,7 @@ _bin/skel-gen <skel-name> <target-path>
 
 # Examples
 _bin/skel-gen python-fastapi-skel ~/work/myapi
-_bin/skel-gen ts-vite-react-skel ./frontend
+_bin/skel-gen ts-react-skel ./frontend
 ```
 
 ## Makefile Commands
@@ -134,6 +134,7 @@ Each skeleton has a `test` script that:
 ```
 dev_skel/
 ├── Makefile                  # Main orchestration Makefile
+├── test                      # Root test script (runs all skeleton e2e tests)
 ├── skel-deps                 # Main dependency installer (all skeletons)
 ├── _bin/                     # Helper tools (install, update, list, generate, etc.)
 ├── .editorconfig             # Editor configuration
@@ -144,10 +145,14 @@ dev_skel/
 │   │   ├── install-deps      # Project dependency installer (copied to generated projects)
 │   │   ├── gen               # Project generator
 │   │   ├── merge             # File merging script
-│   │   └── test              # Test script
+│   │   ├── test              # Test script (for generated projects)
+│   │   ├── test_skel         # Skeleton e2e test script
+│   │   ├── build             # Build script (Docker image)
+│   │   ├── run               # Run script (dev/prod/docker modes)
+│   │   └── stop              # Stop script (stop services)
 │   ├── python-flask-skel/
 │   ├── python-django-skel/
-│   ├── ts-vite-react-skel/
+│   ├── ts-react-skel/
 │   ├── js-skel/
 │   ├── java-spring-skel/
 │   ├── rust-actix-skel/
@@ -190,28 +195,53 @@ Detailed documentation is available in the `_docs/` directory:
 make gen-fastapi NAME=my-api
 cd my-api
 
-# Install project dependencies
-./install-deps
+# Run tests
+./test
 
-# Activate virtual environment and run
-source .venv/bin/activate
-pytest -q
-uvicorn app.main:app --reload
+# Start development server
+./run dev
+
+# Or run in Docker
+./build
+./run docker
+
+# Stop services
+./stop
 ```
 
 ### Create a New React Frontend
 
 ```bash
 # Generate the project
-make gen-vite-react NAME=my-frontend
+make gen-react NAME=my-frontend
 cd my-frontend
 
-# Install project dependencies
-./install-deps
+# Run tests
+./test
 
 # Start development server
-npm run dev
+./run dev
+
+# Build for production
+./build --local
+
+# Or build and run in Docker
+./build
+./run docker
 ```
+
+### Generated Project Scripts
+
+Every generated project includes these scripts:
+
+| Script | Description |
+|--------|-------------|
+| `./test` | Run project tests |
+| `./build` | Build Docker image (or local build with `--local`/`--jar`/`--release`) |
+| `./run` | Run server (modes: `dev`, `prod`, `docker`) |
+| `./stop` | Stop running Docker containers |
+
+Run any script with `-h` or `--help` to see available options.
 
 ### Test All Generators
 

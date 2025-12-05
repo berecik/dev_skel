@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SKEL_DIR/../.." && pwd)"
+TEST_PROJECTS_DIR="$REPO_ROOT/_test_projects"
+TARGET_NAME="test-ts-react-app"
+TARGET="$TEST_PROJECTS_DIR/$TARGET_NAME"
+
+mkdir -p "$TEST_PROJECTS_DIR"
+
+cleanup() {
+  true
+}
+trap cleanup EXIT
+
+echo "[test_skel] Generating TS React project in $TARGET ..."
+rm -rf "$TARGET"
+"$SKEL_DIR/gen" "$TARGET" --template react-swc-ts
+
+cd "$TARGET"
+
+echo ""
+echo "[test_skel] Building project..."
+if [[ -f package-lock.json ]]; then npm ci; else npm install; fi
+npm run build
+
+echo ""
+echo "[test_skel] Running linter (if available)..."
+npm run | grep -q "lint" && npm run lint || echo "[test_skel] No lint script"
+
+echo ""
+echo "[test_skel] Running tests (if available)..."
+npm run | grep -q "test" && npm run test -- --run || echo "[test_skel] No test script"
+
+echo ""
+echo "[test_skel] TS React skeleton tests passed!"

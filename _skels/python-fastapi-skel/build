@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build script for FastAPI project
+# Usage: ./build [options]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Default values
+TAG="fastapi-app:latest"
+NO_CACHE=""
+PUSH=false
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --no-cache)
+            NO_CACHE="--no-cache"
+            shift
+            ;;
+        --push)
+            PUSH=true
+            shift
+            ;;
+        --tag=*)
+            TAG="${1#*=}"
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: ./build [options]"
+            echo ""
+            echo "Options:"
+            echo "  --no-cache   Build without using cache"
+            echo "  --push       Push image to registry after build"
+            echo "  --tag=TAG    Tag for the image (default: fastapi-app:latest)"
+            exit 0
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+# Create Dockerfile if it doesn't exist
+if [[ ! -f "Dockerfile" ]]; then
+    cat > Dockerfile <<'EOF'
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements.txt* pyproject.toml* ./
+RUN pip install --no-cache-dir -r requirements.txt 2>/dev/null || \
+    pip install --no-cache-dir fastapi uvicorn sqlalchemy aiosqlite pydantic-settings
+
+# Copy application
+COPY . .
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+EOF
+    echo "Created Dockerfile"
+fi
+
+echo "Building Docker image: $TAG"
+docker build --tag "$TAG" $NO_CACHE .
+
+echo ""
+echo "Build complete: $TAG"
+docker images "$TAG" --format "Size: {{.Size}}"
+
+if [[ "$PUSH" == true ]]; then
+    echo "Pushing image..."
+    docker push "$TAG"
+fi

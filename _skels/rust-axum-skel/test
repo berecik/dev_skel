@@ -1,20 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
-TMP_ROOT="${TMPDIR:-/tmp}"
-WORK_DIR="$(mktemp -d "$TMP_ROOT/rust-axum-skel-test-XXXXXX")"
-TARGET="$WORK_DIR/proj"
+# Test script for running project tests
+# Usage: ./test [options]
 
-cleanup() {
-  rm -rf "$WORK_DIR" || true
-}
-trap cleanup EXIT
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
-"$SKEL_DIR/gen" "$TARGET"
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --release)
+            cargo test --release
+            exit 0
+            ;;
+        -h|--help)
+            echo "Usage: ./test [options]"
+            echo "Options:"
+            echo "  --release   Run tests in release mode"
+            exit 0
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
 
-cd "$TARGET"
-
-cargo test -q
-cargo build -q
-echo "OK: Rust Axum skeleton generated, tests and build succeeded."
+cargo test

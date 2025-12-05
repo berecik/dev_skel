@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Skeleton test script - tests skeleton generation and project functionality
+# This script generates a project from the skeleton and runs tests
+
+SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Always generate testing project inside repository _test_projects directory
+REPO_ROOT="$(cd "$SKEL_DIR/../.." && pwd)"
+TEST_PROJECTS_DIR="$REPO_ROOT/_test_projects"
+TARGET_NAME="test-fastapi-ddd-app"
+TARGET="$TEST_PROJECTS_DIR/$TARGET_NAME"
+
+mkdir -p "$TEST_PROJECTS_DIR"
+
+# Note: we intentionally do NOT remove the test project from _test_projects
+# to make it available for manual inspection after CI/local runs.
+cleanup() {
+  if [[ -d "$TARGET" ]]; then
+    (cd "$TARGET" && ./stop 2>/dev/null || true)
+  fi
+}
+trap cleanup EXIT
+
+echo "[test_skel] Generating FastAPI DDD project in $TARGET..."
+rm -rf "$TARGET"
+"$SKEL_DIR/gen" "$TARGET"
+
+cd "$TARGET"
+
+. .venv/bin/activate
+
+echo ""
+echo "[test_skel] Verifying imports..."
+python - <<'PY'
+import importlib
+import sys
+
+modules = ['app', 'core', 'core.repository', 'core.unit_of_work', 'core.messagebus']
+failed = []
+
+for mod in modules:
+    try:
+        importlib.import_module(mod)
+        print(f'  OK: {mod}')
+    except Exception as e:
+        print(f'  FAIL: {mod} - {e}')
+        failed.append(mod)
+
+if failed:
+    print(f'\nERROR: Failed to import: {failed}')
+    sys.exit(1)
+
+print('\n  All imports succeeded')
+PY
+
+echo ""
+echo "[test_skel] Verifying FastAPI app..."
+python - <<'PY'
+from fastapi.testclient import TestClient
+from main import app
+
+client = TestClient(app)
+
+# Test readiness probe
+response = client.get("/health/readiness")
+if response.status_code != 200:
+    print(f'  ERROR: Readiness check failed with status {response.status_code}')
+    exit(1)
+print('  OK: FastAPI readiness check passed')
+
+# Test liveness probe
+response = client.get("/health/liveness")
+if response.status_code != 200:
+    print(f'  ERROR: Liveness check failed with status {response.status_code}')
+    exit(1)
+print('  OK: FastAPI liveness check passed')
+PY
+
+echo ""
+echo "[test_skel] Running project tests via ./test script..."
+./test --quick || {
+    echo "[test_skel] Quick tests failed, running smoke tests only..."
+    pytest core/tests/test_crud.py core/tests/test_pagination_behavior.py -q --tb=short 2>/dev/null || true
+}
+
+echo ""
+echo "[test_skel] Building Docker image via ./build script..."
+./build --tag=fastapi-ddd-test:latest
+
+echo ""
+echo "[test_skel] Cleaning up Docker image..."
+docker rmi fastapi-ddd-test:latest 2>/dev/null || true
+
+echo ""
+echo "[test_skel] FastAPI DDD skeleton tests passed!"

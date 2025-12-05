@@ -12,7 +12,7 @@ Main Makefile
     ├── gen-fastapi ──► _skels/python-fastapi-skel/Makefile (gen target)
     ├── gen-flask ────► _skels/python-flask-skel/Makefile (gen target)
     ├── gen-django ───► _skels/python-django-skel/Makefile (gen target)
-    ├── gen-vite-react► _skels/ts-vite-react-skel/Makefile (gen target)
+    ├── gen-react► _skels/ts-react-skel/Makefile (gen target)
     ├── gen-js ───────► _skels/js-skel/Makefile (gen target)
     ├── gen-spring ───► _skels/java-spring-skel/Makefile (gen target)
     ├── gen-actix ────► _skels/rust-actix-skel/Makefile (gen target)
@@ -30,7 +30,7 @@ Main Makefile
 | `FASTAPI_SKEL` | `$(SKEL_DIR)/python-fastapi-skel` | FastAPI skeleton path |
 | `FLASK_SKEL` | `$(SKEL_DIR)/python-flask-skel` | Flask skeleton path |
 | `DJANGO_SKEL` | `$(SKEL_DIR)/python-django-skel` | Django skeleton path |
-| `VITE_REACT_SKEL` | `$(SKEL_DIR)/ts-vite-react-skel` | Vite+React skeleton path |
+| `REACT_SKEL` | `$(SKEL_DIR)/ts-react-skel` | React+Vite skeleton path |
 | `JS_SKEL` | `$(SKEL_DIR)/js-skel` | JavaScript skeleton path |
 | `SPRING_SKEL` | `$(SKEL_DIR)/java-spring-skel` | Spring Boot skeleton path |
 | `ACTIX_SKEL` | `$(SKEL_DIR)/rust-actix-skel` | Actix-web skeleton path |
@@ -56,7 +56,7 @@ Main Makefile
 | `gen-fastapi` | `make gen-fastapi NAME=myapp` | Generate Python FastAPI project |
 | `gen-flask` | `make gen-flask NAME=myapp` | Generate Python Flask project |
 | `gen-django` | `make gen-django NAME=myapp` | Generate Python Django project |
-| `gen-vite-react` | `make gen-vite-react NAME=myapp` | Generate TypeScript Vite+React project |
+| `gen-react` | `make gen-react NAME=myapp` | Generate TypeScript React+Vite project |
 | `gen-js` | `make gen-js NAME=myapp` | Generate JavaScript/Node.js project |
 | `gen-spring` | `make gen-spring NAME=myapp` | Generate Java Spring Boot project |
 | `gen-actix` | `make gen-actix NAME=myapp` | Generate Rust Actix-web project |
@@ -75,7 +75,7 @@ All generator targets:
 | `test-gen-fastapi` | Test FastAPI generator |
 | `test-gen-flask` | Test Flask generator |
 | `test-gen-django` | Test Django generator |
-| `test-gen-vite-react` | Test Vite+React generator |
+| `test-gen-react` | Test React+Vite generator |
 | `test-gen-js` | Test JavaScript generator |
 | `test-gen-spring` | Test Spring Boot generator |
 | `test-gen-actix` | Test Actix generator |
@@ -84,7 +84,7 @@ All generator targets:
 | `test-fastapi` | Run FastAPI skeleton tests |
 | `test-flask` | Run Flask skeleton tests |
 | `test-django` | Run Django skeleton tests |
-| `test-vite-react` | Run Vite+React skeleton tests |
+| `test-react` | Run React+Vite skeleton tests |
 | `test-js` | Run JavaScript skeleton tests |
 | `test-spring` | Run Spring Boot skeleton tests |
 | `test-actix` | Run Actix skeleton tests |

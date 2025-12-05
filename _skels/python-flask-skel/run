@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run script for Flask project
+# Usage: ./run [mode]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+MODE="${1:-dev}"
+HOST="0.0.0.0"
+PORT="5000"
+
+case $MODE in
+    dev)
+        echo "Starting development server..."
+        echo "  URL: http://localhost:$PORT"
+        echo ""
+
+        if [[ -d ".venv" ]]; then
+            source .venv/bin/activate
+        fi
+
+        export FLASK_DEBUG=1
+        flask run --host "$HOST" --port "$PORT"
+        ;;
+
+    prod)
+        echo "Starting production server..."
+
+        if [[ -d ".venv" ]]; then
+            source .venv/bin/activate
+        fi
+
+        gunicorn --bind "${HOST}:${PORT}" --workers 4 app:app
+        ;;
+
+    docker)
+        echo "Running in Docker..."
+
+        if ! docker images flask-app:latest --format "{{.Repository}}" | grep -q "flask-app"; then
+            echo "Image not found. Building..."
+            ./build
+        fi
+
+        docker run --rm -p "${PORT}:5000" --name flask-app flask-app:latest
+        ;;
+
+    -h|--help)
+        echo "Usage: ./run [mode]"
+        echo ""
+        echo "Modes:"
+        echo "  dev     Development server with debug mode (default)"
+        echo "  prod    Production server with gunicorn"
+        echo "  docker  Run in Docker container"
+        exit 0
+        ;;
+
+    *)
+        echo "Unknown mode: $MODE"
+        exit 1
+        ;;
+esac
