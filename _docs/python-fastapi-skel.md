@@ -39,22 +39,22 @@ python-fastapi-skel/
 
 From repo root:
 ```bash
-make gen-python-fastapi NAME=<target-path>
+make gen-fastapi NAME=<proj_name>
 ```
 
-From anywhere:
+From anywhere (relocatable helper):
 ```bash
-_bin/skel-gen python-fastapi <target-path>
+_bin/skel-gen python-fastapi-skel <proj_name> [service_in_proj_name]
 ```
 
 From skeleton dir:
 ```bash
-./gen <target-path>
+./gen <main-dir> [service_subdir]
 ```
 
 ## Generated Project Layout
 
-When you generate a FastAPI project, the target path is the **wrapper directory** (`main_dir`) and the real project lives in an inner `backend/` directory (`project_dir`):
+When you generate a FastAPI project, `proj_name` (or `NAME`) is the **wrapper directory** (`main_dir`) created under the current working directory, and the real project lives in an inner service directory (`project_dir`) inside it. By default this inner directory is `backend/`, but you can override it with `service_in_proj_name` / `service_subdir`.
 
 ```text
 myapp/

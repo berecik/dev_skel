@@ -6,11 +6,11 @@ SKEL_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
 # Define gen target differently depending on NAME presence
 ifdef NAME
-gen: ## Generate React TS project (NAME=my-app or PATH)
-	@bash $(SKEL_DIR)/gen "$(NAME)" ${PM:+--pm $(PM)} ${TEMPLATE:+--template $(TEMPLATE)}
+gen: ## Generate React TS project (NAME=my-app)
+	@bash $(SKEL_DIR)/gen "$(NAME)" ${SERVICE:+"$(SERVICE)"} ${PM:+--pm $(PM)} ${TEMPLATE:+--template $(TEMPLATE)}
 else
-gen: ## Generate React TS project (NAME=my-app or PATH)
-	@echo "Usage: make gen NAME=<target-path> [PM=npm|pnpm|yarn|bun] [TEMPLATE=react-swc-ts]"; exit 1
+gen: ## Generate React TS project (NAME=my-app)
+	@echo "Usage: make gen NAME=<proj_name> [SERVICE=<service_subdir>] [PM=npm|pnpm|yarn|bun] [TEMPLATE=react-swc-ts]"; exit 1
 endif
 
 test: ## Run tests in generated project (delegate)

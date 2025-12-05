@@ -5,8 +5,18 @@ SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
 COMMON_DIR="$SKEL_DIR/../_common"
 . "$COMMON_DIR/common-config.sh"
 
-RAW_TARGET="${1:-}"
+# Arguments:
+#   1) main-dir (required)
+#   2) optional service_subdir (must not start with --)
+#   remaining: CLI options like --name/--pm/--template/--no-install
+MAIN_DIR="${1:-}"
 shift || true
+
+PROJECT_SUBDIR_OVERRIDE=""
+if [[ ${1:-} != "" && "$1" != --* ]]; then
+  PROJECT_SUBDIR_OVERRIDE="$1"
+  shift || true
+fi
 
 NAME_OVERRIDE=""
 PM_OVERRIDE=""
@@ -28,19 +38,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$RAW_TARGET" ]]; then
-  echo "Usage: $(basename "$0") <target-path> [--name <name>] [--pm npm|pnpm|yarn|bun] [--template react-swc-ts|react-ts] [--no-install]"
+if [[ -z "$MAIN_DIR" ]]; then
+  echo "Usage: $(basename "$0") <main-dir> [service_subdir] [--name <name>] [--pm npm|pnpm|yarn|bun] [--template react-swc-ts|react-ts] [--no-install]" >&2
   exit 1
 fi
 
-# MAIN_DIR is the wrapper directory; actual React app lives in frontend/ inside it
-if [[ "$RAW_TARGET" = /* ]]; then
-  MAIN_DIR="$RAW_TARGET"
-else
-  MAIN_DIR="$(pwd)/$RAW_TARGET"
-fi
-
-PROJECT_SUBDIR="frontend"
+# MAIN_DIR is already expected to be an absolute wrapper directory; React app lives in service_subdir inside it
+PROJECT_SUBDIR="${PROJECT_SUBDIR_OVERRIDE:-frontend}"
 PROJECT_DIR="$MAIN_DIR/$PROJECT_SUBDIR"
 
 PARENT_DIR="$(dirname "$PROJECT_DIR")"

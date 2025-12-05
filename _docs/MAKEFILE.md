@@ -178,7 +178,11 @@ test: ## Generate a temp project and run its tests (e2e)
 You can also generate projects from anywhere using the relocatable tool:
 
 ```bash
-_bin/skel-gen <skel-name> <target-path>
+_bin/skel-gen <skel_type> <proj_name> [service_in_proj_name]
 ```
 
-The tool prefers a skeleton's `gen` script (which contains all logic) and falls back to `make -C <skel> gen NAME=<target>` if missing.
+- `skel_type` – skeleton directory name under `_skels/` (for example `python-fastapi-skel`).
+- `proj_name` – **leaf** directory name (no `/`), created under the current working directory.
+- `service_in_proj_name` – optional inner service directory name.
+
+The tool prefers a skeleton's `gen` script (which contains all logic) and falls back to `make -C <skel> gen NAME=<main_dir> SERVICE=<service_subdir>` if missing.

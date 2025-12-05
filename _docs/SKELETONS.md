@@ -12,7 +12,7 @@ Each skeleton is a complete, working project template that can be used to bootst
 
 - **Generation**
   - From repo root: `make gen-<name> NAME=<target-path>` (delegates to the skeleton's `gen` script)
-  - From anywhere: `_bin/skel-gen <skel-name> <target-path>` (prefers per-skeleton `gen` script)
+  - From anywhere: `_bin/skel-gen <skel_type> <proj_name> [service_in_proj_name]` (prefers per-skeleton `gen` script)
   - From skeleton dir: `bash ./gen <target-path>` (the `gen` script contains ALL generation logic)
 - **Generated layout (wrapper + inner project)**
   - The `NAME` / `target-path` you pass is the **wrapper directory** (`main_dir`).

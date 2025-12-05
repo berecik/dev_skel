@@ -3,21 +3,16 @@ set -euo pipefail
 
 SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
 COMMON_DIR="$SKEL_DIR/../_common"
-RAW_TARGET="${1:-}"
+MAIN_DIR="${1:-}"
+PROJECT_SUBDIR_OVERRIDE="${2:-}"
 
-if [[ -z "$RAW_TARGET" ]]; then
-  echo "Usage: $(basename "$0") <target-path>"
+if [[ -z "$MAIN_DIR" ]]; then
+  echo "Usage: $(basename "$0") <main-dir> [service_subdir]" >&2
   exit 1
 fi
 
-# MAIN_DIR is the wrapper directory; actual Axum service lives in service/ inside it
-if [[ "$RAW_TARGET" = /* ]]; then
-  MAIN_DIR="$RAW_TARGET"
-else
-  MAIN_DIR="$(pwd)/$RAW_TARGET"
-fi
-
-PROJECT_SUBDIR="service"
+# MAIN_DIR is already expected to be an absolute wrapper directory; Axum service lives in service_subdir inside it
+PROJECT_SUBDIR="${PROJECT_SUBDIR_OVERRIDE:-service}"
 PROJECT_DIR="$MAIN_DIR/$PROJECT_SUBDIR"
 
 echo "[axum] Generating into: $MAIN_DIR (project dir: $PROJECT_SUBDIR)"

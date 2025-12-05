@@ -101,12 +101,20 @@ make gen-axum NAME=myapp
 2) With the generator tool (relocatable) from anywhere
 
 ```bash
-_bin/skel-gen <skel-name> <target-path>
+_bin/skel-gen <skel_type> <proj_name> [service_in_proj_name]
 
 # Examples
-_bin/skel-gen python-fastapi-skel ~/work/myapi
-_bin/skel-gen ts-react-skel ./frontend
+_bin/skel-gen python-fastapi-skel my-api            # → $PWD/my-api/backend/...
+_bin/skel-gen python-fastapi-skel my-api api       # → $PWD/my-api/api/...
+_bin/skel-gen ts-react-skel frontend               # → $PWD/frontend/frontend/...
+_bin/skel-gen ts-react-skel frontend ui            # → $PWD/frontend/ui/...
 ```
+
+Where:
+
+- `skel_type` is the skeleton directory name under `_skels/` (for example `python-fastapi-skel`).
+- `proj_name` is a **leaf directory name** (no `/`) created under the current working directory.
+- `service_in_proj_name` is an optional inner service directory name; if omitted, each skeleton uses its default (`backend`, `service`, `app`, `frontend`, etc.).
 
 ## Makefile Commands
 
