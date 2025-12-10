@@ -1,17 +1,15 @@
-#!/usr/bin/env bash
-# Install now simply delegates to update to keep behavior in one place
+#!/usr/bin/env python3
+"""Install dev_skel into DEV_DIR using Python implementation."""
 
-set -euo pipefail
+from dev_skel_lib import install_dev_dir, load_config
 
-# Resolve SKEL_DIR and source common config from there
-SKEL_DIR="${SKEL_DIR:=$HOME/dev_skel}"
-# shellcheck source=/dev/null
-. "${SKEL_DIR}/_bin/common.sh"
 
-echo "Installing dev skeleton to ${DEV_DIR} (delegating to update)..."
+def main() -> None:
+    cfg = load_config()
+    print(f"Installing dev skeleton to {cfg.dev_dir}...")
+    install_dev_dir(cfg)
+    print("Install complete!")
 
-# Ensure target directory exists so update can proceed
-ensure_dir "${DEV_DIR}"
 
-# Delegate to update script living in the same SKEL_DIR
-exec "${SKEL_DIR}/_bin/update-dev-skel"
+if __name__ == "__main__":
+    main()

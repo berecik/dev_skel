@@ -1,44 +1,19 @@
-#!/usr/bin/env bash
-# List available skeletons (relocatable)
+#!/usr/bin/env python3
+"""List available skeletons (relocatable)."""
 
-set -euo pipefail
+from pathlib import Path
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+from dev_skel_lib import detect_root, list_skeletons, load_config
 
-detect_root() {
-  # Priority: explicit SKEL_DIR, alongside script, then $HOME/dev_skel
-  if [[ -n "${SKEL_DIR:-}" && -d "${SKEL_DIR}/_skels" ]]; then
-    printf "%s" "$SKEL_DIR"
-    return 0
-  fi
-  local candidate
-  candidate="$(cd "${SCRIPT_DIR}/.." && pwd)"
-  if [[ -d "${candidate}/_skels" ]]; then
-    printf "%s" "$candidate"
-    return 0
-  fi
-  candidate="$HOME/dev_skel"
-  if [[ -d "${candidate}/_skels" ]]; then
-    printf "%s" "$candidate"
-    return 0
-  fi
-  echo "Error: Could not locate _skels directory. Set SKEL_DIR or keep _bin and _skels together." >&2
-  exit 1
-}
 
-ROOT="$(detect_root)"
-SKELS_DIR="${ROOT}/_skels"
+def main() -> None:
+    script_dir = Path(__file__).resolve().parent
+    cfg = load_config()
+    root = detect_root(script_dir, cfg.skel_dir)
+    skels = list_skeletons(root / "_skels")
+    for name in skels:
+        print(name)
 
-if [[ ! -d "$SKELS_DIR" ]]; then
-  echo "No _skels directory found at: $SKELS_DIR" >&2
-  exit 1
-fi
 
-# Print just the skeleton names (directory basenames) that include a Makefile
-find "$SKELS_DIR" -mindepth 1 -maxdepth 1 -type d \
-  | while IFS= read -r d; do
-      if [[ -f "$d/Makefile" ]]; then
-        basename "$d"
-      fi
-    done \
-  | sort
+if __name__ == "__main__":
+    main()
