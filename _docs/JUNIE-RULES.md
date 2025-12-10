@@ -74,6 +74,10 @@ used for e2e testing.
   - Auto-generated test applications used by CI and local `make test-*`.
   - **Never** modify these directly; instead, change the relevant skeleton
     and re-run tests.
+  - Test Project Location Rule: when you need to generate or create any
+    temporary or debugging test projects, you must place them strictly under
+    `_test_projects/` (for example, `_test_projects/my-temp-app/`). Do not
+    create testing projects anywhere else in the repository.
 
 ---
 
@@ -106,6 +110,15 @@ When you make significant architectural or workflow changes, you must:
    changes.
 
 Never leave behaviour changes undocumented: future LLMs rely on these files.
+
+### 4.3 Test Project Location Rule (Mandatory)
+
+- All LLMs (including Junie) must create any and all testing projects only in
+  the `_test_projects/` directory. This includes ad-hoc temporary projects,
+  repro cases, and debug scaffolds.
+- Do not create or write test projects at the repository root or inside
+  `_skels/`, `_docs/`, or any service/skeleton directories. Use
+  `_test_projects/` exclusively for such outputs.
 
 ---
 

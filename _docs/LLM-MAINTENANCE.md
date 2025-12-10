@@ -18,6 +18,14 @@ When maintaining this project, always read `_docs/JUNIE-RULES.md` and this
 file first, then load any skeleton-specific rules file for the skeleton you
 are working on.
 
+### Mandatory Rule: Where to Create Test Projects
+
+- All assistants (Junie and other LLMs) must create any generated testing
+  projects strictly under the `_test_projects/` directory. This includes
+  ad-hoc debug apps, reproduction cases, and temporary scaffolds.
+- Never place such projects at the repository root or inside `_skels/`,
+  `_docs/`, or service/skeleton directories.
+
 ### Maintenance Scenario (What "do maintenance" Means)
 
 For this repository, "do maintenance" or "maintenance task" has a specific
@@ -634,6 +642,8 @@ Flask generator test passed
 ## Do NOT
 
 - **Do NOT** modify files in `_test_projects/` - it's auto-generated
+- When you need to create a new test app manually during maintenance, create
+  it under `_test_projects/` only (e.g. `make gen-fastapi NAME=_test_projects/my-fastapi-repro`).
 - **Do NOT** commit `node_modules/`, `.venv/`, `target/` directories
 - **Do NOT** change the `SKEL_DIR` detection pattern - it's carefully designed
 - Prefer absolute/abspath usage to avoid relative path issues
