@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from string import Template
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List
@@ -218,6 +219,48 @@ def run_gen_command(skel_path: Path, target: Path, service_subdir: str) -> None:
         subprocess.run(["bash", str(gen_script), str(target), service_subdir], check=True)
     else:
         raise SystemExit(f"Error: generator not found: {gen_script}")
+
+
+def render_template_file(path: Path, context: Dict[str, str]) -> bool:
+    if not path.is_file():
+        return False
+
+    try:
+        raw = path.read_text(encoding="utf-8")
+        rendered = Template(raw).safe_substitute(context)
+    except ValueError as exc:
+        print(f"Warning: skipping template rendering for {path}: {exc}")
+        return False
+
+    if rendered != raw:
+        path.write_text(rendered, encoding="utf-8")
+    return True
+
+
+def render_agents_template(target: Path, service_subdir: str, skeleton_name: str, project_name: str) -> None:
+    """Render AGENTS.md and CLAUDE.md templates inside a freshly generated project.
+
+    The same context is used for both files so cross-agent and Claude-specific
+    rules stay in sync. Both the wrapper directory and the inner service
+    directory are checked.
+    """
+
+    context = {
+        "project_name": project_name,
+        "service_dir": service_subdir,
+        "skeleton_name": skeleton_name,
+        "skeleton_doc": f"_docs/{skeleton_name}.md",
+    }
+
+    service_dir = target / service_subdir
+    candidates = [
+        service_dir / "AGENTS.md",
+        target / "AGENTS.md",
+        service_dir / "CLAUDE.md",
+        target / "CLAUDE.md",
+    ]
+    for candidate in candidates:
+        render_template_file(candidate, context)
 
 
 def default_service_base(skel_name: str) -> str:

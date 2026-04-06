@@ -6,17 +6,27 @@ Instructions for AI assistants (Claude, GPT, Gemini, etc.) maintaining this proj
 
 This is a **Makefile-based project generator system**. It creates new projects from skeleton templates. The architecture follows a delegation pattern where the main Makefile calls skeleton-specific Makefiles. Each skeleton also provides `gen` and `test` helper scripts, and an executable `merge` script used during generation.
 
-LLM assistants (including Junie) also have a small hierarchy of rules
+The relocatable CLI (`_bin/skel-gen`, `_bin/install-dev-skel`,
+`_bin/update-dev-skel`, `_bin/sync-dev-skel`, `_bin/skel-list`) is now a set
+of small Python entrypoints sharing logic in `_bin/dev_skel_lib.py`. Treat
+that module as the single source of truth for config loading, project
+generation, rsync wrappers, and AGENTS template rendering. The legacy
+`_bin/common.sh` is kept only for backwards compatibility — do not extend it.
+
+LLM assistants (including Junie and Claude) have a small hierarchy of rules
 documents:
 
-1. Global rules: `_docs/JUNIE-RULES.md` (loaded first).
-2. General maintenance guide: this file (`_docs/LLM-MAINTENANCE.md`).
-3. Per-skeleton rules: `_skels/<name>/JUNIE-RULES.md`.
-4. Per-skeleton docs under `_docs/` (for example `python-fastapi-skel.md`).
+1. Cross-agent baseline: `/AGENTS.md` (Claude Code reads `/CLAUDE.md`, which
+   delegates to `/AGENTS.md`).
+2. Global rules: `_docs/JUNIE-RULES.md`.
+3. General maintenance guide: this file (`_docs/LLM-MAINTENANCE.md`).
+4. Per-skeleton rules: `_skels/<name>/JUNIE-RULES.md` and
+   `_skels/<name>/AGENTS.md` (or `CLAUDE.md` if present).
+5. Per-skeleton docs under `_docs/` (for example `python-fastapi-skel.md`).
 
-When maintaining this project, always read `_docs/JUNIE-RULES.md` and this
-file first, then load any skeleton-specific rules file for the skeleton you
-are working on.
+When maintaining this project, always read `/AGENTS.md` (or `/CLAUDE.md`),
+`_docs/JUNIE-RULES.md`, and this file first, then load any skeleton-specific
+rules file for the skeleton you are working on.
 
 ### Mandatory Rule: Where to Create Test Projects
 
@@ -72,9 +82,18 @@ Before making changes, read these files:
 3. **`_docs/MAKEFILE.md`** - Makefile architecture documentation
 4. **`_docs/SKELETONS.md`** - Skeleton template details
 5. **`_docs/DEPENDENCIES.md`** - Dependency management system documentation
-6. **`_bin/skel-gen`** - Relocatable generator tool (prefers per-skeleton `gen` script)
-7. **`skel-deps`** - Main dependency installer
-8. **`_skels/*/deps`** - Per-skeleton dependency installers
+6. **`_bin/dev_skel_lib.py`** - Shared Python helpers (config, generation,
+   rsync, AGENTS template rendering) used by every `_bin/` CLI
+7. **`_bin/skel-gen`** - Relocatable Python generator (delegates to a
+   skeleton's `gen` script and renders the templated `AGENTS.md`)
+8. **`_bin/install-dev-skel` / `update-dev-skel` / `sync-dev-skel` /
+   `skel-list`** - Other relocatable Python CLIs that share `dev_skel_lib.py`
+9. **`_skels/_common/common-wrapper.sh`** - Wrapper-directory scaffolder used
+   by all skeletons
+10. **`_skels/_common/AGENTS.md`** - Templated agents file rendered into
+    every generated project
+11. **`skel-deps`** - Main dependency installer
+12. **`_skels/*/deps`** - Per-skeleton dependency installers
 
 ## Common Tasks
 
@@ -561,6 +580,36 @@ When changing deps scripts, update:
 
 ## Critical Implementation Details
 
+### `_bin/dev_skel_lib.py` (shared CLI library)
+
+All `_bin/` Python CLIs depend on a single helper module. Key entry points:
+
+- `load_config()` — merges defaults, environment, and `~/.dev_skel.conf`
+  (sourced via a controlled subshell so shell-style expansion still works).
+- `detect_root(script_dir, configured_skel_dir)` — locates the dev_skel
+  checkout for relocatable invocations.
+- `generate_project(root, skel_name, proj_name, service_override)` — performs
+  the wrapper-aware generation, picks a unique service subdir
+  (`backend-1`, `frontend-1`, `service-1`, …), and invokes the skeleton's
+  `gen` script.
+- `render_agents_template(target, service_subdir, skeleton_name, project_name)`
+  — fills in `${project_name}`, `${service_dir}`, `${skeleton_name}`, and
+  `${skeleton_doc}` in any `AGENTS.md` (and, where present, `CLAUDE.md`)
+  shipped inside the generated project.
+- `install_dev_dir`, `update_dev_dir`, `sync_to_remote` — rsync wrappers used
+  by the install/update/sync CLIs.
+
+Add new shared behaviour here rather than duplicating it across CLIs. Keep
+the legacy `_bin/common.sh` untouched unless explicitly asked.
+
+### `_skels/_common/AGENTS.md` template
+
+`skel-gen` renders this template into every generated project so the result
+ships with up-to-date agent rules. Placeholders use Python `string.Template`
+syntax (`${name}`). When you add a new placeholder, also update the
+`render_agents_template` context in `dev_skel_lib.py` so it actually gets
+substituted.
+
 ### merge script contract
 
 - The `merge` script signature is: `merge <SKEL_DIR> <TARGET_DIR>`.
@@ -626,7 +675,11 @@ Flask generator test passed
 |---------|----------|
 | Main Makefile | `./Makefile` |
 | Main dependency installer | `./skel-deps` |
-| Helper tools | `_bin/` |
+| Helper tools (Python CLIs) | `_bin/` |
+| Shared CLI library | `_bin/dev_skel_lib.py` |
+| Common skeleton assets | `_skels/_common/` |
+| Common AGENTS template | `_skels/_common/AGENTS.md` |
+| Wrapper scaffolder | `_skels/_common/common-wrapper.sh` |
 | Skeletons | `_skels/*/` |
 | Skeleton Makefiles | `_skels/*/Makefile` |
 | Skeleton generators | `_skels/*/gen` |
@@ -636,6 +689,8 @@ Flask generator test passed
 | Project dependency installers | `_skels/*/install-deps` (copied to projects) |
 | Documentation | `_docs/` |
 | Test output | `_test_projects/` |
+| Cross-agent rules | `/AGENTS.md` |
+| Claude-specific rules | `/CLAUDE.md` |
 
 ---
 

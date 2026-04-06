@@ -4,7 +4,7 @@
 import argparse
 from pathlib import Path
 
-from dev_skel_lib import detect_root, generate_project, load_config
+from dev_skel_lib import detect_root, generate_project, load_config, render_agents_template
 
 
 def parse_args() -> argparse.Namespace:
@@ -26,6 +26,7 @@ def main() -> None:
     script_dir = Path(__file__).resolve().parent
     cfg = load_config()
     root = detect_root(script_dir, cfg.skel_dir)
+    target = Path.cwd() / args.proj_name
 
     service_subdir = generate_project(
         root=root,
@@ -33,7 +34,12 @@ def main() -> None:
         proj_name=args.proj_name,
         service_override=args.service_in_proj_name,
     )
-    target = Path.cwd() / args.proj_name
+    render_agents_template(
+        target=target,
+        service_subdir=service_subdir,
+        skeleton_name=args.skel_type,
+        project_name=args.proj_name,
+    )
     print(f"Generating from skeleton '{args.skel_type}' into: {target} (service: {service_subdir})")
     print("Done.")
 
