@@ -29,7 +29,10 @@ UsersDep = Annotated[UserCrud, Depends(get_users_crud)]
 def get_current_user(users: UsersDep, token: TokenDep) -> UserBase:
     try:
         payload = jwt.decode(
-            token, config.SECRET_KEY, algorithms=[security.ALGORITHM]
+            token,
+            str(config.JWT_SECRET),
+            algorithms=[config.JWT_ALGORITHM],
+            issuer=config.JWT_ISSUER,
         )
         token_data = TokenPayload(**payload)
     except (jwt.JWTError, ValidationError):

@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run pytest for the django-bolt project. Activates the local virtualenv if
+# present and forwards all extra arguments straight to pytest.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+if [[ -d ".venv" ]]; then
+  # shellcheck disable=SC1091
+  source .venv/bin/activate
+fi
+
+PYTEST_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --cov|--coverage)
+      PYTEST_ARGS+=(--cov --cov-report=term-missing)
+      shift
+      ;;
+    --check)
+      python manage.py check
+      exit 0
+      ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: ./test [options] [pytest-args]
+
+Options:
+  --cov     Run with coverage
+  --check   Run Django system checks only
+EOF
+      exit 0
+      ;;
+    *)
+      PYTEST_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+pytest "${PYTEST_ARGS[@]}"

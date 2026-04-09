@@ -45,10 +45,39 @@ Claude-specific complement to `_skels/python-django-skel/AGENTS.md` and
 
 ---
 
-## 4. Verification Checklist
+## 4. Ollama AI generator (`skel-gen-ai`)
+
+This skeleton has a manifest at
+`_skels/_common/manifests/python-django-skel.py` consumed by
+`_bin/skel-gen-ai`. The AI overlay creates a new Django app named after the
+user's `service_label` (slugified to `service_slug`) and produces:
+
+- `myproject/settings.py` (regenerated to register the new app)
+- `myproject/urls.py` (regenerated to mount `/api/{items_plural}/`)
+- `{service_slug}/{__init__,apps,models,admin,views,urls,tests}.py`
+- `{service_slug}/migrations/__init__.py`
+
+Operational notes:
+
+1. Edit prompts in the manifest, not the generated files. After tweaking
+   prompts run `_bin/skel-gen-ai python-django-skel <proj> --no-input
+   --skip-base --dry-run` against an existing test project to confirm the
+   target list still resolves before doing a real generation.
+2. The owner field on the model is `null=True` only when `auth_type == 'none'`.
+   Other auth styles get `null=False`. If you change that policy, update the
+   models.py prompt **and** the views.py prompt together.
+3. After generating, the user must run `python manage.py makemigrations
+   {service_slug} && python manage.py migrate` themselves — `skel-gen-ai`
+   does not run Django commands.
+
+---
+
+## 5. Verification Checklist
 
 - [ ] `make test-generators` is green.
 - [ ] Django skeleton-specific tests pass.
 - [ ] No generator-owned files (`manage.py`, key `myproject/*`) were
       hand-edited.
+- [ ] AI manifest still loads and renders prompts (`python3 -c "...
+      load_manifest(..., 'python-django-skel')"`).
 - [ ] AGENTS / CLAUDE / JUNIE rules still agree.

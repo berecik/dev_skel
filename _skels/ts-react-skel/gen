@@ -3,18 +3,22 @@ set -euo pipefail
 
 SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
 COMMON_DIR="$SKEL_DIR/../_common"
+# shellcheck disable=SC1091
 . "$COMMON_DIR/common-config.sh"
+# shellcheck disable=SC1091
+. "$COMMON_DIR/slug.sh"
 
 # Arguments:
 #   1) main-dir (required)
-#   2) optional service_subdir (must not start with --)
+#   2) optional service display name (must not start with --) — slugified
+#      to the on-disk service directory
 #   remaining: CLI options like --name/--pm/--template/--no-install
 MAIN_DIR="${1:-}"
 shift || true
 
 PROJECT_SUBDIR_OVERRIDE=""
 if [[ ${1:-} != "" && "$1" != --* ]]; then
-  PROJECT_SUBDIR_OVERRIDE="$1"
+  PROJECT_SUBDIR_OVERRIDE="$(slugify_service_name "$1")"
   shift || true
 fi
 
@@ -188,7 +192,23 @@ fi
       npm|*) INSTALL="npm i -D" ; RUNI="npm install" ;;
     esac
     $RUNI >/dev/null 2>&1 || true
-    $INSTALL eslint @types/node vitest jsdom @testing-library/react @testing-library/jest-dom >/dev/null 2>&1 || true
+
+    # The latest `npm create vite@latest --template react-swc-ts` ships a
+    # broken package.json that omits React and the SWC plugin themselves
+    # — install them explicitly so the project actually compiles.
+    case "$PM" in
+      pnpm) RUNTIME_INSTALL="pnpm add" ;;
+      yarn) RUNTIME_INSTALL="yarn add" ;;
+      bun)  RUNTIME_INSTALL="bun add" ;;
+      npm|*) RUNTIME_INSTALL="npm i" ;;
+    esac
+    # Pin React 19 explicitly so the example components keep working
+    # across vite template bumps. Bump these together when the upstream
+    # React major changes (matching @types versions live in the
+    # devDependencies install below).
+    $RUNTIME_INSTALL react@^19 react-dom@^19 >/dev/null 2>&1 || true
+
+    $INSTALL @vitejs/plugin-react-swc eslint @types/node @types/react@^19 @types/react-dom@^19 vitest jsdom @testing-library/react @testing-library/jest-dom >/dev/null 2>&1 || true
   fi
 )
 

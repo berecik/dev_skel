@@ -56,6 +56,7 @@ Framework-specific build options:
 - [python-fastapi-skel](./python-fastapi-skel.md) - FastAPI with async SQLAlchemy
 - [python-flask-skel](./python-flask-skel.md) - Flask with Flask-SQLAlchemy
 - [python-django-skel](./python-django-skel.md) - Django
+- [python-django-bolt-skel](./python-django-bolt-skel.md) - Django + django-bolt (Rust HTTP layer) + msgspec.Struct schemas
 
 ### TypeScript/JavaScript
 

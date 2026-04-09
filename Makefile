@@ -2,14 +2,21 @@
 # Generate, test, and run projects across all skeleton templates
 
 .PHONY: help list test test-all run info info-all clean clean-all status \
-        gen-fastapi gen-flask gen-django gen-react gen-js gen-spring gen-actix gen-axum \
-        test-fastapi test-flask test-django test-react test-js test-spring test-actix test-axum
+        gen-fastapi gen-flask gen-django gen-django-bolt gen-react gen-js gen-spring gen-actix gen-axum \
+        test-fastapi test-flask test-django test-django-bolt test-react test-js test-spring test-actix test-axum \
+        test-ai-generators test-ai-generators-dry \
+        test-gen-ai-fastapi test-gen-ai-django test-gen-ai-django-bolt test-gen-ai-flask \
+        test-gen-ai-spring test-gen-ai-actix test-gen-ai-axum test-gen-ai-js test-gen-ai-react \
+        test-shared-db test-shared-db-keep test-shared-db-python \
+        test-react-django-bolt test-react-django-bolt-keep \
+        test-react-fastapi test-react-fastapi-keep
 
 # Skeleton directories
 SKEL_DIR := _skels
 FASTAPI_SKEL := $(SKEL_DIR)/python-fastapi-skel
 FLASK_SKEL := $(SKEL_DIR)/python-flask-skel
 DJANGO_SKEL := $(SKEL_DIR)/python-django-skel
+DJANGO_BOLT_SKEL := $(SKEL_DIR)/python-django-bolt-skel
 REACT_SKEL := $(SKEL_DIR)/ts-react-skel
 JS_SKEL := $(SKEL_DIR)/js-skel
 SPRING_SKEL := $(SKEL_DIR)/java-spring-skel
@@ -17,7 +24,7 @@ ACTIX_SKEL := $(SKEL_DIR)/rust-actix-skel
 AXUM_SKEL := $(SKEL_DIR)/rust-axum-skel
 
 # All skeletons
-SKELETONS := $(FASTAPI_SKEL) $(FLASK_SKEL) $(DJANGO_SKEL) $(REACT_SKEL) $(JS_SKEL) $(SPRING_SKEL) $(ACTIX_SKEL) $(AXUM_SKEL)
+SKELETONS := $(FASTAPI_SKEL) $(FLASK_SKEL) $(DJANGO_SKEL) $(DJANGO_BOLT_SKEL) $(REACT_SKEL) $(JS_SKEL) $(SPRING_SKEL) $(ACTIX_SKEL) $(AXUM_SKEL)
 
 # Test output directory
 TEST_OUTPUT := _test_projects
@@ -46,29 +53,40 @@ list: ## List all skeleton projects
 #
 # === PROJECT GENERATORS (delegate to skel Makefiles) ===
 #
-gen-fastapi: ## Generate FastAPI project (NAME=myapp)
-	@$(MAKE) -C $(FASTAPI_SKEL) gen NAME=$(abspath $(NAME))
+# Usage:
+#   make gen-<skel> NAME=myapp                          # default service dir
+#   make gen-<skel> NAME=myapp SERVICE="Ticket Service" # → myapp/ticket_service/
+#
+# When SERVICE is set its slug becomes the on-disk service directory; when
+# absent the per-skeleton default base (`backend` / `frontend` / `service`)
+# is used so legacy `make gen-*` invocations keep working.
+#
+gen-fastapi: ## Generate FastAPI project (NAME=myapp [SERVICE="display name"])
+	@$(MAKE) -C $(FASTAPI_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
 
-gen-flask: ## Generate Flask project (NAME=myapp)
-	@$(MAKE) -C $(FLASK_SKEL) gen NAME=$(abspath $(NAME))
+gen-flask: ## Generate Flask project (NAME=myapp [SERVICE="display name"])
+	@$(MAKE) -C $(FLASK_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
 
-gen-django: ## Generate Django project (NAME=myapp)
-	@$(MAKE) -C $(DJANGO_SKEL) gen NAME=$(abspath $(NAME))
+gen-django: ## Generate Django project (NAME=myapp [SERVICE="display name"])
+	@$(MAKE) -C $(DJANGO_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
 
-gen-react: ## Generate React+Vite+TypeScript project (NAME=myapp)
-	@$(MAKE) -C $(REACT_SKEL) gen NAME=$(abspath $(NAME))
+gen-django-bolt: ## Generate Django-Bolt project (NAME=myapp [SERVICE="display name"])
+	@$(MAKE) -C $(DJANGO_BOLT_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
 
-gen-js: ## Generate JavaScript/Node project (NAME=myapp)
-	@$(MAKE) -C $(JS_SKEL) gen NAME=$(abspath $(NAME))
+gen-react: ## Generate React+Vite+TypeScript project (NAME=myapp [SERVICE="display name"])
+	@$(MAKE) -C $(REACT_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
 
-gen-spring: ## Generate Spring Boot project (NAME=myapp)
-	@$(MAKE) -C $(SPRING_SKEL) gen NAME=$(abspath $(NAME))
+gen-js: ## Generate JavaScript/Node project (NAME=myapp [SERVICE="display name"])
+	@$(MAKE) -C $(JS_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
 
-gen-actix: ## Generate Rust Actix-web project (NAME=myapp)
-	@$(MAKE) -C $(ACTIX_SKEL) gen NAME=$(abspath $(NAME))
+gen-spring: ## Generate Spring Boot project (NAME=myapp [SERVICE="display name"])
+	@$(MAKE) -C $(SPRING_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
 
-gen-axum: ## Generate Rust Axum project (NAME=myapp)
-	@$(MAKE) -C $(AXUM_SKEL) gen NAME=$(abspath $(NAME))
+gen-actix: ## Generate Rust Actix-web project (NAME=myapp [SERVICE="display name"])
+	@$(MAKE) -C $(ACTIX_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
+
+gen-axum: ## Generate Rust Axum project (NAME=myapp [SERVICE="display name"])
+	@$(MAKE) -C $(AXUM_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
 
 #
 # === TEST ALL GENERATORS ===
@@ -80,6 +98,7 @@ test-generators: ## Test all generators by creating test projects
 	$(MAKE) test-gen-fastapi
 	$(MAKE) test-gen-flask
 	$(MAKE) test-gen-django
+	$(MAKE) test-gen-django-bolt
 	$(MAKE) test-gen-react
 	$(MAKE) test-gen-js
 	$(MAKE) test-gen-spring
@@ -105,6 +124,12 @@ test-gen-django: ## Test Django generator
 	@$(MAKE) gen-django NAME=$(TEST_OUTPUT)/test-django-app
 	@cd $(TEST_OUTPUT)/test-django-app/backend && . .venv/bin/activate && python -c "import django; print('Django import OK')"
 	@echo "$(GREEN)Django generator test passed$(NC)"
+
+test-gen-django-bolt: ## Test Django-Bolt generator
+	@echo "$(YELLOW)>>> Testing Django-Bolt generator$(NC)"
+	@$(MAKE) gen-django-bolt NAME=$(TEST_OUTPUT)/test-django-bolt-app
+	@cd $(TEST_OUTPUT)/test-django-bolt-app/backend && . .venv/bin/activate && python -c "import django, django_bolt, msgspec; print('Django-Bolt import OK')" && python manage.py check
+	@echo "$(GREEN)Django-Bolt generator test passed$(NC)"
 
 test-gen-react: ## Test React+Vite generator
 	@echo "$(YELLOW)>>> Testing React+Vite generator$(NC)"
@@ -137,6 +162,101 @@ test-gen-axum: ## Test Rust Axum generator
 	@echo "$(GREEN)Rust Axum generator test passed$(NC)"
 
 #
+# === AI-AUGMENTED GENERATORS (Ollama) ===
+#
+# Opt-in target — these run `_bin/skel-gen-ai` for every skeleton that has
+# an AI manifest in `_skels/_common/manifests/`. They are NOT part of
+# `test-generators` because they require a local Ollama daemon and can take
+# several minutes per file.
+#
+# See: _docs/LLM-MAINTENANCE.md and `_bin/test-ai-generators --help`.
+#
+
+test-ai-generators: ## Run skel-gen-ai against every AI-supported skeleton (needs Ollama)
+	@echo "$(GREEN)=== Running AI generators (requires Ollama) ===$(NC)"
+	@_bin/test-ai-generators
+
+test-ai-generators-dry: ## Dry-run the AI test pipeline (no Ollama calls)
+	@echo "$(GREEN)=== Dry-run AI generators ===$(NC)"
+	@_bin/test-ai-generators --dry-run
+
+test-gen-ai-fastapi: ## AI-generate a FastAPI service in _test_projects/
+	@_bin/test-ai-generators --skel python-fastapi-skel
+
+test-gen-ai-django: ## AI-generate a Django service in _test_projects/
+	@_bin/test-ai-generators --skel python-django-skel
+
+test-gen-ai-django-bolt: ## AI-generate a Django-Bolt service in _test_projects/
+	@_bin/test-ai-generators --skel python-django-bolt-skel
+
+test-gen-ai-flask: ## AI-generate a Flask service in _test_projects/
+	@_bin/test-ai-generators --skel python-flask-skel
+
+test-gen-ai-spring: ## AI-generate a Spring Boot service in _test_projects/
+	@_bin/test-ai-generators --skel java-spring-skel
+
+test-gen-ai-actix: ## AI-generate a Rust Actix-web service in _test_projects/
+	@_bin/test-ai-generators --skel rust-actix-skel
+
+test-gen-ai-axum: ## AI-generate a Rust Axum service in _test_projects/
+	@_bin/test-ai-generators --skel rust-axum-skel
+
+test-gen-ai-js: ## AI-generate a Node service in _test_projects/
+	@_bin/test-ai-generators --skel js-skel
+
+test-gen-ai-react: ## AI-generate a React frontend in _test_projects/
+	@_bin/test-ai-generators --skel ts-react-skel
+
+#
+# === SHARED-DB INTEGRATION TEST ===
+#
+# Generates a wrapper containing every backend skeleton, seeds the
+# shared SQLite items table, then runs a per-stack verifier against
+# every service to confirm they all read the same DB via DATABASE_URL.
+#
+# Backends whose toolchain is missing on the host (no JDK, no Rust,
+# no Node) are SKIPPED gracefully so the test runs on minimal CI.
+#
+test-shared-db: ## Verify every backend skel sees the same shared items table
+	@echo "$(GREEN)=== Shared-DB integration test ===$(NC)"
+	@_bin/test-shared-db
+
+test-shared-db-keep: ## Same as test-shared-db but leave _test_projects/test-shared-db on disk
+	@_bin/test-shared-db --keep
+
+test-shared-db-python: ## Run only the Python backends through the shared-DB test
+	@_bin/test-shared-db \
+		--skel python-django-skel \
+		--skel python-django-bolt-skel \
+		--skel python-fastapi-skel \
+		--skel python-flask-skel
+
+#
+# === REACT + DJANGO-BOLT INTEGRATION TEST ===
+#
+# Cross-stack proof that the canonical full-stack pair works end-to-end.
+# Generates a wrapper containing python-django-bolt-skel + ts-react-skel,
+# rewrites BACKEND_URL to a non-conflicting port, builds the React
+# frontend, starts the django-bolt backend, and exercises the
+# register → login → create → list → complete items flow over real HTTP.
+#
+# Skipped gracefully when Node/npm is not installed.
+#
+test-react-django-bolt: ## Cross-stack integration test (django-bolt + ts-react)
+	@echo "$(GREEN)=== React + Django-Bolt integration test ===$(NC)"
+	@_bin/test-react-django-bolt-integration
+
+test-react-django-bolt-keep: ## Same, but leave _test_projects/test-react-django-bolt on disk
+	@_bin/test-react-django-bolt-integration --keep
+
+test-react-fastapi: ## Cross-stack integration test (fastapi + ts-react)
+	@echo "$(GREEN)=== React + FastAPI integration test ===$(NC)"
+	@_bin/test-react-fastapi-integration
+
+test-react-fastapi-keep: ## Same, but leave _test_projects/test-react-fastapi on disk
+	@_bin/test-react-fastapi-integration --keep
+
+#
 # === SKELETON TEST TARGETS ===
 #
 test: ## Run all skeleton e2e tests (generates projects and runs their tests)
@@ -156,6 +276,10 @@ test-flask: ## Run Flask skeleton tests
 test-django: ## Run Django skeleton tests
 	@echo "$(GREEN)Running Django tests...$(NC)"
 	$(MAKE) -C $(DJANGO_SKEL) test
+
+test-django-bolt: ## Run Django-Bolt skeleton tests
+	@echo "$(GREEN)Running Django-Bolt tests...$(NC)"
+	$(MAKE) -C $(DJANGO_BOLT_SKEL) test
 
 test-react: ## Run React+Vite skeleton tests
 	@echo "$(GREEN)Running React+Vite tests...$(NC)"

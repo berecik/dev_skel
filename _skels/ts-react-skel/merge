@@ -16,8 +16,22 @@ EXCLUDE_DIRS=(
   ".yarn"
 )
 
-# Files that should always overwrite (skeleton customizations)
-OVERWRITE_PATTERN="^/(vite\.config\.ts|src/App\.tsx|src/App\.css|src/App\.test\.tsx|src/setupTests\.ts)$"
+# Files that should always overwrite (skeleton customizations).
+#
+# - `tsconfig.json`, `index.html` and `src/main.tsx` are included
+#   because the upstream vite template (`react-swc-ts` in vite >= 8)
+#   regressed to a vanilla-TS scaffold that omits JSX support and the
+#   React entry point — we replace those bits with the
+#   correctly-configured files shipped with the skeleton.
+# - `src/App.tsx` / `src/App.test.tsx` / `src/App.css` / `src/config.ts`
+#   ship as the canonical example (typed item repository + JWT auth
+#   layer + react-hooks demo) so they always replace the vite scaffold's
+#   demo content.
+# - The `src/api/`, `src/auth/`, `src/hooks/` and `src/components/`
+#   directories ship the supporting modules. The merge script copies
+#   anything not already present, so we only need explicit overwrite
+#   entries for files vite already wrote at the same path.
+OVERWRITE_PATTERN="^/(vite\.config\.ts|tsconfig\.json|index\.html|src/App\.tsx|src/App\.css|src/App\.test\.tsx|src/setupTests\.ts|src/main\.tsx|src/config\.ts|src/api/items\.ts|src/auth/token-store\.ts|src/auth/use-auth-token\.ts|src/hooks/use-items\.ts|src/state/app-state-store\.ts|src/state/state-api\.ts|src/state/use-app-state\.ts|src/state/AppStateProvider\.tsx|src/components/LoginForm\.tsx|src/components/ItemForm\.tsx|src/components/ItemList\.tsx)$"
 
 while IFS= read -r -d '' src; do
   rel="${src#"$SKEL_DIR"}"

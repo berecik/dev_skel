@@ -1,0 +1,5 @@
+django>=4.2
+django-bolt>=0.7
+msgspec>=0.18
+python-dotenv
+gunicorn

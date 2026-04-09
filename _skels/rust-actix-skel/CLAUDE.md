@@ -19,10 +19,21 @@ Claude-specific complement to `_skels/rust-actix-skel/AGENTS.md` and
 ## 2. Skeleton Snapshot
 
 - Rust Actix-web service skeleton (fast HTTP services / quick APIs /
-  edge services). Generates into `<wrapper>/service-1/` and friends.
+  edge services). Generates into `<wrapper>/<service_slug>/` (or
+  `<wrapper>/service/` when no service name is given).
 - The generator runs `cargo new` then overlays skeleton files. The merge
   script **excludes** `Cargo.toml` and `src/main.rs` — do not weaken those
   exclusions.
+- **Shared env contract** (CRITICAL): `src/config.rs` exposes a `Config`
+  struct populated by `Config::from_env()` from `DATABASE_URL`,
+  `JWT_SECRET`, `JWT_ALGORITHM`, `JWT_ISSUER`, `JWT_ACCESS_TTL`,
+  `JWT_REFRESH_TTL`, `SERVICE_HOST`, and `SERVICE_PORT`. The
+  `load_dotenv()` helper walks up to `<wrapper>/.env` so child processes
+  inherit the wrapper-shared environment. The `Config` is held inside
+  `AppState` and reachable from handlers via
+  `web::Data<Arc<AppState>>`. Do not re-read `std::env::var` directly in
+  handler code — go through the `Config`. Never hardcode a JWT secret or
+  database URL.
 
 ---
 

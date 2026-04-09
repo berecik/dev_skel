@@ -19,8 +19,18 @@ Claude-specific complement to `_skels/js-skel/AGENTS.md` and
 ## 2. Skeleton Snapshot
 
 - Plain Node.js / JavaScript skeleton (used for backend tools, scripts,
-  or simple Node services). Generates into `<wrapper>/app-1/` or
-  `<wrapper>/service-1/`.
+  or simple Node services). Generates into `<wrapper>/<service_slug>/`
+  (or `<wrapper>/app/` when no service name is given).
+- **Shared env contract** (CRITICAL): `src/config.js` loads
+  `<service>/.env` first then `<wrapper>/.env` via the `dotenv` package
+  (`first wins`, so local overrides survive). It exposes a single `config`
+  object with `databaseUrl`, `jwt.{secret,algorithm,issuer,accessTtl,
+  refreshTtl}`, and `service.{host,port}`. Import it via
+  `import { config } from './config.js'` — do not reach into
+  `process.env` directly in handler code. Never hardcode a JWT secret or
+  database URL: every service in the wrapper relies on the same
+  env-driven values so a token issued by the JS service is accepted by
+  every other service.
 
 ---
 

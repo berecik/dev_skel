@@ -10,12 +10,14 @@ shell implementations.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
+import sys
 from string import Template
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 CONFIG_KEYS: List[str] = [
@@ -199,7 +201,159 @@ def list_skeletons(skels_dir: Path) -> List[str]:
     return sorted(names)
 
 
+def choose_skeleton_interactive(
+    skels: List[str],
+    *,
+    label: str = "skeleton",
+    no_input: bool = False,
+    descriptions: Optional[Dict[str, str]] = None,
+) -> str:
+    """Show a numbered list of ``skels`` and read the user's selection.
+
+    Returns the chosen skeleton name. The user can pick by **number**
+    (``1``..``N``), exact name (``python-fastapi-skel``), or unambiguous
+    prefix (``fast`` → ``python-fastapi-skel``).
+
+    Raises :class:`SystemExit` with an actionable message when:
+    - ``skels`` is empty,
+    - ``no_input`` is True (the caller passed ``--no-input``),
+    - or stdin is not a TTY (typical in CI / pipes).
+
+    ``descriptions`` is an optional ``{skel_name: short_text}`` map used
+    to render a one-line summary next to each entry.
+    """
+
+    if not skels:
+        raise SystemExit(f"No {label}s available.")
+
+    if no_input:
+        raise SystemExit(
+            f"No {label} provided and --no-input is set.\n"
+            f"Available {label}s: {', '.join(skels)}\n"
+            f"Pass one as a positional argument."
+        )
+
+    if not sys.stdin.isatty():
+        raise SystemExit(
+            f"No {label} provided and stdin is not a TTY.\n"
+            f"Available {label}s: {', '.join(skels)}\n"
+            f"Pass one as a positional argument."
+        )
+
+    desc_map = descriptions or {}
+    name_width = max(len(s) for s in skels)
+
+    print()
+    print(f"  Available {label}s:")
+    for i, name in enumerate(skels, start=1):
+        suffix = f"  {desc_map[name]}" if name in desc_map else ""
+        print(f"    {i:2d}) {name:{name_width}}{suffix}")
+    print()
+
+    while True:
+        try:
+            raw = input(
+                f"  Select {label} [1-{len(skels)} or name]: "
+            ).strip()
+        except EOFError:
+            raise SystemExit(f"\nNo {label} selected.")
+
+        if not raw:
+            continue
+
+        # By number
+        if raw.isdigit():
+            idx = int(raw) - 1
+            if 0 <= idx < len(skels):
+                return skels[idx]
+            print(f"  Index out of range (1-{len(skels)}).")
+            continue
+
+        # Exact name
+        if raw in skels:
+            return raw
+
+        # Unambiguous prefix or substring match (substring is friendlier)
+        substring_matches = [s for s in skels if raw in s]
+        if len(substring_matches) == 1:
+            return substring_matches[0]
+        if len(substring_matches) > 1:
+            print(
+                f"  Ambiguous: {raw!r} matches "
+                f"{', '.join(substring_matches)}. Try again."
+            )
+            continue
+
+        print(f"  Unknown {label}: {raw!r}. Pick a number or full name.")
+
+
+def prompt_text(label: str, default: Optional[str] = None, *, no_input: bool = False) -> str:
+    """Prompt the user for a single text value (project name, etc.).
+
+    Same TTY / no-input semantics as :func:`choose_skeleton_interactive`.
+    """
+
+    if no_input:
+        if default is None:
+            raise SystemExit(f"No {label} provided and --no-input is set.")
+        return default
+    if not sys.stdin.isatty():
+        if default is None:
+            raise SystemExit(
+                f"No {label} provided and stdin is not a TTY. Pass it as an argument."
+            )
+        return default
+    suffix = f" [{default}]" if default else ""
+    try:
+        raw = input(f"  {label}{suffix}: ").strip()
+    except EOFError:
+        if default is None:
+            raise SystemExit(f"\nNo {label} provided.")
+        return default
+    return raw or (default or "")
+
+
+_SLUG_INVALID_RE = re.compile(r"[^0-9a-zA-Z]+")
+
+
+def slugify_service_name(name: str) -> str:
+    """Convert a human-readable service name to a directory-safe slug.
+
+    Examples
+    --------
+    >>> slugify_service_name("Ticket Service")
+    'ticket_service'
+    >>> slugify_service_name("user-auth API")
+    'user_auth_api'
+    >>> slugify_service_name("__weird__ name__")
+    'weird_name'
+    >>> slugify_service_name("")
+    'service'
+
+    The slug is used as a directory name **and** a Python identifier
+    (Django apps, FastAPI modules, etc.) so it must be a valid identifier.
+    Empty / pathological inputs fall back to ``"service"``.
+    """
+
+    if not name:
+        return "service"
+    cleaned = _SLUG_INVALID_RE.sub("_", name).strip("_").lower()
+    if not cleaned:
+        return "service"
+    if cleaned[0].isdigit():
+        cleaned = f"svc_{cleaned}"
+    return cleaned
+
+
 def choose_service_subdir(main_dir: Path, base_name: str) -> str:
+    """Pick a unique subdirectory name inside ``main_dir``.
+
+    If ``base_name`` is free, returns it as-is. Otherwise appends a numeric
+    suffix (``-1``, ``-2``, ...) until a free slot is found. The auto-suffix
+    only kicks in when the user generates a second service whose slug
+    collides with an existing one — fresh wrappers always get the bare slug.
+    """
+
     n = 1
     candidate = base_name
     while (main_dir / candidate).exists():
@@ -264,31 +418,70 @@ def render_agents_template(target: Path, service_subdir: str, skeleton_name: str
 
 
 def default_service_base(skel_name: str) -> str:
+    """Default service-subdir base name for a given skeleton.
+
+    Must stay in sync with each skeleton's bash ``gen`` script default so
+    that ``make gen-<name>`` and ``_bin/skel-gen <name>`` produce the same
+    on-disk layout.
+    """
+
     mapping = {
         "python-fastapi-skel": "backend",
         "python-django-skel": "backend",
+        "python-django-bolt-skel": "backend",
         "python-flask-skel": "backend",
         "ts-react-skel": "frontend",
     }
     return mapping.get(skel_name, "service")
 
 
-def generate_project(root: Path, skel_name: str, proj_name: str, service_override: str | None) -> str:
+def generate_project(
+    root: Path,
+    skel_name: str,
+    proj_name: str,
+    service_name: Optional[str] = None,
+) -> str:
+    """Generate a service inside ``proj_name`` (the wrapper directory).
+
+    ``proj_name`` is normally a leaf directory name created under the
+    current working directory. The two special values ``""`` and ``"."``
+    are interpreted as **"use the current working directory itself as the
+    wrapper"** — in that mode no new directory is created, the project's
+    display name is taken from ``Path.cwd().name``, and the per-skeleton
+    ``gen`` script overlays its files directly into the cwd.
+
+    ``service_name`` is the **display name** the user typed (e.g. "Ticket
+    Service"); the on-disk subdirectory becomes its slug
+    (e.g. ``ticket_service``). When ``service_name`` is ``None`` we fall back
+    to the per-skeleton default base (``backend``, ``frontend``, ``service``)
+    so existing tooling that does not know about service names — including
+    the static ``make gen-<name> NAME=...`` Makefile targets — keeps working.
+
+    Returns the actual subdirectory name that was created (which may have a
+    numeric suffix appended if the slug already existed in the wrapper).
+    """
+
     skels_dir = root / "_skels"
     require_dir(skels_dir, f"No _skels directory found at: {skels_dir}")
 
     skel_path = skels_dir / skel_name
     require_dir(skel_path, f"Error: skeleton not found: {skel_name} (expected at {skel_path})")
 
-    if "/" in proj_name:
-        raise SystemExit("Error: proj_name must be a leaf directory name (no / characters)")
-
-    target = Path.cwd() / proj_name
+    if proj_name in ("", "."):
+        target = Path.cwd()
+    else:
+        if "/" in proj_name:
+            raise SystemExit("Error: proj_name must be a leaf directory name (no / characters)")
+        target = Path.cwd() / proj_name
     main_dir = target
 
     ensure_dir(target.parent)
 
-    base = service_override or default_service_base(skel_name)
+    if service_name:
+        base = slugify_service_name(service_name)
+    else:
+        base = default_service_base(skel_name)
+
     service_subdir = base
     if (main_dir / service_subdir).exists():
         service_subdir = choose_service_subdir(main_dir, base)

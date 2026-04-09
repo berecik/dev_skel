@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Stop any django-bolt server started by ./run or ./run-dev. The
+# implementation is intentionally small — pkill on the runbolt management
+# command. Wrapper-level scripts forward all arguments to this file.
+
+if pgrep -f "manage.py runbolt" >/dev/null 2>&1; then
+  echo "Stopping django-bolt servers..."
+  pkill -f "manage.py runbolt" || true
+  echo "Stopped."
+else
+  echo "No django-bolt server is running."
+fi

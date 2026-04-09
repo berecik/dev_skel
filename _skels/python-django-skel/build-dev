@@ -18,7 +18,7 @@ fi
 # Activate and install dependencies
 source .venv/bin/activate
 pip install -q --upgrade pip
-pip install -q django python-dotenv gunicorn
+pip install -q django python-dotenv gunicorn pyjwt
 
 # Install dev dependencies
 pip install -q pytest pytest-django pytest-cov

@@ -78,22 +78,75 @@ requests a different order:
 Before making changes, read these files:
 
 1. **`Makefile`** - Main orchestration file
-2. **`_skels/*/Makefile`** - Individual skeleton Makefiles (8 total)
+2. **`_skels/*/Makefile`** - Individual skeleton Makefiles (9 total)
 3. **`_docs/MAKEFILE.md`** - Makefile architecture documentation
 4. **`_docs/SKELETONS.md`** - Skeleton template details
 5. **`_docs/DEPENDENCIES.md`** - Dependency management system documentation
 6. **`_bin/dev_skel_lib.py`** - Shared Python helpers (config, generation,
    rsync, AGENTS template rendering) used by every `_bin/` CLI
-7. **`_bin/skel-gen`** - Relocatable Python generator (delegates to a
-   skeleton's `gen` script and renders the templated `AGENTS.md`)
-8. **`_bin/install-dev-skel` / `update-dev-skel` / `sync-dev-skel` /
-   `skel-list`** - Other relocatable Python CLIs that share `dev_skel_lib.py`
-9. **`_skels/_common/common-wrapper.sh`** - Wrapper-directory scaffolder used
-   by all skeletons
-10. **`_skels/_common/AGENTS.md`** - Templated agents file rendered into
+7. **`_bin/skel_ai_lib.py`** - Ollama-backed AI generator library
+   (`OllamaClient`, `GenerationContext`, manifest loader, prompt rendering,
+   target writer). Stdlib only.
+8. **`_bin/skel-gen`** - Canonical entrypoint. As of 2026-04 it is a
+   thin dispatcher that exec's the AI generator by default
+   (`_bin/skel-gen-ai`) or the static fallback when `--static` is
+   passed (`_bin/skel-gen-static`). Positional order: `[proj_name]
+   [skel_name] [service_name]` — both `proj_name` and `skel_name`
+   are optional. `proj_name=.` (or omitted) installs into the current
+   directory.
+9. **`_bin/skel-gen-ai`** - Relocatable Ollama-augmented generator.
+   Runs the static skel-gen first (unless `--skip-base`), then loads
+   the AI manifest at `_skels/_common/manifests/<skel>.py` and rewrites
+   the listed files via Ollama. Two modes: **single-skeleton** (when an
+   explicit positional `skel_name` is given) and **full-stack** (when
+   omitted — asks for backend + frontend + three custom prompts and
+   integrates them). Same positional order as `skel-gen`. The
+   `_bin/skel-gen-ai` name is preserved as a stable alias for scripts
+   that want to pin the AI path explicitly.
+10. **`_bin/skel-gen-static`** - Pre-2026-04 `skel-gen` content,
+    renamed when the canonical entrypoint switched to AI by default.
+    No Ollama involved — just the static skeleton overlay through
+    `dev_skel_lib.generate_project()`. Use this in CI / when Ollama
+    is unavailable / when you want a deterministic AI-free baseline.
+    Same `[proj_name] [skel_name] [service_name]` positional order.
+10. **`_bin/test-ai-generators`** - End-to-end test runner for the AI
+    generator. Auto-discovers manifests under
+    `_skels/_common/manifests/`, runs base scaffold + Ollama overlay for
+    each, then validates the result with a per-skeleton sanity check.
+    **All 9 skeletons** are wired in:
+    - Django / Django-Bolt → `manage.py check` (+ `pytest --collect-only`
+      for django-bolt).
+    - FastAPI / Flask → module import via the production app factory.
+    - Spring → `mvn -q -DskipTests package`.
+    - Rust Actix / Axum → `cargo check --quiet`.
+    - JS → `node --check` per file + ESM import smoke.
+    - React → `npx tsc --noEmit`.
+    Validators that need a missing toolchain (Maven, Cargo, Node) skip
+    silently; toolchains that *are* present run the full per-stack
+    check. Backs the `make test-ai-generators` target. Opt-in
+    (separate from `make test-generators`) because it needs Ollama
+    and is slow.
+11. **`_bin/test-shared-db`** - Cross-language integration test runner.
+    Generates a wrapper containing every backend skeleton, seeds the
+    shared SQLite `items` table, and runs a per-stack verifier that
+    confirms each backend reads the seed row through `DATABASE_URL`.
+    Performs a cross-stack write/read round-trip across two Python
+    venvs to prove data is genuinely shared (not just the file path).
+    Skips toolchains that aren't installed (`java`, `cargo`, `node`)
+    gracefully so it runs on minimal CI hosts. Backs the
+    `make test-shared-db` family of targets.
+10. **`_bin/install-dev-skel` / `update-dev-skel` / `sync-dev-skel` /
+    `skel-list`** - Other relocatable Python CLIs that share `dev_skel_lib.py`
+11. **`_skels/_common/common-wrapper.sh`** - Wrapper-directory scaffolder used
+    by all skeletons
+12. **`_skels/_common/AGENTS.md`** - Templated agents file rendered into
     every generated project
-11. **`skel-deps`** - Main dependency installer
-12. **`_skels/*/deps`** - Per-skeleton dependency installers
+13. **`_skels/_common/manifests/<skel>.py`** - Per-skeleton AI generation
+    manifests consumed by `skel-gen-ai`. Each manifest exports a top-level
+    `MANIFEST` dict listing the files to (re)generate, the template files
+    they should reference, and the prompt for each.
+14. **`skel-deps`** - Main dependency installer
+15. **`_skels/*/deps`** - Per-skeleton dependency installers
 
 ## Common Tasks
 
@@ -610,6 +663,306 @@ syntax (`${name}`). When you add a new placeholder, also update the
 `render_agents_template` context in `dev_skel_lib.py` so it actually gets
 substituted.
 
+### `_skels/_common/common-wrapper.sh` (multi-service wrapper scaffolder)
+
+`common-wrapper.sh` is what turns a generated service into a wrapper-aware
+project. It runs at the end of every skeleton's bash `gen` script and is
+**idempotent** — re-running it as more services are added preserves the
+existing `.env` and existing service directories.
+
+Outputs in `<wrapper>/`:
+
+- `.env` — created on the first run only (seeded from `.env.example`).
+  Contains the wrapper-shared `DATABASE_URL` (default
+  `sqlite:///_shared/db.sqlite3`), `JWT_SECRET`, `JWT_ALGORITHM`,
+  `JWT_ISSUER`, `JWT_ACCESS_TTL`, `JWT_REFRESH_TTL`, plus per-component
+  `DATABASE_*` fallback variables.
+- `.env.example` — always rewritten so the documented baseline stays in
+  sync with the scaffolder. Commit this; do NOT commit `.env`.
+- `_shared/README.md` and `_shared/db.sqlite3` — the shared layer (default
+  SQLite database lives here).
+- `README.md`, `Makefile` — wrapper-level docs and Make targets that
+  delegate to the wrapper scripts (with optional `SERVICE=<slug>`).
+- `services` — discovery script that lists every service whose directory
+  contains an executable `install-deps`.
+- Multi-service dispatch wrapper scripts for every executable script
+  found in any service directory (`run`, `run-dev`, `test`, `build`,
+  `build-dev`, `stop`, `stop-dev`, `install-deps`, `lint`, `format`,
+  `deps`). Each script:
+  1. Sources `<wrapper>/.env` so child processes inherit the shared env.
+  2. Discovers services dynamically (any subdir that contains the matching
+     script and is not `_shared` / hidden).
+  3. If the first arg matches a service slug, dispatches only to that
+     service. Otherwise:
+     - **single-shot** scripts (`run`, `run-dev`, `lint`, `format`, `deps`)
+       run on the first matching service.
+     - **fan-out** scripts (`test`, `build`, `build-dev`, `stop`,
+       `stop-dev`, `install-deps`) run on every matching service in order.
+
+When you add a new wrapper script convention, edit the `SINGLE_SHOT_SCRIPTS`
+or `FAN_OUT_SCRIPTS` arrays at the top of `common-wrapper.sh`.
+
+### Backend skel env contract
+
+Every backend skel — Python (`python-django-skel`,
+`python-django-bolt-skel`, `python-fastapi-skel`, `python-flask-skel`),
+Java (`java-spring-skel`), Rust (`rust-actix-skel`, `rust-axum-skel`), and
+JS (`js-skel`) — follows the same env-driven config rule. Each settings
+or config layer:
+
+1. Loads `<wrapper>/.env` first (so the shared `DATABASE_URL` /
+   `DATABASE_JDBC_URL` / `JWT_SECRET` etc. are visible) and the local
+   service `.env` second so per-service overrides win.
+2. Reads JWT material (`JWT_SECRET`, `JWT_ALGORITHM`, `JWT_ISSUER`,
+   `JWT_ACCESS_TTL`, `JWT_REFRESH_TTL`) from environment variables, never
+   from a hardcoded constant or a Django-specific salt.
+3. Resolves the database connection from a single shared variable, with
+   a per-stack helper:
+   - **Django / Django-Bolt** → `_build_databases()` reads `DATABASE_URL`
+     (sqlite:/// or postgres://...) and falls back to
+     `<wrapper>/_shared/db.sqlite3`.
+   - **FastAPI / Flask** → `_resolve_database_url()` does the same,
+     resolving sqlite paths relative to the wrapper.
+   - **Spring Boot** → `application.properties` reads
+     `${SPRING_DATASOURCE_URL:${DATABASE_JDBC_URL:jdbc:h2:mem:testdb}}`
+     and the matching `SPRING_DATASOURCE_USERNAME` / `_PASSWORD`. The
+     wrapper `.env` ships `SPRING_DATASOURCE_URL` and `DATABASE_JDBC_URL`
+     side-by-side with `DATABASE_URL` so the JVM and Python services
+     point at the same store.
+   - **Rust (Actix / Axum)** → `src/config.rs::Config::from_env()`
+     wraps `std::env::var` and exposes typed accessors. The bundled
+     `load_dotenv()` walks up to the wrapper directory before reading
+     local `.env`.
+   - **JS (Node)** → `src/config.js` uses `dotenv` (already in
+     `package.json`) to load `<service>/.env` first, then
+     `<wrapper>/.env`, exposing a single `config` object with `databaseUrl`,
+     `jwt`, and `service` namespaces.
+4. JWT material is exposed as a single bean / module / object so handlers
+   can `inject(JwtProperties)` (Spring), `import { config } from './config.js'`
+   (Node), pull `web::Data<Arc<AppState>>` carrying the `Config` (Rust),
+   or read `settings.JWT_SECRET` (Django).
+
+When editing skel settings: never re-introduce a hardcoded sqlite path,
+JWT secret, or a Django `SECRET_KEY` reference for token signing. The
+env-driven flow is the contract that makes services in the same wrapper
+interchangeable.
+
+The wrapper `.env` ships `DATABASE_URL` (abstract / Python form),
+`DATABASE_JDBC_URL` (JVM form), and `SPRING_DATASOURCE_URL` (Spring's
+native variable name) side-by-side. When you switch the wrapper to
+Postgres, update **all three** in lockstep — the dev_skel `.env.example`
+documents this requirement.
+
+### `_bin/skel_ai_lib.py` (Ollama AI generator)
+
+The AI generator is intentionally separate from `dev_skel_lib.py` to keep
+the static-generation path dependency-free and to make the AI layer easy to
+mock or replace.
+
+Key entry points:
+
+- `OllamaConfig.from_env()` — read `OLLAMA_MODEL`, `OLLAMA_BASE_URL`,
+  `OLLAMA_TIMEOUT`, `OLLAMA_TEMPERATURE`. The `/v1` suffix on
+  `OLLAMA_BASE_URL` is normalised away because the client appends the route
+  segment itself.
+- `OllamaClient.verify()` — pings `/api/tags` and confirms the configured
+  model is loaded locally; raises a friendly `OllamaError` otherwise.
+- `OllamaClient.chat(system, user)` — single chat completion call against
+  the OpenAI-compatible `/v1/chat/completions` endpoint. Stdlib only
+  (`urllib.request`), so no extra Python dependency is needed.
+- `GenerationContext` — dataclass holding the user's answers (service label,
+  item name, auth type, auth notes) plus derived helpers (`item_class`,
+  `items_plural`, `service_slug`, `auth_is_none`, `auth_required`). Its
+  `as_template_vars()` method is the single source of truth for prompt
+  placeholders.
+- `prompt_user_dialog(...)` — interactive prompt that collects the missing
+  pieces, honouring `--no-input` and CLI overrides.
+- `load_manifest(repo_root, skeleton_name)` — loads
+  `_skels/_common/manifests/<skel>.py` and validates the `MANIFEST` dict.
+- `load_integration_manifest(repo_root, skeleton_name)` — loads the
+  optional `INTEGRATION_MANIFEST` block from the same per-skel file.
+  Returns `None` (not an exception) when no integration manifest is
+  declared, so opt-in is the default for new skeletons.
+- `discover_siblings(wrapper_root, exclude_slug)` — walks the wrapper
+  directory and returns a `List[ServiceSummary]` for every sibling
+  service. Each summary contains the slug, kind, detected tech, and a
+  small map of `key_files: Dict[rel_path, contents]` (configured per
+  skel via `_SIBLING_KEY_FILES`). The summaries get exposed to
+  integration prompts via the `{wrapper_snapshot}` placeholder.
+- `expand_target_paths(target, ctx)` — formats placeholders inside a
+  target's `path`, `template`, and `description` so manifest entries can use
+  `{service_slug}` etc. directly.
+- `generate_targets(client, manifest, ctx, dry_run, progress)` — runs every
+  manifest target through Ollama, cleans the response of stray markdown
+  fences, and writes the result into the project directory.
+- `run_integration_phase(client, manifest, ctx, ...)` — second Ollama
+  pass that uses the integration manifest's prompts. Identical
+  bookkeeping to `generate_targets` but separates the system prompt
+  and target list so the per-target and integration phases can have
+  totally different "voices" (the per-target prompts know nothing
+  about siblings; the integration prompts know nothing about
+  rewriting templates).
+- `run_service_tests(test_command, ctx, *, timeout_s)` — runs the
+  integration manifest's test command inside the new service
+  directory, returning a `TestRunResult` with stdout/stderr/exit code
+  whether the run passed or failed.
+- `run_test_and_fix_loop(client, ctx, manifest, integration_results)` —
+  bounded loop that runs the test command, asks Ollama to repair each
+  failing integration file via a second-turn prompt that includes the
+  current contents + truncated test output, then re-runs. Bounded by
+  `manifest.fix_iterations` (default `2`).
+
+### `_bin/test-ai-generators` (AI end-to-end runner)
+
+`_bin/test-ai-generators` is the AI counterpart of `make test-generators`.
+For every manifest under `_skels/_common/manifests/`, it:
+
+1. Wipes any previous `_test_projects/test-ai-<skel>/` directory.
+2. Runs the static `_bin/skel-gen` flow (so the wrapper, virtualenv, and
+   skeleton template files all exist before the AI overlay touches them).
+3. Loads the manifest, builds a `GenerationContext` from the default
+   service / item / auth answers (overridable via flags), and calls
+   `generate_targets` to write the AI-generated files.
+4. Runs a per-skeleton validator:
+   - `python-django-skel`: `manage.py check`.
+   - `python-django-bolt-skel`: `manage.py check` + pytest collection on
+     `app/tests`.
+   - `python-fastapi-skel`: import the freshly generated
+     `app/<service_slug>` module via the project's virtualenv.
+   - All skeletons get a baseline `py_compile` syntax check.
+5. Cleans up the directory on success unless `--keep` is set.
+
+Selected flags:
+
+- `--skel <name>` (repeatable) — limit the run to one or more skeletons.
+- `--service-name`, `--item-name`, `--auth-type`, `--auth-details` —
+  override the dialog defaults (`Sample Service` / `ticket` / `jwt`).
+- `--ollama-model`, `--ollama-url`, `--ollama-temperature` — override
+  Ollama config for this run only.
+- `--dry-run` — skip the Ollama call entirely; only verifies that the
+  base scaffold succeeds and the manifest paths resolve.
+- `--skip-base` — reuse an existing `_test_projects/test-ai-<skel>/`
+  instead of regenerating it.
+- `--keep` — leave the result on disk after a successful run for manual
+  inspection.
+
+Exit codes: `0` (all passed), `1` (at least one skeleton failed),
+`2` (Ollama unreachable / model missing — treated as a skip).
+
+The runner is intentionally **not** part of `make test-generators`. AI
+runs need a local Ollama daemon and can take 30+ minutes total against
+the default `gemma4:31b` model. Drop to a smaller coder model on
+slower hardware:
+
+```bash
+OLLAMA_MODEL=qwen3-coder:30b OLLAMA_TIMEOUT=300 make test-ai-generators
+```
+
+Use the runner after editing a manifest, when bumping the default
+model, or as part of a manual maintenance pass.
+
+To add a new AI-supported skeleton, drop a manifest under
+`_skels/_common/manifests/` (the runner will auto-discover it) and, if
+the validation step needs more than the baseline syntax check, add an
+entry to `VALIDATORS` in `_bin/test-ai-generators`.
+
+### `_skels/_common/manifests/` (AI generation manifests)
+
+Each AI-supported skeleton ships a manifest file at
+`_skels/_common/manifests/<skeleton-name>.py` exposing a top-level
+`MANIFEST` dict with this shape:
+
+```python
+SYSTEM_PROMPT = """..."""
+
+MANIFEST = {
+    "system_prompt": SYSTEM_PROMPT,
+    "notes": "post-generation hint shown to the user",
+    "targets": [
+        {
+            "path": "{service_slug}/models.py",
+            "template": "myproject/models.py",  # optional, relative to skel root
+            "language": "python",
+            "description": "models.py — main entity",
+            "prompt": """...{item_class}... REFERENCE: ---\n{template}\n---""",
+        },
+    ],
+}
+```
+
+Available placeholders inside `path`, `template`, `description`, and
+`prompt`: `skeleton_name`, `project_name`, `service_subdir`, `service_label`,
+`service_slug`, `item_name`, `item_class`, `items_plural`, `auth_type`,
+`auth_details`, `auth_is_none`, `auth_required`, plus uppercase variants
+(`SERVICE_SLUG`, `ITEM_NAME`, `ITEM_CLASS`, `ITEMS_PLURAL`) for embedding
+constant names directly (`{ITEMS_PLURAL}_BASE` → `TASKS_BASE`), plus the
+special `{template}` slot inside prompts (the contents of the referenced
+template file). Manifests live outside the skeleton tree so the per-skeleton
+`merge` scripts do not need to learn about them.
+
+#### Optional `INTEGRATION_MANIFEST` block
+
+The same per-skel manifest file may declare a second top-level dict
+named `INTEGRATION_MANIFEST` with the same shape as `MANIFEST` plus
+two extra fields:
+
+```python
+INTEGRATION_MANIFEST = {
+    "system_prompt": "...",       # rendered with {wrapper_snapshot} etc.
+    "targets": [...],             # additive — never overwrite first-pass files
+    "test_command": "./test app/tests/test_integration.py -q",  # default: "./test"
+    "fix_iterations": 2,          # default: 2
+    "notes": "...",
+}
+```
+
+When present, `_bin/skel-gen-ai` runs a **second Ollama session**
+after the per-target generation finishes. The integration prompts get
+two extra placeholders: `{wrapper_snapshot}` (Markdown rendering of
+every sibling service's slug, kind, tech, and key files) and
+`{sibling_count}` / `{sibling_slugs}`. The phase is silently skipped
+when `INTEGRATION_MANIFEST` is absent. After the integration files
+are written, `skel-gen-ai` runs a bounded test-and-fix loop:
+
+1. Execute `test_command` inside the new service directory.
+2. If exit ≠ 0, ask Ollama to repair each integration file (one
+   round-trip per file) using a "fix" system prompt that includes
+   the current file contents + truncated test output.
+3. Re-run, capped at `fix_iterations`.
+
+CLI knobs: `--no-integrate` skips the integration phase entirely;
+`--no-test-fix` runs the integration phase but skips the loop. Both
+default-on so a fresh `skel-gen-ai` run produces a fully integrated
+service out of the box.
+
+The canonical example of an `INTEGRATION_MANIFEST` lives in
+`_skels/_common/manifests/python-django-bolt-skel.py` (3 targets:
+`app/integrations/__init__.py`, `app/integrations/sibling_clients.py`,
+`app/tests/test_integration.py`). Copy and adapt for the other
+skels as you write them.
+
+`service_subdir` is the **slug of the user's chosen service display name**
+(`Ticket Service` → `ticket_service`). It is decided BEFORE Ollama is
+called, so manifest paths and prompts can reference it freely.
+
+When writing settings/config prompts, ALWAYS keep the wrapper-shared
+`.env` loading block and JWT/DATABASE env reads intact. The contract is:
+backend services read `JWT_SECRET` / `DATABASE_URL` from
+`<wrapper>/.env` so a token issued by one service is accepted by every
+other service in the same wrapper. Manifests must never tell Ollama to
+hardcode a sqlite path or use `settings.SECRET_KEY` for token signing —
+the correct attribute is `settings.JWT_SECRET`.
+
+To add support for a new skeleton: drop a `<skeleton-name>.py` file under
+`_skels/_common/manifests/` and run a dry-run smoke test:
+
+```bash
+_bin/skel-gen-ai myproj <skeleton-name> --no-input --dry-run --skip-base
+```
+
+(Create an empty target directory first, since `--skip-base` expects the
+project to exist already.)
+
 ### merge script contract
 
 - The `merge` script signature is: `merge <SKEL_DIR> <TARGET_DIR>`.
@@ -650,7 +1003,7 @@ substituted.
    ```
 
 3. **Verify output**:
-   - All 8 generators should pass
+   - All 9 generators should pass
    - Check for any warnings or unexpected output
 
 ### Test Output Expectations
@@ -677,6 +1030,10 @@ Flask generator test passed
 | Main dependency installer | `./skel-deps` |
 | Helper tools (Python CLIs) | `_bin/` |
 | Shared CLI library | `_bin/dev_skel_lib.py` |
+| AI generator library (Ollama) | `_bin/skel_ai_lib.py` |
+| AI generator CLI | `_bin/skel-gen-ai` |
+| AI end-to-end test runner | `_bin/test-ai-generators` |
+| Per-skeleton AI manifests | `_skels/_common/manifests/<skel>.py` |
 | Common skeleton assets | `_skels/_common/` |
 | Common AGENTS template | `_skels/_common/AGENTS.md` |
 | Wrapper scaffolder | `_skels/_common/common-wrapper.sh` |
@@ -710,8 +1067,8 @@ Flask generator test passed
 
 When maintaining this project, ensure:
 
-- [ ] All 8 generators pass: `make test-generators`
-- [ ] All 8 dependency scripts are executable: `ls -l _skels/*/deps`
+- [ ] All 9 generators pass: `make test-generators`
+- [ ] All 9 dependency scripts are executable: `ls -l _skels/*/deps`
 - [ ] No hardcoded absolute paths in Makefiles or scripts
 - [ ] `merge` scripts' exclusions are up to date
 - [ ] `deps` scripts support all target platforms (macOS, Ubuntu, Arch, Fedora)

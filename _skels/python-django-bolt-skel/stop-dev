@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Alias of ./stop for parity with the other skeletons.
+exec "$(dirname "$0")/stop" "$@"

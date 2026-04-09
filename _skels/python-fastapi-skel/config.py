@@ -4,9 +4,13 @@ PROJECT_NAME: str = config("PROJECT_NAME", default="Example Project")
 VERSION = "0.1.0"
 API_PREFIX = "/api/v1"
 
-SQLALCHEMY_DATABASE_URI = config("DATABASE_URL", default="sqlite:///./example-project.db")
-SQLALCHEMY_DATABASE_TEST_URI = config("DATABASE_TEST_URL", default="sqlite:///./test.db")
-SECRET_KEY = config("SECRET_KEY", default="ala_ma_kota")
+# NOTE: do NOT re-define SQLALCHEMY_DATABASE_URI / SECRET_KEY here.
+# `core.config` already resolves SQLALCHEMY_DATABASE_URI through
+# `_resolve_database_url()` (which absolutises relative sqlite paths
+# against the wrapper directory) and exposes JWT_SECRET as the
+# wrapper-shared signing secret. Re-defining either here would shadow
+# those wrapper-aware values with a raw env-var read that breaks
+# multi-service setups.
 
 SERVER_HOST = config("SERVER_HOST", default="http://example-project.marysia.app:8000")
 

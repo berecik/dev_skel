@@ -3,12 +3,20 @@ set -euo pipefail
 
 SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
 COMMON_DIR="$SKEL_DIR/../_common"
+# shellcheck disable=SC1091
+. "$COMMON_DIR/slug.sh"
+
 MAIN_DIR="${1:-}"
-PROJECT_SUBDIR_OVERRIDE="${2:-}"
+SERVICE_NAME_RAW="${2:-}"
 
 if [[ -z "$MAIN_DIR" ]]; then
-  echo "Usage: $(basename "$0") <main-dir> [service_subdir]" >&2
+  echo "Usage: $(basename "$0") <main-dir> [service-name]" >&2
   exit 1
+fi
+
+PROJECT_SUBDIR_OVERRIDE=""
+if [[ -n "$SERVICE_NAME_RAW" ]]; then
+  PROJECT_SUBDIR_OVERRIDE="$(slugify_service_name "$SERVICE_NAME_RAW")"
 fi
 
 # MAIN_DIR is already expected to be an absolute wrapper directory; Node app lives in service_subdir inside it

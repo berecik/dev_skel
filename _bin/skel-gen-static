@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""Generate a project from a skeleton — STATIC mode (no Ollama).
+
+This is the no-AI fallback. As of 2026-04 ``_bin/skel-gen`` defaults to
+the Ollama-backed AI flow; ``_bin/skel-gen-static`` is the explicit
+opt-out for users who want only the static skeleton overlay (no AI
+rewrites of the per-target manifest, no integration phase, no
+test-and-fix loop). It is functionally identical to the pre-2026-04
+``_bin/skel-gen``.
+
+Use cases:
+
+* You don't have Ollama running.
+* You want a deterministic, AI-free baseline (e.g. for CI).
+* You want to inspect what the static template looks like before the
+  AI overlay rewrites it.
+* You want to wire the AI flow yourself in a custom script (and use
+  ``dev_skel_lib.generate_project`` directly).
+
+Usage
+-----
+
+    _bin/skel-gen-static [proj_name] [skel_name] [service_name]
+
+Both positional arguments are optional:
+
+* ``proj_name`` — leaf wrapper directory name. Defaults to ``.`` (the
+  current working directory) when omitted, in which case the wrapper
+  files are overlaid into the cwd and the project's display name is
+  taken from the cwd basename. Pass an explicit name (e.g. ``myproj``)
+  to create a fresh wrapper directory under the cwd instead.
+* ``skel_name`` — skeleton under ``_skels/`` (e.g.
+  ``python-fastapi-skel``). When omitted, an interactive picker lists
+  every available skeleton.
+* ``service_name`` — optional service display name (e.g.
+  ``"Ticket Service"``). The on-disk subdirectory becomes its slug —
+  ``Ticket Service`` → ``<wrapper>/ticket_service/``. When omitted, the
+  per-skeleton default base (``backend``, ``frontend``, ``service``) is
+  used so existing tooling that predates the service-name flow keeps
+  working.
+"""
+
+import argparse
+from pathlib import Path
+
+from dev_skel_lib import (
+    choose_skeleton_interactive,
+    detect_root,
+    generate_project,
+    list_skeletons,
+    load_config,
+    prompt_text,
+    render_agents_template,
+    slugify_service_name,
+)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="skel-gen-static",
+        description=(
+            "Generate a new project from a skeleton in STATIC mode (no AI). "
+            "Both positional arguments are optional: when `proj_name` is "
+            "omitted (or set to '.') the wrapper files are written into "
+            "the current directory; when `skel_name` is omitted an "
+            "interactive picker lists every available skeleton."
+        ),
+    )
+    parser.add_argument(
+        "proj_name",
+        nargs="?",
+        help=(
+            "Leaf wrapper directory name to create in the current working "
+            "directory. Pass '.' (or omit) to install into the current "
+            "directory itself."
+        ),
+    )
+    parser.add_argument(
+        "skel_name",
+        nargs="?",
+        help=(
+            "Name of the skeleton under _skels (e.g. python-fastapi-skel). "
+            "When omitted, an interactive picker lists every available "
+            "skeleton."
+        ),
+    )
+    parser.add_argument(
+        "service_name",
+        nargs="?",
+        help=(
+            "Service display name (e.g. 'Ticket Service'). Slugified to the "
+            "service subdirectory. Defaults to the per-skeleton base "
+            "('backend' / 'frontend' / 'service') for backwards compat."
+        ),
+    )
+    parser.add_argument(
+        "--no-input",
+        action="store_true",
+        help=(
+            "Skip every interactive prompt — fail with a helpful error "
+            "instead. Use this in scripts and CI to avoid hanging on a "
+            "missing argument."
+        ),
+    )
+    return parser.parse_args()
+
+
+def _is_cwd_proj(name: str | None) -> bool:
+    """Whether the user-supplied ``proj_name`` means "use the cwd"."""
+
+    return name is None or name in ("", ".")
+
+
+def _guard_swapped_args(proj_name: str | None, skels_dir: Path) -> None:
+    """Catch the common mistake of passing the skel name in the proj slot.
+
+    Mirrors the same guard in ``_bin/skel-gen-ai``: when ``proj_name``
+    looks like an existing ``*-skel`` directory we bail with an
+    actionable error rather than silently creating a wrapper named
+    after the skeleton.
+    """
+
+    if not proj_name or proj_name == ".":
+        return
+    if not proj_name.endswith("-skel"):
+        return
+    if not (skels_dir / proj_name).is_dir():
+        return
+    raise SystemExit(
+        f"Looks like '{proj_name}' is a skeleton name, not a project name.\n"
+        "The positional order is now:\n"
+        "  _bin/skel-gen-static [proj_name] [skel_name] [service_name]\n\n"
+        "Try one of:\n"
+        f"  _bin/skel-gen-static . {proj_name}                 # install into the current directory\n"
+        f"  _bin/skel-gen-static myproj {proj_name}            # create ./myproj/ from the skeleton\n"
+        f"  _bin/skel-gen-static myproj {proj_name} 'My API'    # also pick a service display name"
+    )
+
+
+def main() -> None:
+    args = parse_args()
+    script_dir = Path(__file__).resolve().parent
+    cfg = load_config()
+    root = detect_root(script_dir, cfg.skel_dir)
+    skels_dir = root / "_skels"
+
+    _guard_swapped_args(args.proj_name, skels_dir)
+
+    # Project name: default to '.' (cwd). On a TTY, ask once with the
+    # cwd as the default so the user can override it; with --no-input or
+    # without a TTY we silently fall through to '.'.
+    if _is_cwd_proj(args.proj_name):
+        cwd_default = Path.cwd().name
+        if args.no_input:
+            args.proj_name = "."
+        else:
+            answer = prompt_text(
+                f"Project name (wrapper directory) [.={cwd_default}]",
+                default=".",
+                no_input=args.no_input,
+            )
+            args.proj_name = answer or "."
+
+    # Skeleton: interactive picker when omitted.
+    if not args.skel_name:
+        skels = list_skeletons(skels_dir)
+        args.skel_name = choose_skeleton_interactive(
+            skels, label="skeleton", no_input=args.no_input
+        )
+
+    # Resolved values used for the wrapper-template render context.
+    if _is_cwd_proj(args.proj_name):
+        target = Path.cwd()
+        display_proj_name = target.name
+    else:
+        target = Path.cwd() / args.proj_name
+        display_proj_name = args.proj_name
+
+    service_subdir = generate_project(
+        root=root,
+        skel_name=args.skel_name,
+        proj_name="." if _is_cwd_proj(args.proj_name) else args.proj_name,
+        service_name=args.service_name,
+    )
+    render_agents_template(
+        target=target,
+        service_subdir=service_subdir,
+        skeleton_name=args.skel_name,
+        project_name=display_proj_name,
+    )
+
+    if args.service_name:
+        slug = slugify_service_name(args.service_name)
+        print(
+            f"Generating from skeleton '{args.skel_name}' into: {target} "
+            f"(service: {args.service_name!r} → {service_subdir})"
+        )
+        if service_subdir != slug:
+            print(
+                f"  note: '{slug}' was already taken, used '{service_subdir}' instead"
+            )
+    else:
+        print(
+            f"Generating from skeleton '{args.skel_name}' into: {target} "
+            f"(service: {service_subdir})"
+        )
+    print("Done.")
+
+
+if __name__ == "__main__":
+    main()

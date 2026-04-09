@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Local build alias for the django-bolt skeleton.
+#
+# The skeleton intentionally does NOT ship a Dockerfile because django-bolt
+# is still settling on its preferred container layout. We expose the same
+# `./build` UX as the other skeletons so the wrapper-level scripts work, but
+# the build is just the local virtualenv refresh.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+Usage: ./build [--release]
+
+  --release   Refresh the virtual environment using the locked production
+              requirements (requirements.txt only, no test extras).
+
+Without arguments, ./build is equivalent to ./build-dev (installs the dev
+dependencies via requirements-dev.txt).
+EOF
+  exit 0
+fi
+
+if [[ "${1:-}" == "--release" ]]; then
+  if [[ ! -d ".venv" ]]; then
+    python3 -m venv .venv
+  fi
+  # shellcheck disable=SC1091
+  source .venv/bin/activate
+  pip install -q --upgrade pip
+  pip install -q -r requirements.txt
+  echo "Release build complete (production deps only)."
+  exit 0
+fi
+
+exec ./build-dev

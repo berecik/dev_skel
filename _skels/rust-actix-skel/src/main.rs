@@ -1,16 +1,23 @@
 //! Rust/Actix-web Skeleton Project
 
+mod config;
+
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use serde::{Deserialize, Serialize};
-use std::{env, sync::Arc};
+use std::sync::Arc;
 use tracing_actix_web::TracingLogger;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-/// Application state
+use crate::config::{load_dotenv, Config};
+
+/// Application state — holds the wrapper-shared `Config` so handlers can
+/// pull it out of `web::Data` instead of re-reading the environment.
 #[derive(Clone)]
 struct AppState {
     project_name: String,
     version: String,
+    #[allow(dead_code)]
+    config: Config,
 }
 
 /// Project info response
@@ -49,8 +56,12 @@ async fn health() -> impl Responder {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    // Load environment variables
-    dotenvy::dotenv().ok();
+    // Load wrapper-shared `.env` first then the local one (idempotent
+    // when nothing is present — keeps the skeleton runnable on a bare
+    // clone).
+    load_dotenv();
+
+    let config = Config::from_env();
 
     // Initialize tracing
     tracing_subscriber::registry()
@@ -61,20 +72,20 @@ async fn main() -> std::io::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    // Create application state
+    let bind_addr = format!("{}:{}", config.service_host, config.service_port);
+    tracing::info!(
+        target: "rust_actix_skel",
+        database_url = %config.database_url,
+        jwt_issuer = %config.jwt_issuer,
+        bind = %bind_addr,
+        "starting Actix server with wrapper-shared config",
+    );
+
     let state = Arc::new(AppState {
         project_name: "rust-actix-skel".to_string(),
         version: "1.0.0".to_string(),
+        config,
     });
-
-    // Get port from environment or default
-    let port: u16 = env::var("PORT")
-        .unwrap_or_else(|_| "3000".to_string())
-        .parse()
-        .expect("PORT must be a number");
-
-    let bind_addr = format!("0.0.0.0:{}", port);
-    tracing::info!("Server listening on {}", bind_addr);
 
     HttpServer::new(move || {
         App::new()
@@ -105,6 +116,7 @@ mod tests {
         let state = Arc::new(AppState {
             project_name: "rust-actix-skel".to_string(),
             version: "1.0.0".to_string(),
+            config: Config::from_env(),
         });
 
         App::new()

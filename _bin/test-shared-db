@@ -1,0 +1,631 @@
+#!/usr/bin/env python3
+"""Integration test: verify every backend skeleton sees the shared SQLite DB.
+
+For every backend skeleton in the project (Python ×4 + Java + Rust ×2 + JS),
+this runner:
+
+1. Generates a brand-new wrapper at ``_test_projects/test-shared-db/`` and
+   adds one service per skeleton (each with a distinct service name so the
+   slugged directories do not collide).
+2. Pre-seeds ``<wrapper>/_shared/db.sqlite3`` with a known ``items`` table
+   plus a single seed row, using stdlib ``sqlite3``.
+3. Runs a per-stack verifier against each generated service:
+   - **Python backends** (`django`, `django-bolt`, `fastapi`, `flask`):
+     activate the per-service ``.venv`` and run an inline Python snippet
+     that opens ``DATABASE_URL`` via ``stdlib sqlite3`` and SELECTs the
+     seed row. This proves the env-driven flow works inside the
+     production virtualenv that the skel's settings would use.
+   - **JVM / Rust / Node backends**: the runner reads the wrapper-level
+     ``.env``, resolves the sqlite path the same way the per-stack
+     config helpers do, and confirms it points at the shared file. The
+     full per-runtime ORM exercise is left to the per-skel ``test_skel``
+     runners (they are slow and not the focus of this test).
+4. Optionally exercises **cross-stack visibility** by inserting a second
+   row from one Python service's venv and reading it from a different
+   Python service's venv. If the second service sees the row, the
+   shared-DB contract is proven end-to-end.
+
+Toolchains that are missing on the host (e.g. no JDK, no Rust, no Node)
+cause the matching backend to be SKIPPED gracefully so the test runs to
+completion on minimal CI.
+
+Use the ``make test-shared-db`` target or invoke this script directly:
+
+    _bin/test-shared-db                  # full run
+    _bin/test-shared-db --keep           # leave _test_projects/test-shared-db on disk
+    _bin/test-shared-db --skel python-fastapi-skel python-django-skel
+    _bin/test-shared-db --no-cross-stack # skip the write/read round-trip
+
+Exit codes:
+    0 — every selected backend passed (or was skipped gracefully)
+    1 — at least one backend failed
+    2 — toolchain / setup error before any backend ran
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import os
+import shutil
+import sqlite3
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, Sequence
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from dev_skel_lib import (  # noqa: E402
+    DevSkelConfig,
+    detect_root,
+    generate_project,
+    load_config,
+    render_agents_template,
+)
+
+
+# --------------------------------------------------------------------------- #
+#  Configuration
+# --------------------------------------------------------------------------- #
+
+
+PROJECT_NAME = "test-shared-db"
+SEED_NAME = "shared-db-test-row"
+CROSS_STACK_NAME = "cross-stack-write-row"
+
+# Each entry: (skeleton, service display name, stack tag).
+# Service display names are unique so the slugged directories never
+# collide inside the wrapper.
+BACKEND_PLAN: List[tuple] = [
+    ("python-django-skel", "Django Service", "python"),
+    ("python-django-bolt-skel", "Bolt Service", "python"),
+    ("python-fastapi-skel", "FastAPI Service", "python"),
+    ("python-flask-skel", "Flask Service", "python"),
+    ("java-spring-skel", "Spring Service", "jvm"),
+    ("rust-actix-skel", "Actix Service", "rust"),
+    ("rust-axum-skel", "Axum Service", "rust"),
+    ("js-skel", "JS Worker", "node"),
+]
+
+TOOLCHAIN_PROBES: Dict[str, List[str]] = {
+    "python": [],  # python3 is the runner itself
+    "jvm": ["java", "mvn"],
+    "rust": ["cargo"],
+    "node": ["node", "npm"],
+}
+
+EXIT_OK = 0
+EXIT_FAIL = 1
+EXIT_SETUP = 2
+
+
+@dataclass
+class Result:
+    skeleton: str
+    service_dir: str
+    stack: str
+    status: str  # "ok" | "fail" | "skipped"
+    detail: str
+    duration_s: float
+
+
+# --------------------------------------------------------------------------- #
+#  CLI
+# --------------------------------------------------------------------------- #
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="test-shared-db",
+        description=(
+            "Generate a wrapper with every backend skeleton, seed the "
+            "shared SQLite database, and verify each backend sees the "
+            "items table via its own runtime."
+        ),
+    )
+    parser.add_argument(
+        "--skel",
+        action="append",
+        dest="skels",
+        help="Limit the run to specific skeletons (may be repeated). "
+        "Default: every entry in BACKEND_PLAN.",
+    )
+    parser.add_argument(
+        "--keep",
+        action="store_true",
+        help="Do not delete _test_projects/test-shared-db after a successful run.",
+    )
+    parser.add_argument(
+        "--no-cross-stack",
+        action="store_true",
+        help="Skip the write/read round-trip across two Python backends.",
+    )
+    parser.add_argument(
+        "--no-skip",
+        action="store_true",
+        help="Fail (instead of skipping) when a backend's toolchain is missing.",
+    )
+    return parser.parse_args()
+
+
+# --------------------------------------------------------------------------- #
+#  Helpers
+# --------------------------------------------------------------------------- #
+
+
+def have_toolchain(stack: str) -> bool:
+    return all(shutil.which(cmd) for cmd in TOOLCHAIN_PROBES.get(stack, []))
+
+
+def slugify(name: str) -> str:
+    """Mirrors dev_skel_lib.slugify_service_name with a tiny duplicate so
+    we don't depend on import-order quirks during the test runner setup."""
+
+    import re
+
+    cleaned = re.sub(r"[^0-9a-zA-Z]+", "_", name).strip("_").lower()
+    if not cleaned:
+        return "service"
+    if cleaned[0].isdigit():
+        cleaned = f"svc_{cleaned}"
+    return cleaned
+
+
+def run(cmd: Sequence[str], *, cwd: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        list(cmd),
+        cwd=str(cwd),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+@contextlib.contextmanager
+def chdir(path: Path):
+    prev = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(prev)
+
+
+def ensure_clean_wrapper(wrapper_dir: Path) -> None:
+    if wrapper_dir.exists():
+        shutil.rmtree(wrapper_dir)
+    wrapper_dir.parent.mkdir(parents=True, exist_ok=True)
+
+
+def seed_items_table(db_path: Path) -> None:
+    """Create the canonical ``items`` table and insert the seed row.
+
+    Schema mirrors the existing python-flask-skel ``Item`` model so that
+    skeleton's ORM (and any new entity created by the AI manifest's
+    rename rules) keeps working without an extra migration.
+    """
+
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name VARCHAR(255) NOT NULL,
+                description VARCHAR(1000),
+                is_completed BOOLEAN NOT NULL DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        conn.execute(
+            "INSERT INTO items (name, description) VALUES (?, ?)",
+            (SEED_NAME, "seeded by _bin/test-shared-db"),
+        )
+        conn.commit()
+
+
+# --------------------------------------------------------------------------- #
+#  Per-stack verifiers
+# --------------------------------------------------------------------------- #
+
+
+VERIFY_SCRIPT = """\
+import os, sqlite3, sys, urllib.parse, pathlib
+
+raw_url = os.environ.get("DATABASE_URL", "")
+if not raw_url:
+    print("DATABASE_URL not set", file=sys.stderr)
+    sys.exit(2)
+
+if raw_url.startswith("sqlite:///"):
+    rel = raw_url[len("sqlite:///"):]
+elif raw_url.startswith("sqlite://"):
+    rel = raw_url[len("sqlite://"):]
+else:
+    print(f"non-sqlite DATABASE_URL not supported: {raw_url}", file=sys.stderr)
+    sys.exit(2)
+
+# `_resolve_database_url` style: relative paths resolve against the
+# wrapper directory (the parent of the service directory).
+if not pathlib.Path(rel).is_absolute():
+    wrapper_dir = pathlib.Path.cwd().parent
+    db_path = (wrapper_dir / rel).resolve()
+else:
+    db_path = pathlib.Path(rel)
+
+if not db_path.is_file():
+    print(f"sqlite file not found at {db_path}", file=sys.stderr)
+    sys.exit(3)
+
+with sqlite3.connect(db_path) as conn:
+    row = conn.execute(
+        "SELECT id, name FROM items WHERE name = ?",
+        (sys.argv[1],),
+    ).fetchone()
+if row is None:
+    print(f"row {sys.argv[1]!r} not found in {db_path}", file=sys.stderr)
+    sys.exit(4)
+print(f"OK {db_path} -> {row}")
+"""
+
+
+def verify_python_backend(
+    *, service_dir: Path, wrapper_env: Dict[str, str], expected_name: str
+) -> Optional[str]:
+    """Run VERIFY_SCRIPT inside the per-service .venv python."""
+
+    venv_python = service_dir / ".venv" / "bin" / "python"
+    if not venv_python.is_file():
+        return f"missing venv at {venv_python} (did install fail?)"
+
+    env = {**os.environ, **wrapper_env}
+    proc = subprocess.run(
+        [str(venv_python), "-c", VERIFY_SCRIPT, expected_name],
+        cwd=str(service_dir),
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return (
+            f"venv python verifier exited {proc.returncode}\n"
+            f"stdout: {proc.stdout.strip()}\n"
+            f"stderr: {proc.stderr.strip()}"
+        )
+    return None
+
+
+def verify_runtime_smoke(
+    *, service_dir: Path, wrapper_env: Dict[str, str], expected_name: str
+) -> Optional[str]:
+    """Wrapper-level smoke check used for JVM / Rust / Node services.
+
+    Bypasses the per-runtime ORM (booting a JVM or compiling a Rust
+    binary just to read one row would dominate test time) and instead
+    confirms that the wrapper-shared DATABASE_URL points at a sqlite
+    file containing the expected row. The full per-runtime ORM exercise
+    is what the per-skel ``test_skel`` scripts already cover.
+    """
+
+    raw_url = wrapper_env.get("DATABASE_URL", "")
+    if not raw_url.startswith("sqlite://"):
+        return f"non-sqlite DATABASE_URL not supported: {raw_url}"
+    rel = raw_url[len("sqlite:///") :] if raw_url.startswith("sqlite:///") else raw_url[len("sqlite://") :]
+    db_path = (service_dir.parent / rel).resolve() if not Path(rel).is_absolute() else Path(rel)
+    if not db_path.is_file():
+        return f"sqlite file not found at {db_path}"
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT id, name FROM items WHERE name = ?",
+            (expected_name,),
+        ).fetchone()
+    if row is None:
+        return f"row {expected_name!r} not visible from {service_dir.name}"
+    return None
+
+
+# --------------------------------------------------------------------------- #
+#  Cross-stack write / read round-trip
+# --------------------------------------------------------------------------- #
+
+
+WRITE_SCRIPT = """\
+import os, sqlite3, sys, pathlib
+raw_url = os.environ["DATABASE_URL"]
+rel = raw_url[len("sqlite:///"):] if raw_url.startswith("sqlite:///") else raw_url[len("sqlite://"):]
+wrapper_dir = pathlib.Path.cwd().parent
+db_path = (wrapper_dir / rel).resolve() if not pathlib.Path(rel).is_absolute() else pathlib.Path(rel)
+with sqlite3.connect(db_path) as conn:
+    conn.execute(
+        "INSERT INTO items (name, description) VALUES (?, ?)",
+        (sys.argv[1], "written by " + sys.argv[2]),
+    )
+    conn.commit()
+print(f"WROTE {sys.argv[1]} via {sys.argv[2]} into {db_path}")
+"""
+
+
+def write_via(service_dir: Path, wrapper_env: Dict[str, str], label: str, name: str) -> Optional[str]:
+    venv_python = service_dir / ".venv" / "bin" / "python"
+    if not venv_python.is_file():
+        return f"missing venv for write step at {venv_python}"
+    env = {**os.environ, **wrapper_env}
+    proc = subprocess.run(
+        [str(venv_python), "-c", WRITE_SCRIPT, name, label],
+        cwd=str(service_dir),
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return f"write step failed: {proc.stderr.strip()}"
+    return None
+
+
+# --------------------------------------------------------------------------- #
+#  Setup helpers
+# --------------------------------------------------------------------------- #
+
+
+def parse_env_file(path: Path) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    if not path.is_file():
+        return out
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        out[key.strip()] = value.strip().strip('"').strip("'")
+    return out
+
+
+def generate_one_service(
+    *,
+    repo_root: Path,
+    wrapper_dir: Path,
+    skeleton: str,
+    service_label: str,
+) -> str:
+    """Generate one service into the wrapper. Returns the slug."""
+
+    with chdir(wrapper_dir.parent):
+        try:
+            slug = generate_project(
+                root=repo_root,
+                skel_name=skeleton,
+                proj_name=wrapper_dir.name,
+                service_name=service_label,
+            )
+        except (subprocess.CalledProcessError, SystemExit) as exc:
+            raise RuntimeError(f"generate_project for {skeleton} failed: {exc}") from exc
+    render_agents_template(
+        target=wrapper_dir,
+        service_subdir=slug,
+        skeleton_name=skeleton,
+        project_name=wrapper_dir.name,
+    )
+    return slug
+
+
+# --------------------------------------------------------------------------- #
+#  Main
+# --------------------------------------------------------------------------- #
+
+
+def main() -> int:
+    args = parse_args()
+
+    cfg: DevSkelConfig = load_config()
+    repo_root = detect_root(SCRIPT_DIR, cfg.skel_dir)
+    wrapper_dir = repo_root / "_test_projects" / PROJECT_NAME
+
+    selected_plan = BACKEND_PLAN
+    if args.skels:
+        unknown = sorted(set(args.skels) - {p[0] for p in BACKEND_PLAN})
+        if unknown:
+            print(f"Unknown skeleton(s): {', '.join(unknown)}", file=sys.stderr)
+            return EXIT_SETUP
+        selected_plan = [p for p in BACKEND_PLAN if p[0] in args.skels]
+
+    print()
+    print(f"=== Shared-DB integration test ===")
+    print(f"  wrapper: {wrapper_dir}")
+    print(f"  selected backends: {[p[0] for p in selected_plan]}")
+
+    # ----- 1. Toolchain probe -------------------------------------------- #
+    available: List[tuple] = []
+    skipped_setup: List[Result] = []
+    for skeleton, label, stack in selected_plan:
+        if not have_toolchain(stack):
+            tools = ", ".join(TOOLCHAIN_PROBES[stack])
+            msg = f"toolchain missing ({tools})"
+            if args.no_skip:
+                print(f"  ✗ {skeleton}: {msg}")
+                return EXIT_SETUP
+            print(f"  · {skeleton}: skipping ({msg})")
+            skipped_setup.append(
+                Result(
+                    skeleton=skeleton,
+                    service_dir="-",
+                    stack=stack,
+                    status="skipped",
+                    detail=msg,
+                    duration_s=0.0,
+                )
+            )
+            continue
+        available.append((skeleton, label, stack))
+
+    if not available:
+        print("\nNo backends available — nothing to test.", file=sys.stderr)
+        return EXIT_SETUP
+
+    # ----- 2. Generate the wrapper + every available backend ------------ #
+    ensure_clean_wrapper(wrapper_dir)
+    print()
+    print(f"Generating {len(available)} backend service(s)...")
+    service_dirs: List[tuple] = []  # (skeleton, slug, stack, service_dir)
+    for skeleton, label, stack in available:
+        started = time.monotonic()
+        try:
+            slug = generate_one_service(
+                repo_root=repo_root,
+                wrapper_dir=wrapper_dir,
+                skeleton=skeleton,
+                service_label=label,
+            )
+        except RuntimeError as exc:
+            print(f"  ✗ {skeleton}: {exc}", file=sys.stderr)
+            return EXIT_FAIL
+        service_dir = wrapper_dir / slug
+        elapsed = time.monotonic() - started
+        print(f"  + {skeleton:25s} -> {slug}  ({elapsed:5.1f}s)")
+        service_dirs.append((skeleton, slug, stack, service_dir))
+
+    # ----- 3. Seed the shared sqlite items table ------------------------ #
+    shared_db = wrapper_dir / "_shared" / "db.sqlite3"
+    seed_items_table(shared_db)
+    print(f"\nSeeded items table in {shared_db.relative_to(repo_root)}")
+
+    # Read the wrapper-level .env so we can pass DATABASE_URL etc. to the
+    # per-service verifiers (mirrors what the dispatch wrappers do).
+    wrapper_env = parse_env_file(wrapper_dir / ".env")
+    wrapper_env.update(parse_env_file(wrapper_dir / "_shared" / "service-urls.env"))
+
+    if "DATABASE_URL" not in wrapper_env:
+        print(
+            "DATABASE_URL not set in wrapper .env after generation — aborting.",
+            file=sys.stderr,
+        )
+        return EXIT_SETUP
+
+    # ----- 4. Verify each backend sees the seed row --------------------- #
+    print()
+    print("Verifying every backend sees the seed row...")
+    results: List[Result] = list(skipped_setup)
+    for skeleton, slug, stack, service_dir in service_dirs:
+        started = time.monotonic()
+        if stack == "python":
+            err = verify_python_backend(
+                service_dir=service_dir,
+                wrapper_env=wrapper_env,
+                expected_name=SEED_NAME,
+            )
+        else:
+            err = verify_runtime_smoke(
+                service_dir=service_dir,
+                wrapper_env=wrapper_env,
+                expected_name=SEED_NAME,
+            )
+        elapsed = time.monotonic() - started
+        if err is None:
+            print(f"  ✓ {skeleton:25s}  ({elapsed:5.2f}s)")
+            results.append(
+                Result(
+                    skeleton=skeleton,
+                    service_dir=slug,
+                    stack=stack,
+                    status="ok",
+                    detail="seed row visible",
+                    duration_s=elapsed,
+                )
+            )
+        else:
+            print(f"  ✗ {skeleton:25s}  ({elapsed:5.2f}s)")
+            print("    " + err.replace("\n", "\n    "))
+            results.append(
+                Result(
+                    skeleton=skeleton,
+                    service_dir=slug,
+                    stack=stack,
+                    status="fail",
+                    detail=err,
+                    duration_s=elapsed,
+                )
+            )
+
+    # ----- 5. Cross-stack write / read round-trip ----------------------- #
+    cross_stack_status = "skipped"
+    cross_stack_detail = "skipped via --no-cross-stack"
+    if not args.no_cross_stack:
+        py_services = [
+            (skeleton, slug, sd)
+            for (skeleton, slug, stack, sd) in service_dirs
+            if stack == "python"
+        ]
+        if len(py_services) >= 2:
+            writer = py_services[0]
+            reader = py_services[-1]
+            print()
+            print(
+                f"Cross-stack round-trip: write via {writer[0]} → read via {reader[0]}"
+            )
+            err = write_via(
+                writer[2], wrapper_env, writer[0], CROSS_STACK_NAME
+            )
+            if err:
+                cross_stack_status = "fail"
+                cross_stack_detail = err
+                print(f"  ✗ write failed: {err}")
+            else:
+                err2 = verify_python_backend(
+                    service_dir=reader[2],
+                    wrapper_env=wrapper_env,
+                    expected_name=CROSS_STACK_NAME,
+                )
+                if err2:
+                    cross_stack_status = "fail"
+                    cross_stack_detail = err2
+                    print(f"  ✗ read failed: {err2}")
+                else:
+                    cross_stack_status = "ok"
+                    cross_stack_detail = (
+                        f"{CROSS_STACK_NAME} written by {writer[0]}, read by {reader[0]}"
+                    )
+                    print("  ✓ cross-stack visibility confirmed")
+        else:
+            cross_stack_detail = "fewer than 2 Python backends available"
+
+    # ----- 6. Summary --------------------------------------------------- #
+    print()
+    print("===== Summary =====")
+    fail_count = 0
+    for r in results:
+        marker = {"ok": "✓", "fail": "✗", "skipped": "·"}[r.status]
+        print(
+            f"  {marker} {r.skeleton:25s} {r.stack:6s} {r.status:7s} {r.duration_s:6.2f}s  {r.detail.splitlines()[0] if r.detail else ''}"
+        )
+        if r.status == "fail":
+            fail_count += 1
+    if cross_stack_status == "ok":
+        print(f"  ✓ cross-stack round-trip       {cross_stack_detail}")
+    elif cross_stack_status == "fail":
+        print(f"  ✗ cross-stack round-trip       {cross_stack_detail}")
+        fail_count += 1
+    else:
+        print(f"  · cross-stack round-trip       {cross_stack_detail}")
+
+    if not args.keep and fail_count == 0:
+        shutil.rmtree(wrapper_dir, ignore_errors=True)
+
+    print()
+    if fail_count:
+        print(f"{fail_count} backend(s) failed.")
+        return EXIT_FAIL
+    print("All backends verified the shared items table.")
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())

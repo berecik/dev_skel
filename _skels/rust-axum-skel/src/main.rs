@@ -1,20 +1,27 @@
 //! Rust/Axum Skeleton Project
 
+mod config;
+
 use axum::{
     extract::State,
     routing::get,
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use std::{env, net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-/// Application state
+use crate::config::{load_dotenv, Config};
+
+/// Application state — holds the wrapper-shared `Config` so handlers can
+/// pull it out of the router state instead of re-reading the environment.
 #[derive(Clone)]
 struct AppState {
     project_name: String,
     version: String,
+    #[allow(dead_code)]
+    config: Config,
 }
 
 /// Project info response
@@ -51,8 +58,12 @@ async fn health() -> Json<HealthResponse> {
 
 #[tokio::main]
 async fn main() {
-    // Load environment variables
-    dotenvy::dotenv().ok();
+    // Load wrapper-shared `.env` first then the local one (idempotent
+    // when nothing is present — keeps the skeleton runnable on a bare
+    // clone).
+    load_dotenv();
+
+    let config = Config::from_env();
 
     // Initialize tracing
     tracing_subscriber::registry()
@@ -63,10 +74,23 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    // Create application state
+    let bind_host: std::net::IpAddr = config
+        .service_host
+        .parse()
+        .unwrap_or_else(|_| std::net::IpAddr::from([0, 0, 0, 0]));
+    let addr = SocketAddr::from((bind_host, config.service_port));
+    tracing::info!(
+        target: "rust_axum_skel",
+        database_url = %config.database_url,
+        jwt_issuer = %config.jwt_issuer,
+        bind = %addr,
+        "starting Axum server with wrapper-shared config",
+    );
+
     let state = Arc::new(AppState {
         project_name: "rust-axum-skel".to_string(),
         version: "1.0.0".to_string(),
+        config,
     });
 
     // Build router
@@ -75,15 +99,6 @@ async fn main() {
         .route("/health", get(health))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
-
-    // Get port from environment or default
-    let port: u16 = env::var("PORT")
-        .unwrap_or_else(|_| "3000".to_string())
-        .parse()
-        .expect("PORT must be a number");
-
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    tracing::info!("Server listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
@@ -99,6 +114,7 @@ mod tests {
         let state = Arc::new(AppState {
             project_name: "rust-axum-skel".to_string(),
             version: "1.0.0".to_string(),
+            config: Config::from_env(),
         });
 
         Router::new()

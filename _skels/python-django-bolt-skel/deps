@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Dependency installer for the python-django-bolt skeleton.
+#
+# Identical to the python-django-skel deps script — django-bolt installs from
+# PyPI like any other Django package, so we only need Python 3.11+, pip, and
+# venv. The Rust HTTP layer ships as a prebuilt wheel via the `django-bolt`
+# package, so no Rust toolchain is required at install time.
+set -euo pipefail
+
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+info() { echo -e "${GREEN}[INFO]${NC} $*"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+error() { echo -e "${RED}[ERROR]${NC} $*"; }
+
+detect_os() {
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "macos"
+  elif [[ -f /etc/os-release ]]; then
+    . /etc/os-release
+    case "$ID" in
+      ubuntu|debian) echo "ubuntu" ;;
+      arch|manjaro) echo "arch" ;;
+      fedora|rhel|centos) echo "fedora" ;;
+      *) echo "unknown" ;;
+    esac
+  else
+    echo "unknown"
+  fi
+}
+
+command_exists() { command -v "$1" >/dev/null 2>&1; }
+
+install_deps() {
+  local os="$1"
+  info "Installing Python dependencies for $os..."
+  case "$os" in
+    macos)
+      command_exists brew || { error "Homebrew required (https://brew.sh)"; exit 1; }
+      brew install python3
+      ;;
+    ubuntu)
+      sudo apt-get update
+      sudo apt-get install -y python3 python3-pip python3-venv
+      ;;
+    arch)
+      sudo pacman -S --needed --noconfirm python python-pip
+      ;;
+    fedora)
+      sudo dnf install -y python3 python3-pip
+      ;;
+    *)
+      error "Unsupported OS: $os"
+      exit 1
+      ;;
+  esac
+}
+
+verify_deps() {
+  info "Verifying installations..."
+  command_exists python3 || { error "python3 not found"; return 1; }
+  info "Python: $(python3 --version)"
+  command_exists pip3 || { error "pip3 not found"; return 1; }
+  info "pip: $(pip3 --version)"
+  python3 -m venv --help >/dev/null 2>&1 || { error "venv module not found"; return 1; }
+  info "venv: available"
+  info "All dependencies verified successfully!"
+}
+
+main() {
+  local os
+  os=$(detect_os)
+  if [[ "$os" == "unknown" ]]; then
+    error "Unable to detect OS"
+    exit 1
+  fi
+  info "Detected OS: $os"
+  if command_exists python3 && command_exists pip3 && python3 -m venv --help >/dev/null 2>&1; then
+    info "All dependencies already installed!"
+    verify_deps
+    return 0
+  fi
+  install_deps "$os"
+  verify_deps
+}
+
+main "$@"

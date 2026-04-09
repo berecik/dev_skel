@@ -19,9 +19,20 @@ Claude-specific complement to `_skels/java-spring-skel/AGENTS.md` and
 ## 2. Skeleton Snapshot
 
 - Spring Boot Java backend (production-grade JVM service).
-- Generated services live under `<wrapper>/service-1/`,
-  `<wrapper>/service-2/`, ...
+- Generated services live under `<wrapper>/<service_slug>/` (or
+  `<wrapper>/service/` when no service name is given).
 - Requires JDK 21+ and Maven (`./skel-deps java-spring-skel` installs both).
+- **Shared env contract** (CRITICAL): `application.properties` reads its
+  database URL from `${SPRING_DATASOURCE_URL:${DATABASE_JDBC_URL:jdbc:h2:mem:testdb}}`
+  and JWT material from `${JWT_SECRET}` / `${JWT_ALGORITHM}` / `${JWT_ISSUER}`
+  / `${JWT_ACCESS_TTL}` / `${JWT_REFRESH_TTL}`. Those variables come from
+  the wrapper-shared `<wrapper>/.env`. The
+  `com.example.skel.config.JwtProperties` bean (registered via
+  `@ConfigurationPropertiesScan` on `Application`) exposes them as
+  `app.jwt.*` for injection. Never put a JWT secret in a Java constant
+  or in `application.properties` itself — the env-driven flow is the
+  contract that makes a token issued by the JVM service interchangeable
+  with one issued by a Python or Rust service in the same wrapper.
 
 ---
 

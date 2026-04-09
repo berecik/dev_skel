@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build script for local development.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+echo "Building django-bolt service for local development..."
+
+if [[ ! -d ".venv" ]]; then
+  echo "Creating virtual environment..."
+  python3 -m venv .venv
+fi
+
+# shellcheck disable=SC1091
+source .venv/bin/activate
+pip install -q --upgrade pip
+pip install -q -r requirements-dev.txt
+
+# Apply migrations (no-op when already applied)
+python manage.py migrate --run-syncdb 2>/dev/null || true
+
+echo "Build complete. Run './run-dev' to start the django-bolt server."

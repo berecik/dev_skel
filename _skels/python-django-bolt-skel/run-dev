@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run script for local django-bolt development.
+# Usage: ./run-dev [--host=HOST] [--port=PORT]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+HOST="127.0.0.1"
+PORT="8000"
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --host=*) HOST="${1#*=}"; shift ;;
+    --port=*) PORT="${1#*=}"; shift ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: ./run-dev [--host=HOST] [--port=PORT]
+
+  --host=HOST   Bind to host (default: 127.0.0.1)
+  --port=PORT   Bind to port (default: 8000)
+EOF
+      exit 0
+      ;;
+    *) shift ;;
+  esac
+done
+
+if [[ ! -d ".venv" ]]; then
+  ./build-dev
+fi
+
+# shellcheck disable=SC1091
+source .venv/bin/activate
+
+echo "Starting django-bolt server..."
+echo "  URL: http://${HOST}:${PORT}"
+echo ""
+
+# `runbolt` is the django-bolt management command that boots the Rust HTTP
+# layer. We pass --dev so the server runs in single-process auto-reload mode.
+python manage.py runbolt --dev --host "${HOST}" --port "${PORT}"

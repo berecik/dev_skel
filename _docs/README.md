@@ -17,6 +17,7 @@ You can start a project with a backend (Java Spring, FastAPI, or Django) and the
 │   ├── python-fastapi-skel/
 │   ├── python-flask-skel/
 │   ├── python-django-skel/
+│   ├── python-django-bolt-skel/
 │   ├── ts-react-skel/
 │   ├── js-skel/
 │   ├── java-spring-skel/

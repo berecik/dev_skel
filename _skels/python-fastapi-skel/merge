@@ -6,8 +6,11 @@ TARGET_DIR="${2:?target_dir missing}"
 
 echo "Merging files from $SKEL_DIR to $TARGET_DIR (FastAPI DDD)..."
 
-# Files to exclude from merge (skeleton-specific files only)
-EXCLUDE_FILES="Makefile|merge|gen|test_skel|deps|install-deps"
+# Files to exclude from merge (skeleton-specific files only). install-deps
+# is intentionally NOT excluded so generated services keep a re-runnable
+# virtualenv installer (and the wrapper-level discovery script uses it as
+# a service marker).
+EXCLUDE_FILES="Makefile|merge|gen|test_skel|deps"
 
 # Directories to exclude entirely from merge
 EXCLUDE_DIRS=(

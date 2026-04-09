@@ -1,35 +1,72 @@
 .app {
+  max-width: 720px;
+  margin: 0 auto;
   padding: 2rem;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
 }
 
-.app-header h1 {
-  font-size: 2.5rem;
-  margin-bottom: 0.5rem;
-}
-
-.app-header p {
-  color: #888;
+.app-header {
+  border-bottom: 1px solid #2a2a2a;
+  padding-bottom: 1.5rem;
   margin-bottom: 2rem;
 }
 
-.card {
-  padding: 2rem;
+.app-header h1 {
+  font-size: 2.25rem;
+  margin: 0 0 0.25rem;
+}
+
+.subtitle {
+  color: #888;
+  margin: 0 0 1rem;
+}
+
+.env-info {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+  color: #aaa;
+}
+
+.env-info code {
+  background: #1a1a1a;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
+
+main {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
 }
 
 button {
   border-radius: 8px;
   border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
+  padding: 0.55em 1.1em;
+  font-size: 0.95em;
   font-weight: 500;
   font-family: inherit;
   background-color: #1a1a1a;
+  color: inherit;
   cursor: pointer;
   transition: border-color 0.25s;
 }
 
-button:hover {
+button:hover:not(:disabled) {
   border-color: #646cff;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 button:focus,
@@ -37,11 +74,143 @@ button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
 }
 
-.info {
-  margin-top: 2rem;
-  color: #888;
+.actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
-.info p {
-  margin: 0.5rem 0;
+.login-form,
+.item-form,
+.item-list {
+  background: #161616;
+  border: 1px solid #2a2a2a;
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.login-form h2,
+.item-form h2,
+.item-list h2 {
+  margin: 0 0 1rem;
+  font-size: 1.25rem;
+}
+
+.login-form label,
+.item-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+  font-size: 0.85rem;
+  color: #bbb;
+}
+
+.login-form input,
+.item-form input,
+.item-form textarea {
+  padding: 0.55rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid #333;
+  background: #0d0d0d;
+  color: #f0f0f0;
+  font-family: inherit;
+  font-size: 0.95rem;
+}
+
+.login-form input:focus,
+.item-form input:focus,
+.item-form textarea:focus {
+  outline: none;
+  border-color: #646cff;
+}
+
+.error {
+  color: #ff7878;
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.item-list header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.item-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: #bbb;
+  cursor: pointer;
+}
+
+.filter-toggle input[type='checkbox'] {
+  accent-color: #646cff;
+  cursor: pointer;
+}
+
+.item-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.item-list .item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid #2a2a2a;
+  border-radius: 10px;
+  background: #0f0f0f;
+}
+
+.item-list .item.done {
+  opacity: 0.65;
+}
+
+.item-body strong {
+  display: block;
+}
+
+.item-body p {
+  margin: 0.25rem 0 0;
+  color: #bbb;
+  font-size: 0.9rem;
+}
+
+.item-body small {
+  display: block;
+  margin-top: 0.35rem;
+  color: #666;
+  font-size: 0.75rem;
+}
+
+.badge {
+  align-self: center;
+  padding: 0.2rem 0.55rem;
+  background: #2a4a2a;
+  color: #b9f0b9;
+  border-radius: 999px;
+  font-size: 0.75rem;
+}
+
+.empty,
+.status {
+  color: #888;
+  margin: 0.25rem 0 0;
+  font-size: 0.9rem;
 }

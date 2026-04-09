@@ -5,6 +5,13 @@ edition = "2021"
 description = "Rust/Actix-web skeleton project"
 license = "MIT"
 
+# Pin the binary name so the compiled artifact is always
+# `target/release/app`, regardless of the package name. The run/build
+# scripts and the generated Dockerfile all assume this name.
+[[bin]]
+name = "app"
+path = "src/main.rs"
+
 [dependencies]
 actix-web = "4"
 actix-rt = "2"

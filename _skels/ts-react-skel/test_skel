@@ -29,12 +29,32 @@ if [[ -f package-lock.json ]]; then npm ci; else npm install; fi
 npm run build
 
 echo ""
-echo "[test_skel] Running linter (if available)..."
-npm run | grep -q "lint" && npm run lint || echo "[test_skel] No lint script"
+echo "[test_skel] Running linter (soft check — warnings do not fail the run)..."
+if npm run | grep -q "lint"; then
+  # The skel does not ship an `eslint.config.js` flat config (ESLint v10
+  # requires it but the upstream `npm create vite` template doesn't
+  # generate one for `react-swc-ts`). Treat lint as a soft warning so
+  # the test_skel runner does not bail on a missing config — the user
+  # is expected to add their own eslint flat config when they want
+  # CI-grade linting.
+  if ! npm run lint; then
+    echo "[test_skel]   (lint reported issues — ignoring; add eslint.config.js to make it strict)"
+  fi
+else
+  echo "[test_skel] No lint script — skipping"
+fi
 
 echo ""
-echo "[test_skel] Running tests (if available)..."
-npm run | grep -q "test" && npm run test -- --run || echo "[test_skel] No test script"
+echo "[test_skel] Running unit tests..."
+if npm run | grep -q "^  test$\|^  test:"; then
+  # `vitest run` (per the generated package.json) is non-watch by default,
+  # but we still pass `--run` for older vitest versions. We do NOT mask
+  # failures here — vitest exits non-zero on real test failures and we
+  # want test_skel to surface them as a hard error.
+  npm run test -- --run
+else
+  echo "[test_skel] No test script — skipping"
+fi
 
 echo ""
 echo "[test_skel] TS React skeleton tests passed!"

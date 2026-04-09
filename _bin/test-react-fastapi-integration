@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""End-to-end integration test: FastAPI backend + React frontend.
+
+Generates a wrapper containing both ``python-fastapi-skel`` and
+``ts-react-skel``, configures ``BACKEND_URL`` to a non-conflicting
+port, builds the React frontend (verifying the URL is baked into the
+bundle), starts the FastAPI server in the background via uvicorn, and
+exercises the canonical ``register → login → CRUD → complete`` flow
+over real HTTP using the same shape the React ``src/api/items.ts``
+client uses.
+
+This proves that:
+
+1. ``_bin/skel-gen`` can generate a wrapper containing the
+   FastAPI + React full-stack pair.
+2. The wrapper-shared ``BACKEND_URL`` env var is consistently consumed
+   by both services (the React Vite plugin bakes it into the bundle;
+   uvicorn binds the matching port).
+3. The python-fastapi-skel's wrapper-shared API
+   (``app/wrapper_api/``) is schema-compatible with the React skel's
+   typed fetch client — the same React build that talks to django-bolt
+   also talks to FastAPI without any code changes.
+4. The end-to-end ``register → login → create item → list items →
+   complete`` flow works against a live uvicorn server bound to the
+   same port the React bundle expects.
+
+Usage::
+
+    _bin/test-react-fastapi-integration              # full run
+    _bin/test-react-fastapi-integration --keep       # leave wrapper on disk
+    _bin/test-react-fastapi-integration --port 19877 # custom port
+    _bin/test-react-fastapi-integration --no-skip    # fail on missing Node
+
+Exit codes::
+
+    0 — every check passed
+    1 — at least one check failed
+    2 — toolchain (Node / npm / Python) missing or setup error
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from dev_skel_lib import DevSkelConfig, detect_root, load_config  # noqa: E402
+
+from _react_backend_lib import (  # noqa: E402
+    DEFAULT_PORT,
+    DEFAULT_STARTUP_TIMEOUT,
+    BackendSpec,
+    run_react_backend_integration,
+)
+
+
+PROJECT_NAME = "test-react-fastapi"
+BACKEND_SKEL = "python-fastapi-skel"
+BACKEND_SERVICE_NAME = "Items API"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Integration test that generates a wrapper containing "
+            "python-fastapi-skel + ts-react-skel, builds the React "
+            "frontend, starts the FastAPI backend, and verifies the items "
+            "API end-to-end via real HTTP."
+        ),
+    )
+    parser.add_argument(
+        "--keep",
+        action="store_true",
+        help=(
+            "Leave the generated wrapper at _test_projects/test-react-fastapi "
+            "on disk after the test finishes. Useful for poking at the build "
+            "or running the server manually."
+        ),
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=DEFAULT_PORT,
+        help=(
+            "TCP port the FastAPI backend should bind to. The wrapper "
+            f"BACKEND_URL is rewritten to http://127.0.0.1:<port> before "
+            f"the React build runs. Default: {DEFAULT_PORT}."
+        ),
+    )
+    parser.add_argument(
+        "--server-startup-timeout",
+        type=int,
+        default=DEFAULT_STARTUP_TIMEOUT,
+        help=(
+            "Seconds to wait for the FastAPI server to become reachable on "
+            f"the chosen port (default: {DEFAULT_STARTUP_TIMEOUT})."
+        ),
+    )
+    parser.add_argument(
+        "--no-skip",
+        action="store_true",
+        help=(
+            "Treat missing Node/npm as a hard failure (exit 1) instead of "
+            "the default toolchain skip (exit 2)."
+        ),
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+
+    cfg: DevSkelConfig = load_config()
+    repo_root = detect_root(SCRIPT_DIR, cfg.skel_dir)
+
+    # The fastapi skel ships an `install-deps` script that sets up the
+    # per-service `.venv` during `gen`. The venv lives at
+    # `<service>/.venv/bin/python`, so we point uvicorn at that
+    # interpreter directly. The wrapper-shared API tables auto-create
+    # themselves on import (`app/wrapper_api/db.py` calls
+    # `SQLModel.metadata.create_all(engine)`), so no migrations step is
+    # required before the server boots.
+    spec = BackendSpec(
+        skeleton=BACKEND_SKEL,
+        service_name=BACKEND_SERVICE_NAME,
+        server_argv_template=[
+            ".venv/bin/python",
+            "-m",
+            "uvicorn",
+            "app:get_app",
+            "--factory",
+            "--host",
+            "{host}",
+            "--port",
+            "{port}",
+            "--log-level",
+            "warning",
+        ],
+        # No pre-server setup — SQLModel autogenerates the wrapper_user,
+        # items, and react_state tables when `app/wrapper_api/db.py` is
+        # imported.
+        pre_server_setup=[],
+    )
+
+    return run_react_backend_integration(
+        project_name=PROJECT_NAME,
+        title="React + FastAPI integration test",
+        spec=spec,
+        repo_root=repo_root,
+        port=args.port,
+        server_startup_timeout=args.server_startup_timeout,
+        keep=args.keep,
+        no_skip=args.no_skip,
+    )
+
+
+if __name__ == "__main__":
+    sys.exit(main())

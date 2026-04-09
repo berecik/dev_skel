@@ -1,0 +1,709 @@
+#!/usr/bin/env python3
+"""End-to-end test runner for ``_bin/skel-gen-ai``.
+
+For every AI manifest under ``_skels/_common/manifests/``, this script:
+
+1. Scaffolds a fresh project under ``_test_projects/`` using the static
+   ``_bin/skel-gen`` flow (so the wrapper, virtualenv, and skeleton files all
+   exist before the AI overlay runs).
+2. Runs ``_bin/skel-gen-ai --skip-base`` against that project with default
+   service / item / auth answers (or the values you pass via flags).
+3. Validates the result with a per-skeleton sanity check
+   (``manage.py check`` for Django/Django-Bolt, module import for FastAPI,
+   plus a syntax check on every file the AI touched).
+
+The script intentionally does **not** run as part of ``make test-generators``
+because:
+
+* It needs a running Ollama daemon and can take several minutes per file.
+* Model output is non-deterministic — failures here are useful signal but
+  should not block CI on the static-generation path.
+
+Use it when you change a manifest, when you bump the default model, or as
+part of a manual maintenance pass:
+
+    make test-ai-generators              # all AI-supported skeletons
+    make test-gen-ai-django-bolt         # one skeleton
+    _bin/test-ai-generators --dry-run    # no Ollama calls, just dispatch
+    _bin/test-ai-generators --skel python-django-bolt-skel --keep
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import os
+import shutil
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, Sequence
+
+# The script lives in _bin/ next to dev_skel_lib.py and skel_ai_lib.py.
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from dev_skel_lib import (  # noqa: E402
+    detect_root,
+    generate_project,
+    load_config,
+    render_agents_template,
+    slugify_service_name,
+)
+from skel_ai_lib import (  # noqa: E402
+    GenerationContext,
+    OllamaClient,
+    OllamaConfig,
+    OllamaError,
+    discover_manifests,
+    expand_target_paths,
+    generate_targets,
+    load_manifest,
+    manifests_dir,
+)
+
+
+# --------------------------------------------------------------------------- #
+#  Defaults
+# --------------------------------------------------------------------------- #
+
+
+DEFAULTS: Dict[str, str] = {
+    "service_name": "Sample Service",
+    "item_name": "ticket",
+    "auth_type": "jwt",
+    "auth_details": "",
+}
+
+# Map skeleton name → directory under `_test_projects/`. Names match the
+# `make test-gen-*` outputs but live in their own namespace so the AI runs
+# don't clobber the static test artefacts.
+PROJECT_DIR_TEMPLATE = "_test_projects/test-ai-{skel_short}"
+
+# Exit codes
+EXIT_OK = 0
+EXIT_FAIL = 1
+EXIT_SKIPPED = 2
+
+
+@dataclass
+class RunResult:
+    skeleton: str
+    status: str  # "ok" | "fail" | "skipped"
+    duration_s: float
+    detail: str = ""
+
+
+# --------------------------------------------------------------------------- #
+#  Discovery + dispatch
+# --------------------------------------------------------------------------- #
+
+
+def short_name(skeleton: str) -> str:
+    """Trim the trailing ``-skel`` so directory names stay tidy."""
+
+    return skeleton.removesuffix("-skel")
+
+
+# --------------------------------------------------------------------------- #
+#  Per-skeleton validators
+# --------------------------------------------------------------------------- #
+
+
+def _venv_python(project_dir: Path) -> Path:
+    """Path to the python executable inside the project's virtualenv."""
+
+    return project_dir / ".venv" / "bin" / "python"
+
+
+def _run(
+    cmd: Sequence[str],
+    *,
+    cwd: Path,
+    env: Optional[Dict[str, str]] = None,
+    capture: bool = True,
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        list(cmd),
+        cwd=str(cwd),
+        check=False,
+        capture_output=capture,
+        text=True,
+        env=env,
+    )
+
+
+def _syntax_check(files: Sequence[Path]) -> Optional[str]:
+    """Compile every generated file via ``py_compile``; return error or None."""
+
+    import py_compile
+
+    for f in files:
+        if not f.is_file() or f.suffix != ".py":
+            continue
+        try:
+            py_compile.compile(str(f), doraise=True)
+        except py_compile.PyCompileError as exc:
+            return f"{f}: {exc.msg}"
+    return None
+
+
+def _validate_django(project_dir: Path, files: Sequence[Path]) -> Optional[str]:
+    err = _syntax_check(files)
+    if err:
+        return f"syntax error: {err}"
+
+    py = _venv_python(project_dir)
+    if not py.is_file():
+        return f"missing virtualenv at {py}"
+
+    proc = _run([str(py), "manage.py", "check"], cwd=project_dir)
+    if proc.returncode != 0:
+        return f"`manage.py check` failed:\n{proc.stdout}\n{proc.stderr}"
+    return None
+
+
+def _validate_django_bolt(project_dir: Path, files: Sequence[Path]) -> Optional[str]:
+    err = _validate_django(project_dir, files)
+    if err:
+        return err
+
+    py = _venv_python(project_dir)
+    pip = py.parent / "pip"
+
+    # The django-bolt `gen` script only installs production deps from
+    # requirements.txt, so the .venv usually lacks pytest. Install it on
+    # demand so the collection check below has something to work with.
+    probe = _run(
+        [str(py), "-c", "import pytest"], cwd=project_dir
+    )
+    if probe.returncode != 0:
+        install = _run(
+            [str(pip), "install", "-q", "pytest", "pytest-django"],
+            cwd=project_dir,
+        )
+        if install.returncode != 0:
+            return f"pip install pytest failed:\n{install.stdout}\n{install.stderr}"
+
+    # Best-effort pytest collection; we only care that imports resolve.
+    proc = _run(
+        [str(py), "-m", "pytest", "--collect-only", "-q", "app/tests"],
+        cwd=project_dir,
+    )
+    if proc.returncode not in (0, 5):  # 5 = "no tests collected", still acceptable
+        return f"pytest collection failed:\n{proc.stdout}\n{proc.stderr}"
+    return None
+
+
+def _validate_fastapi(project_dir: Path, files: Sequence[Path]) -> Optional[str]:
+    err = _syntax_check(files)
+    if err:
+        return f"syntax error: {err}"
+
+    py = _venv_python(project_dir)
+    if not py.is_file():
+        return f"missing virtualenv at {py}"
+
+    # Discover the AI-generated module by walking app/* for the directory the
+    # generator just created. We grab the first app/<dir> that contains
+    # routes.py — manifests always emit one. Falls back to a basic syntax
+    # check if discovery fails.
+    candidates = sorted(p for p in (project_dir / "app").glob("*/routes.py"))
+    if not candidates:
+        return "no app/<service>/routes.py was generated"
+
+    module_root = candidates[0].parent.name
+    snippet = (
+        f"from app.{module_root} import models, depts, routes\n"
+        f"print('imports OK:', '{module_root}')\n"
+    )
+    proc = _run([str(py), "-c", snippet], cwd=project_dir)
+    if proc.returncode != 0:
+        return (
+            f"import of app.{module_root} failed:\n{proc.stdout}\n{proc.stderr}"
+        )
+    return None
+
+
+def _validate_flask(project_dir: Path, files: Sequence[Path]) -> Optional[str]:
+    err = _syntax_check(files)
+    if err:
+        return f"syntax error: {err}"
+
+    py = _venv_python(project_dir)
+    if not py.is_file():
+        return f"missing virtualenv at {py}"
+
+    # Just verify that the AI-rewritten app/ package still imports cleanly
+    # under the production runtime (which exercises the env-driven config
+    # loading and the new model/routes files).
+    snippet = (
+        "from app import create_app, db\n"
+        "from app.config import Config\n"
+        "import app.models  # exercises the rewritten model module\n"
+        "import app.routes  # exercises the rewritten routes module\n"
+        "print('imports OK')\n"
+    )
+    proc = _run([str(py), "-c", snippet], cwd=project_dir)
+    if proc.returncode != 0:
+        return f"flask import failed:\n{proc.stdout}\n{proc.stderr}"
+    return None
+
+
+def _java_syntax_check(files: Sequence[Path]) -> Optional[str]:
+    """Best-effort syntax check for .java files (balanced braces only)."""
+
+    for f in files:
+        if not f.is_file() or f.suffix != ".java":
+            continue
+        text = f.read_text(encoding="utf-8", errors="replace")
+        if text.count("{") != text.count("}"):
+            return f"{f}: unbalanced braces"
+        if text.count("(") != text.count(")"):
+            return f"{f}: unbalanced parentheses"
+    return None
+
+
+def _validate_spring(project_dir: Path, files: Sequence[Path]) -> Optional[str]:
+    err = _java_syntax_check(files)
+    if err:
+        return err
+
+    if not shutil.which("mvn"):
+        return None  # treat as smoke-only when Maven is not installed
+
+    # `mvn -q -DskipTests package` is the canonical "does this compile?"
+    # check for a Spring Boot project. Skip the test suite to keep the
+    # AI test runner under a few minutes per skeleton.
+    proc = _run(
+        ["mvn", "-q", "-DskipTests", "package"],
+        cwd=project_dir,
+    )
+    if proc.returncode != 0:
+        # Maven prints diagnostics to stdout — surface the tail.
+        tail = "\n".join(proc.stdout.splitlines()[-30:])
+        return f"`mvn package` failed:\n{tail}"
+    return None
+
+
+def _validate_rust(project_dir: Path, files: Sequence[Path]) -> Optional[str]:
+    """Run `cargo check` against the regenerated crate."""
+
+    if not shutil.which("cargo"):
+        return None  # treat as smoke-only when Rust is not installed
+
+    # cargo check is much faster than build and still type-checks every
+    # source file the AI touched. The skel's `target/` is cached so
+    # repeat invocations are fast after the first run.
+    proc = _run(["cargo", "check", "--quiet"], cwd=project_dir)
+    if proc.returncode != 0:
+        tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-30:])
+        return f"`cargo check` failed:\n{tail}"
+    return None
+
+
+def _validate_js(project_dir: Path, files: Sequence[Path]) -> Optional[str]:
+    """Sanity-check the regenerated Node service via `node --check`."""
+
+    node = shutil.which("node")
+    if not node:
+        return None  # treat as smoke-only when Node is not installed
+
+    # Run `node --check` on every generated .js file: parses the file
+    # and bails on syntax errors without executing it.
+    for f in files:
+        if not f.is_file() or f.suffix != ".js":
+            continue
+        proc = _run([node, "--check", str(f)], cwd=project_dir)
+        if proc.returncode != 0:
+            return f"`node --check {f.name}` failed:\n{proc.stderr.strip()}"
+
+    # Best-effort import smoke: try to import the new helper module.
+    # We discover it by finding the only non-test file in src/ that
+    # is NOT index.js / config.js. Skip when no candidate is found.
+    src = project_dir / "src"
+    candidates = [
+        p
+        for p in src.glob("*.js")
+        if p.name not in {"index.js", "config.js"} and not p.name.endswith(".test.js")
+    ]
+    if candidates:
+        target = candidates[0]
+        snippet = f"import('./{target.name}').then(() => console.log('imports OK'));"
+        proc = _run(
+            [node, "--input-type=module", "-e", snippet],
+            cwd=src,
+        )
+        if proc.returncode != 0:
+            return (
+                f"node import of {target.name} failed:\n"
+                f"{proc.stdout}\n{proc.stderr}"
+            )
+    return None
+
+
+def _validate_react(project_dir: Path, files: Sequence[Path]) -> Optional[str]:
+    """Run a TypeScript-only typecheck on the regenerated React project."""
+
+    if not shutil.which("npx"):
+        return None  # treat as smoke-only when Node is not installed
+
+    # `tsc --noEmit` exercises the new tsconfig + tsx files without
+    # paying the full Vite build cost. We re-run via npx so the local
+    # node_modules tsc binary is preferred.
+    proc = _run(
+        ["npx", "--no-install", "tsc", "--noEmit"],
+        cwd=project_dir,
+    )
+    if proc.returncode != 0:
+        tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-30:])
+        return f"`tsc --noEmit` failed:\n{tail}"
+    return None
+
+
+VALIDATORS: Dict[str, Callable[[Path, Sequence[Path]], Optional[str]]] = {
+    "python-django-skel": _validate_django,
+    "python-django-bolt-skel": _validate_django_bolt,
+    "python-fastapi-skel": _validate_fastapi,
+    "python-flask-skel": _validate_flask,
+    "java-spring-skel": _validate_spring,
+    "rust-actix-skel": _validate_rust,
+    "rust-axum-skel": _validate_rust,
+    "js-skel": _validate_js,
+    "ts-react-skel": _validate_react,
+}
+
+
+# --------------------------------------------------------------------------- #
+#  Per-skeleton run
+# --------------------------------------------------------------------------- #
+
+
+@contextlib.contextmanager
+def chdir(path: Path):
+    prev = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(prev)
+
+
+def run_one_skeleton(
+    *,
+    skeleton: str,
+    repo_root: Path,
+    client: Optional[OllamaClient],
+    args: argparse.Namespace,
+) -> RunResult:
+    """Generate + AI-overlay + validate a single skeleton.
+
+    Returns a :class:`RunResult` describing the outcome. ``client`` is
+    ``None`` only in dry-run mode.
+    """
+
+    started = time.monotonic()
+    skel_short = short_name(skeleton)
+    proj_rel = PROJECT_DIR_TEMPLATE.format(skel_short=skel_short)
+    proj_path = (repo_root / proj_rel).resolve()
+    service_label = args.service_name or DEFAULTS["service_name"]
+    service_slug = slugify_service_name(service_label)
+
+    print()
+    print(f"=== {skeleton} → {proj_rel}/{service_slug} ===")
+
+    # ----- 1. Wipe + scaffold base project -------------------------- #
+
+    if not args.skip_base:
+        if proj_path.exists():
+            print(f"  cleaning previous {proj_rel}")
+            shutil.rmtree(proj_path)
+        proj_path.parent.mkdir(parents=True, exist_ok=True)
+        with chdir(proj_path.parent):
+            try:
+                service_subdir = generate_project(
+                    root=repo_root,
+                    skel_name=skeleton,
+                    proj_name=proj_path.name,
+                    service_name=service_label,
+                )
+            except (subprocess.CalledProcessError, SystemExit) as exc:
+                return RunResult(
+                    skeleton=skeleton,
+                    status="fail",
+                    duration_s=time.monotonic() - started,
+                    detail=f"base skel-gen failed: {exc}",
+                )
+        render_agents_template(
+            target=proj_path,
+            service_subdir=service_subdir,
+            skeleton_name=skeleton,
+            project_name=proj_path.name,
+        )
+    else:
+        if not proj_path.is_dir():
+            return RunResult(
+                skeleton=skeleton,
+                status="fail",
+                duration_s=time.monotonic() - started,
+                detail=f"--skip-base requires {proj_path} to exist",
+            )
+        # On --skip-base, expect the project on disk to use the slug from
+        # the chosen service name.
+        service_subdir = service_slug
+
+    inner_dir = proj_path / service_subdir
+    if not inner_dir.is_dir():
+        return RunResult(
+            skeleton=skeleton,
+            status="fail",
+            duration_s=time.monotonic() - started,
+            detail=f"expected service dir {inner_dir} not created",
+        )
+
+    # ----- 2. Build the generation context ------------------------- #
+
+    ctx = GenerationContext(
+        skeleton_name=skeleton,
+        skeleton_path=repo_root / "_skels" / skeleton,
+        project_root=proj_path,
+        project_name=proj_path.name,
+        service_subdir=service_subdir,
+        service_label=service_label,
+        item_name=args.item_name or DEFAULTS["item_name"],
+        auth_type=args.auth_type or DEFAULTS["auth_type"],
+        auth_details=(
+            args.auth_details if args.auth_details is not None else DEFAULTS["auth_details"]
+        ),
+    )
+
+    # ----- 3. Load manifest, plan targets -------------------------- #
+
+    manifest = load_manifest(repo_root, skeleton)
+    expanded_targets = [expand_target_paths(t, ctx) for t in manifest.targets]
+    print(f"  manifest: {len(manifest.targets)} target(s)")
+    for t in expanded_targets:
+        print(f"    - {t.path}")
+
+    # ----- 4. Run Ollama (or skip in dry-run) ---------------------- #
+
+    if args.dry_run or client is None:
+        print("  (dry-run) skipping Ollama")
+        return RunResult(
+            skeleton=skeleton,
+            status="ok",
+            duration_s=time.monotonic() - started,
+            detail="dry-run",
+        )
+
+    try:
+        results = generate_targets(
+            client=client,
+            manifest=manifest,
+            ctx=ctx,
+            dry_run=False,
+            progress=sys.stdout,
+        )
+    except OllamaError as exc:
+        return RunResult(
+            skeleton=skeleton,
+            status="fail",
+            duration_s=time.monotonic() - started,
+            detail=f"Ollama generation failed: {exc}",
+        )
+
+    written = [r.written_to for r in results]
+    print(f"  wrote {len(written)} file(s)")
+
+    # ----- 5. Validate ---------------------------------------------- #
+
+    validator = VALIDATORS.get(skeleton)
+    if validator is None:
+        # No specific validator: just syntax-check the generated files.
+        err = _syntax_check(written)
+    else:
+        err = validator(inner_dir, written)
+
+    if err:
+        return RunResult(
+            skeleton=skeleton,
+            status="fail",
+            duration_s=time.monotonic() - started,
+            detail=err,
+        )
+
+    # Optional cleanup
+    if not args.keep:
+        shutil.rmtree(proj_path, ignore_errors=True)
+
+    return RunResult(
+        skeleton=skeleton,
+        status="ok",
+        duration_s=time.monotonic() - started,
+        detail=f"{len(written)} files generated and validated",
+    )
+
+
+# --------------------------------------------------------------------------- #
+#  CLI plumbing
+# --------------------------------------------------------------------------- #
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="test-ai-generators",
+        description=(
+            "Run the Ollama-backed `_bin/skel-gen-ai` against every "
+            "AI-supported skeleton, validating the output with each "
+            "skeleton's natural sanity check (manage.py check, module "
+            "imports, pytest --collect-only)."
+        ),
+    )
+    parser.add_argument(
+        "--skel",
+        action="append",
+        dest="skels",
+        help="Limit the run to one or more skeletons (may be repeated). "
+        "Default: all manifests under _skels/_common/manifests/.",
+    )
+    parser.add_argument(
+        "--service-name",
+        help=f"Service display name (default: {DEFAULTS['service_name']!r})",
+    )
+    parser.add_argument(
+        "--item-name",
+        help=f"CRUD item name (default: {DEFAULTS['item_name']!r})",
+    )
+    parser.add_argument(
+        "--auth-type",
+        help=f"Authentication style (default: {DEFAULTS['auth_type']!r})",
+    )
+    parser.add_argument(
+        "--auth-details",
+        help="Free-form auth notes passed to the prompts",
+    )
+
+    parser.add_argument("--ollama-model", help="Override OLLAMA_MODEL")
+    parser.add_argument("--ollama-url", help="Override OLLAMA_BASE_URL")
+    parser.add_argument(
+        "--ollama-temperature",
+        type=float,
+        help="Sampling temperature (default 0.2)",
+    )
+
+    parser.add_argument(
+        "--skip-base",
+        action="store_true",
+        help="Reuse an existing _test_projects/test-ai-<skel>/ instead of "
+        "regenerating the base scaffold from scratch.",
+    )
+    parser.add_argument(
+        "--keep",
+        action="store_true",
+        help="Do not delete the test project directory after a successful run.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Skip the Ollama call entirely; only verify that the manifest "
+        "loads, the base scaffold succeeds, and target paths resolve.",
+    )
+    return parser.parse_args()
+
+
+def _build_ollama_config(args: argparse.Namespace) -> OllamaConfig:
+    cfg = OllamaConfig.from_env()
+    if args.ollama_model:
+        cfg.model = args.ollama_model
+    if args.ollama_url:
+        url = args.ollama_url.rstrip("/")
+        cfg.base_url = url[:-3] if url.endswith("/v1") else url
+    if args.ollama_temperature is not None:
+        cfg.temperature = args.ollama_temperature
+    return cfg
+
+
+def main() -> int:
+    args = parse_args()
+
+    cfg = load_config()
+    repo_root = detect_root(SCRIPT_DIR, cfg.skel_dir)
+
+    available = discover_manifests(repo_root)
+    if not available:
+        print("No AI manifests found under _skels/_common/manifests/")
+        return EXIT_SKIPPED
+
+    selected: List[str]
+    if args.skels:
+        unknown = sorted(set(args.skels) - set(available))
+        if unknown:
+            print(f"Unknown skeleton(s): {', '.join(unknown)}")
+            print(f"Available: {', '.join(available)}")
+            return EXIT_FAIL
+        selected = list(args.skels)
+    else:
+        selected = available
+
+    print(
+        "AI test runner — selected skeletons: " + ", ".join(selected),
+    )
+    print(
+        f"Defaults: service={DEFAULTS['service_name']!r} "
+        f"item={DEFAULTS['item_name']!r} auth={DEFAULTS['auth_type']!r}"
+    )
+
+    client: Optional[OllamaClient] = None
+    if not args.dry_run:
+        ollama_cfg = _build_ollama_config(args)
+        client = OllamaClient(ollama_cfg)
+        try:
+            client.verify()
+        except OllamaError as exc:
+            print()
+            print(f"Ollama check failed:\n{exc}")
+            print()
+            print("Skipping AI generation. Either start `ollama serve`, pull")
+            print("the model, or re-run with --dry-run to validate manifests")
+            print("and the base scaffold without calling Ollama.")
+            return EXIT_SKIPPED
+        print(f"Ollama: {ollama_cfg.model} @ {ollama_cfg.base_url}")
+
+    results: List[RunResult] = []
+    for skel in selected:
+        try:
+            results.append(
+                run_one_skeleton(
+                    skeleton=skel, repo_root=repo_root, client=client, args=args
+                )
+            )
+        except KeyboardInterrupt:
+            print()
+            print("Interrupted by user.")
+            return EXIT_FAIL
+
+    # ----- Summary --------------------------------------------------- #
+
+    print()
+    print("===== Summary =====")
+    fail_count = 0
+    for r in results:
+        marker = {"ok": "✓", "fail": "✗", "skipped": "·"}.get(r.status, "?")
+        print(
+            f"  {marker} {r.skeleton:30s}  {r.status:7s}  {r.duration_s:6.1f}s  {r.detail}"
+        )
+        if r.status == "fail":
+            fail_count += 1
+
+    print()
+    if fail_count:
+        print(f"{fail_count} skeleton(s) failed.")
+        return EXIT_FAIL
+    print("All AI-supported skeletons passed.")
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())

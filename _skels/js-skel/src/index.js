@@ -3,7 +3,7 @@
  * Entry point
  */
 
-const PORT = process.env.PORT || 3000;
+import { config } from './config.js';
 
 function greet(name = 'World') {
   return `Hello, ${name}!`;
@@ -11,7 +11,11 @@ function greet(name = 'World') {
 
 function main() {
   console.log(greet());
-  console.log(`Server would run on port ${PORT}`);
+  console.log(
+    `Server would bind to ${config.service.host}:${config.service.port}`
+  );
+  console.log(`Database URL: ${config.databaseUrl}`);
+  console.log(`JWT issuer: ${config.jwt.issuer}`);
 }
 
 export { greet };

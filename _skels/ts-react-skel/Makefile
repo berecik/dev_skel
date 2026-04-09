@@ -13,8 +13,8 @@ gen: ## Generate React TS project (NAME=my-app)
 	@echo "Usage: make gen NAME=<proj_name> [SERVICE=<service_subdir>] [PM=npm|pnpm|yarn|bun] [TEMPLATE=react-swc-ts]"; exit 1
 endif
 
-test: ## Run tests in generated project (delegate)
-	@bash $(SKEL_DIR)/test
+test: ## Run skeleton end-to-end test (generates a fresh project then runs ./test in it)
+	@bash $(SKEL_DIR)/test_skel
 
 deps: ## Check/install deps required for generator
 	@bash $(SKEL_DIR)/deps

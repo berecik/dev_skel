@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Production-ish run alias. Currently delegates to run-dev because the
+# django-bolt skeleton does not yet ship a hardened production runner. The
+# intent is to swap the body for a Gunicorn / runbolt --workers invocation
+# once the upstream story stabilises.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+Usage: ./run [dev|prod]
+
+  dev    (default) Run via ./run-dev (single-process auto-reload)
+  prod   Run via gunicorn (uses Django's WSGI app for now; the Rust runtime
+         is started by `python manage.py runbolt` in dev mode).
+EOF
+  exit 0
+fi
+
+case "${1:-dev}" in
+  dev)
+    exec ./run-dev
+    ;;
+  prod)
+    if [[ ! -d ".venv" ]]; then
+      ./build-dev
+    fi
+    # shellcheck disable=SC1091
+    source .venv/bin/activate
+    exec gunicorn --bind 0.0.0.0:8000 app.wsgi:application 2>/dev/null \
+      || exec python manage.py runbolt --host 0.0.0.0 --port 8000
+    ;;
+  *)
+    echo "Unknown run mode: $1" >&2
+    exit 1
+    ;;
+esac

@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Generator for python-django-bolt-skel.
+#
+# Usage: gen <main-dir> [service_subdir]
+#
+# Creates a wrapper directory and a Django-Bolt service inside it. Unlike
+# python-django-skel this generator does NOT call `django-admin startproject`
+# — django-bolt only needs `manage.py` plus an `app/` package, both of which
+# ship inside the skeleton tree and are copied verbatim by `merge`.
+
+SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+COMMON_DIR="$SKEL_DIR/../_common"
+# shellcheck disable=SC1091
+. "$COMMON_DIR/slug.sh"
+
+MAIN_DIR="${1:-}"
+SERVICE_NAME_RAW="${2:-}"
+
+if [[ -z "$MAIN_DIR" ]]; then
+  echo "Usage: $(basename "$0") <main-dir> [service-name]" >&2
+  exit 1
+fi
+
+# The second arg may be either a display name ("Ticket Service") or an
+# already-slugified value ("ticket_service"). slugify_service_name is
+# idempotent so both produce the same on-disk directory.
+PROJECT_SUBDIR_OVERRIDE=""
+if [[ -n "$SERVICE_NAME_RAW" ]]; then
+  PROJECT_SUBDIR_OVERRIDE="$(slugify_service_name "$SERVICE_NAME_RAW")"
+fi
+
+PROJECT_SUBDIR="${PROJECT_SUBDIR_OVERRIDE:-backend}"
+PROJECT_DIR="$MAIN_DIR/$PROJECT_SUBDIR"
+
+echo "[django-bolt] Generating into: $MAIN_DIR (project dir: $PROJECT_SUBDIR)"
+mkdir -p "$PROJECT_DIR"
+
+# Merge skeleton files into the inner project directory
+bash "$SKEL_DIR/merge" "$SKEL_DIR" "$PROJECT_DIR"
+
+# Create Python virtualenv and install dependencies
+(
+  cd "$PROJECT_DIR"
+  python3 -m venv .venv
+  # shellcheck disable=SC1091
+  . .venv/bin/activate
+  pip install -q --upgrade pip
+  pip install -q -r requirements.txt
+)
+
+# Create wrapper-level README, Makefile, and thin scripts
+bash "$COMMON_DIR/common-wrapper.sh" "$MAIN_DIR" "$PROJECT_SUBDIR" "Django-Bolt Backend"
+
+echo "[django-bolt] Done."

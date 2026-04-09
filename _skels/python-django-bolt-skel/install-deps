@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Install project dependencies for the django-bolt skeleton.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[0;33m'
+NC='\033[0m'
+
+info() { echo -e "${GREEN}[INFO]${NC} $*"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+header() { echo -e "${BLUE}=== $* ===${NC}"; }
+
+cd "$SCRIPT_DIR"
+
+header "Installing Django-Bolt Project Dependencies"
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "ERROR: python3 not found. Please install Python 3.11+ first."
+  echo "Run: ../skel-deps python-django-bolt-skel  (if using dev_skel structure)"
+  exit 1
+fi
+
+info "Python version: $(python3 --version)"
+
+if [[ ! -d .venv ]]; then
+  info "Creating virtual environment..."
+  python3 -m venv .venv
+else
+  info "Virtual environment already exists"
+fi
+
+info "Activating virtual environment..."
+# shellcheck source=/dev/null
+. .venv/bin/activate
+
+info "Upgrading pip..."
+pip install --upgrade pip
+
+if [[ -f requirements-dev.txt ]]; then
+  info "Installing dev dependencies from requirements-dev.txt..."
+  pip install -r requirements-dev.txt
+elif [[ -f requirements.txt ]]; then
+  info "Installing dependencies from requirements.txt..."
+  pip install -r requirements.txt
+else
+  warn "No requirements file found"
+fi
+
+header "Dependencies Installed Successfully"
+info "Virtual environment is ready at: .venv"
+info ""
+info "Then you can:"
+info "  python manage.py migrate         # Run migrations"
+info "  python manage.py runbolt --dev   # Start the django-bolt Rust server"
+info "  pytest                            # Run tests"

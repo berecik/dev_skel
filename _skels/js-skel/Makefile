@@ -9,17 +9,17 @@ GREEN := \033[0;32m
 YELLOW := \033[0;33m
 NC := \033[0m
 
-gen: ## Generate JavaScript/Node project (NAME=myapp)
+gen: ## Generate JavaScript/Node project (NAME=myapp [SERVICE="display name"])
 ifndef NAME
-	@echo "Usage: make gen NAME=<project-name>"
+	@echo "Usage: make gen NAME=<project-name> [SERVICE=\"Display Name\"]"
 	@exit 1
 endif
 	@echo "$(GREEN)Generating JavaScript project: $(NAME)$(NC)"
-	@bash $(SKEL_DIR)/gen "$(NAME)"
+	@bash $(SKEL_DIR)/gen "$(NAME)" "$(SERVICE)"
 	@echo "$(GREEN)JavaScript project $(NAME) created!$(NC)"
 
-test: ## Run project tests (use in generated project)
-	@bash $(SKEL_DIR)/test
+test: ## Run skeleton end-to-end test (generates a fresh project then runs ./test in it)
+	@bash $(SKEL_DIR)/test_skel
 
 build: ## Build for local development
 	@bash $(SKEL_DIR)/build-dev
