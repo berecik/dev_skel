@@ -2,14 +2,18 @@
 # Generate, test, and run projects across all skeleton templates
 
 .PHONY: help list test test-all run info info-all clean clean-all status \
-        gen-fastapi gen-flask gen-django gen-django-bolt gen-react gen-js gen-spring gen-actix gen-axum \
-        test-fastapi test-flask test-django test-django-bolt test-react test-js test-spring test-actix test-axum \
+        gen-fastapi gen-flask gen-django gen-django-bolt gen-react gen-flutter gen-js gen-spring gen-actix gen-axum \
+        test-fastapi test-flask test-django test-django-bolt test-react test-flutter test-js test-spring test-actix test-axum \
         test-ai-generators test-ai-generators-dry \
         test-gen-ai-fastapi test-gen-ai-django test-gen-ai-django-bolt test-gen-ai-flask \
-        test-gen-ai-spring test-gen-ai-actix test-gen-ai-axum test-gen-ai-js test-gen-ai-react \
+        test-gen-ai-spring test-gen-ai-actix test-gen-ai-axum test-gen-ai-js test-gen-ai-react test-gen-ai-flutter \
+        install-rag-deps rag-index-skels rag-clean-skels \
         test-shared-db test-shared-db-keep test-shared-db-python \
         test-react-django-bolt test-react-django-bolt-keep \
-        test-react-fastapi test-react-fastapi-keep
+        test-react-fastapi test-react-fastapi-keep \
+        test-flutter-django-bolt test-flutter-django-bolt-keep \
+        test-flutter-fastapi test-flutter-fastapi-keep \
+        test-cross-stack
 
 # Skeleton directories
 SKEL_DIR := _skels
@@ -18,13 +22,14 @@ FLASK_SKEL := $(SKEL_DIR)/python-flask-skel
 DJANGO_SKEL := $(SKEL_DIR)/python-django-skel
 DJANGO_BOLT_SKEL := $(SKEL_DIR)/python-django-bolt-skel
 REACT_SKEL := $(SKEL_DIR)/ts-react-skel
+FLUTTER_SKEL := $(SKEL_DIR)/flutter-skel
 JS_SKEL := $(SKEL_DIR)/js-skel
 SPRING_SKEL := $(SKEL_DIR)/java-spring-skel
 ACTIX_SKEL := $(SKEL_DIR)/rust-actix-skel
 AXUM_SKEL := $(SKEL_DIR)/rust-axum-skel
 
 # All skeletons
-SKELETONS := $(FASTAPI_SKEL) $(FLASK_SKEL) $(DJANGO_SKEL) $(DJANGO_BOLT_SKEL) $(REACT_SKEL) $(JS_SKEL) $(SPRING_SKEL) $(ACTIX_SKEL) $(AXUM_SKEL)
+SKELETONS := $(FASTAPI_SKEL) $(FLASK_SKEL) $(DJANGO_SKEL) $(DJANGO_BOLT_SKEL) $(REACT_SKEL) $(FLUTTER_SKEL) $(JS_SKEL) $(SPRING_SKEL) $(ACTIX_SKEL) $(AXUM_SKEL)
 
 # Test output directory
 TEST_OUTPUT := _test_projects
@@ -75,6 +80,9 @@ gen-django-bolt: ## Generate Django-Bolt project (NAME=myapp [SERVICE="display n
 
 gen-react: ## Generate React+Vite+TypeScript project (NAME=myapp [SERVICE="display name"])
 	@$(MAKE) -C $(REACT_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
+
+gen-flutter: ## Generate Flutter project (NAME=myapp [SERVICE="display name"] [PLATFORMS=web,android,...])
+	@$(MAKE) -C $(FLUTTER_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)" PLATFORMS="$(PLATFORMS)"
 
 gen-js: ## Generate JavaScript/Node project (NAME=myapp [SERVICE="display name"])
 	@$(MAKE) -C $(JS_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
@@ -136,6 +144,15 @@ test-gen-react: ## Test React+Vite generator
 	@$(MAKE) gen-react NAME=$(TEST_OUTPUT)/test-react-app
 	@cd $(TEST_OUTPUT)/test-react-app/frontend && npm run build
 	@echo "$(GREEN)React+Vite generator test passed$(NC)"
+
+test-gen-flutter: ## Test Flutter generator (smoke build via skel test_skel)
+	@echo "$(YELLOW)>>> Testing Flutter generator$(NC)"
+	@if ! command -v flutter >/dev/null 2>&1; then \
+		echo "$(YELLOW)>>> flutter SDK not on PATH — skipping (install: https://docs.flutter.dev/get-started/install)$(NC)"; \
+		exit 0; \
+	fi
+	@$(MAKE) -C $(FLUTTER_SKEL) test
+	@echo "$(GREEN)Flutter generator test passed$(NC)"
 
 test-gen-js: ## Test JavaScript generator
 	@echo "$(YELLOW)>>> Testing JavaScript generator$(NC)"
@@ -207,6 +224,54 @@ test-gen-ai-js: ## AI-generate a Node service in _test_projects/
 test-gen-ai-react: ## AI-generate a React frontend in _test_projects/
 	@_bin/test-ai-generators --skel ts-react-skel
 
+test-gen-ai-flutter: ## AI-generate a Flutter frontend in _test_projects/
+	@_bin/test-ai-generators --skel flutter-skel
+
+#
+# === RAG AGENT (`_bin/skel_rag/`) ===
+#
+# The RAG agent indexes each skeleton's reference templates with
+# tree-sitter + FAISS so skel-gen-ai retrieves only the most relevant
+# code into Ollama prompts (instead of stuffing whole files). The
+# package lives at `_bin/skel_rag/` and is exposed as a CLI via
+# `_bin/skel-rag` (subcommands: index / search / info / clean).
+#
+# Dependencies are heavy (sentence-transformers, faiss-cpu,
+# tree-sitter, langchain-*). Install them once into the active venv
+# with `make install-rag-deps`. The legacy ``{template}`` /
+# ``{wrapper_snapshot}`` placeholders keep working without the deps;
+# only manifests using the new ``{retrieved_context}`` placeholder
+# require the install.
+#
+
+install-rag-deps: ## Install local RAG agent dependencies (LangChain + FAISS + tree-sitter)
+	@echo "$(GREEN)=== Installing RAG agent dependencies ===$(NC)"
+	@python3 -m pip install --upgrade \
+		'langchain-core>=0.3' \
+		'langchain-community>=0.3' \
+		'langchain-huggingface>=0.1' \
+		'langchain-ollama>=0.2' \
+		'langchain-text-splitters>=0.3' \
+		'sentence-transformers>=3.0' \
+		'faiss-cpu>=1.8' \
+		'tree-sitter>=0.23' \
+		'tree-sitter-languages>=1.10' \
+		|| { echo "$(RED)pip install failed — try `pip install tree-sitter-language-pack` if tree-sitter-languages has no wheel for your platform$(NC)"; exit 1; }
+	@echo "$(GREEN)Done. Try: _bin/skel-rag index $(SKEL_DIR)/python-fastapi-skel$(NC)"
+
+rag-index-skels: ## Build the FAISS index for every skeleton (CI warm-up)
+	@echo "$(GREEN)=== Indexing all skeletons with skel-rag ===$(NC)"
+	@for skel in $(SKELETONS); do \
+		echo "  - $$skel"; \
+		_bin/skel-rag index $$skel || exit $$?; \
+	done
+
+rag-clean-skels: ## Wipe the cached FAISS index from every skeleton
+	@for skel in $(SKELETONS); do \
+		_bin/skel-rag clean --path $$skel >/dev/null || true; \
+	done
+	@echo "$(GREEN)Removed .skel_rag_index/ from every skeleton$(NC)"
+
 #
 # === SHARED-DB INTEGRATION TEST ===
 #
@@ -257,6 +322,48 @@ test-react-fastapi-keep: ## Same, but leave _test_projects/test-react-fastapi on
 	@_bin/test-react-fastapi-integration --keep
 
 #
+# === FLUTTER + BACKEND CROSS-STACK INTEGRATION TESTS ===
+#
+# Same shape as the React tests but for the Flutter frontend. Each one
+# generates a wrapper containing the backend skeleton + flutter-skel,
+# rewrites BACKEND_URL in <wrapper>/.env, re-copies that .env into the
+# Flutter project's bundled asset (so flutter_dotenv reads the new
+# value at runtime), runs `flutter pub get` + `flutter build web`,
+# inspects the bundled .env asset and the compiled main.dart.js, then
+# starts the backend and exercises the canonical 9-step items API
+# flow over real HTTP. The HTTP exercise hits the BACKEND directly,
+# proving the same items API contract works for both frontends.
+#
+# Skipped gracefully when the Flutter SDK is not on the PATH.
+#
+
+test-flutter-django-bolt: ## Cross-stack integration test (django-bolt + flutter)
+	@echo "$(GREEN)=== Flutter + Django-Bolt integration test ===$(NC)"
+	@_bin/test-flutter-django-bolt-integration
+
+test-flutter-django-bolt-keep: ## Same, but leave _test_projects/test-flutter-django-bolt on disk
+	@_bin/test-flutter-django-bolt-integration --keep
+
+test-flutter-fastapi: ## Cross-stack integration test (fastapi + flutter)
+	@echo "$(GREEN)=== Flutter + FastAPI integration test ===$(NC)"
+	@_bin/test-flutter-fastapi-integration
+
+test-flutter-fastapi-keep: ## Same, but leave _test_projects/test-flutter-fastapi on disk
+	@_bin/test-flutter-fastapi-integration --keep
+
+#
+# === ALL CROSS-STACK TESTS (one shot) ===
+#
+test-cross-stack: ## Run every cross-stack integration test in sequence
+	@echo "$(GREEN)=== Running all cross-stack integration tests ===$(NC)"
+	@$(MAKE) test-shared-db
+	@$(MAKE) test-react-django-bolt
+	@$(MAKE) test-react-fastapi
+	@$(MAKE) test-flutter-django-bolt
+	@$(MAKE) test-flutter-fastapi
+	@echo "$(GREEN)All cross-stack tests passed.$(NC)"
+
+#
 # === SKELETON TEST TARGETS ===
 #
 test: ## Run all skeleton e2e tests (generates projects and runs their tests)
@@ -284,6 +391,10 @@ test-django-bolt: ## Run Django-Bolt skeleton tests
 test-react: ## Run React+Vite skeleton tests
 	@echo "$(GREEN)Running React+Vite tests...$(NC)"
 	$(MAKE) -C $(REACT_SKEL) test
+
+test-flutter: ## Run Flutter skeleton tests
+	@echo "$(GREEN)Running Flutter tests...$(NC)"
+	$(MAKE) -C $(FLUTTER_SKEL) test
 
 test-js: ## Run JavaScript skeleton tests
 	@echo "$(GREEN)Running JavaScript tests...$(NC)"

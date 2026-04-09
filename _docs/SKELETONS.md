@@ -19,6 +19,7 @@ Each skeleton is a complete, working project template that can be used to bootst
   - The real framework-specific project lives in a per-skeleton subdirectory (`project_dir`) inside `main_dir`:
     - Python backends (FastAPI, Flask, Django): `backend/`
     - React frontend (ts-react-skel): `frontend/`
+    - Flutter frontend (flutter-skel): `frontend/`
     - Node.js (js-skel): `app/`
     - Java Spring, Rust Actix, Rust Axum: `service/`
   - A common wrapper script (`_skels/_common/common-wrapper.sh`) creates in `main_dir`:
@@ -62,6 +63,10 @@ Framework-specific build options:
 
 - [ts-react-skel](./ts-react-skel.md) - React + Vite + TypeScript + Vitest
 - [js-skel](./js-skel.md) - Plain JavaScript/Node.js
+
+### Dart / Flutter
+
+- [flutter-skel](./flutter-skel.md) - Flutter (Material 3) + `http` + `flutter_secure_storage` + `flutter_dotenv`. Frontend that pairs with the wrapper-shared `/api/items` + `/api/auth/login` + `/api/state` contract.
 
 ### Java
 

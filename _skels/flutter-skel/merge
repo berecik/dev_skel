@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SKEL_DIR="${1:?skel_dir missing}"
+TARGET_DIR="${2:?target_dir missing}"
+
+echo "Merging overlays from $SKEL_DIR into $TARGET_DIR (flutter-skel)..."
+
+# Files to exclude from merge (generator-specific, not part of generated project).
+EXCLUDE_FILES="Makefile merge gen test_skel deps install-deps"
+
+# Directories the merge must skip:
+#   - .git / .dart_tool / build / .idea / .vscode    — local + build state
+#   - android / ios / macos / linux / windows / web  — `flutter create` writes
+#     these with platform-specific bundle ids and Gradle paths we never want
+#     to clobber. The skeleton only ships the Dart layer under `lib/` + tests.
+#   - .skel_rag_index                                — local FAISS index
+EXCLUDE_DIRS=(
+  ".git"
+  ".dart_tool"
+  "build"
+  ".idea"
+  ".vscode"
+  "android"
+  "ios"
+  "macos"
+  "linux"
+  "windows"
+  "web"
+  ".skel_rag_index"
+)
+
+# Files that should always overwrite (skeleton customizations).
+#
+# `flutter create` writes its own placeholder `lib/main.dart`,
+# `pubspec.yaml`, `analysis_options.yaml`, and `test/widget_test.dart`.
+# We replace those with the generator-owned files shipped here so the
+# wrapper-shared items / auth / state layer is in place from the very
+# first run.
+#
+# The pattern is the source of truth — keep it in sync whenever a file
+# is added or renamed inside `lib/api/`, `lib/auth/`, `lib/controllers/`,
+# `lib/screens/`, or `lib/state/`. Otherwise re-runs against an
+# existing wrapper will silently leave stale copies in place.
+OVERWRITE_PATTERN="^/(pubspec\.yaml|analysis_options\.yaml|lib/main\.dart|lib/config\.dart|lib/auth/token_store\.dart|lib/auth/auth_scope\.dart|lib/api/items_client\.dart|lib/state/app_state_store\.dart|lib/state/state_api\.dart|lib/state/app_state_scope\.dart|lib/controllers/items_controller\.dart|lib/screens/login_screen\.dart|lib/screens/home_screen\.dart|lib/screens/item_form\.dart|lib/screens/item_list\.dart|test/widget_test\.dart)$"
+
+while IFS= read -r -d '' src; do
+  rel="${src#"$SKEL_DIR"}"
+  filename="$(basename "$rel")"
+
+  # Skip excluded files (exact match on filename)
+  skip=false
+  for f in $EXCLUDE_FILES; do
+    if [[ "$filename" == "$f" ]]; then
+      skip=true
+      break
+    fi
+  done
+  if [[ "$skip" == true ]]; then
+    continue
+  fi
+
+  # Skip excluded directories
+  for d in "${EXCLUDE_DIRS[@]}"; do
+    if [[ "$rel" == *"/$d/"* || "$rel" == *"/$d" || "$rel" == "/$d/"* || "$rel" == "/$d" ]]; then
+      skip=true
+      break
+    fi
+  done
+  if [[ "$skip" == true ]]; then
+    continue
+  fi
+
+  dst="$TARGET_DIR/$rel"
+  should_copy=false
+
+  # Check if file should always overwrite
+  if [[ "$rel" =~ $OVERWRITE_PATTERN ]]; then
+    should_copy=true
+  elif [[ ! -f "$dst" ]]; then
+    # Only copy if destination doesn't exist
+    should_copy=true
+  fi
+
+  if [[ "$should_copy" == true ]]; then
+    mkdir -p "$(dirname "$dst")"
+    cp "$src" "$dst"
+    echo "  + $rel"
+  fi
+done < <(find "$SKEL_DIR" -type f -print0)
+
+echo "Done."

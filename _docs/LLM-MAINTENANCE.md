@@ -113,7 +113,7 @@ Before making changes, read these files:
     generator. Auto-discovers manifests under
     `_skels/_common/manifests/`, runs base scaffold + Ollama overlay for
     each, then validates the result with a per-skeleton sanity check.
-    **All 9 skeletons** are wired in:
+    **All 10 skeletons** are wired in:
     - Django / Django-Bolt → `manage.py check` (+ `pytest --collect-only`
       for django-bolt).
     - FastAPI / Flask → module import via the production app factory.
@@ -121,11 +121,12 @@ Before making changes, read these files:
     - Rust Actix / Axum → `cargo check --quiet`.
     - JS → `node --check` per file + ESM import smoke.
     - React → `npx tsc --noEmit`.
-    Validators that need a missing toolchain (Maven, Cargo, Node) skip
-    silently; toolchains that *are* present run the full per-stack
-    check. Backs the `make test-ai-generators` target. Opt-in
-    (separate from `make test-generators`) because it needs Ollama
-    and is slow.
+    - Flutter → `flutter pub get` + `flutter analyze`.
+    Validators that need a missing toolchain (Maven, Cargo, Node,
+    Flutter) skip silently; toolchains that *are* present run the
+    full per-stack check. Backs the `make test-ai-generators` target.
+    Opt-in (separate from `make test-generators`) because it needs
+    Ollama and is slow.
 11. **`_bin/test-shared-db`** - Cross-language integration test runner.
     Generates a wrapper containing every backend skeleton, seeds the
     shared SQLite `items` table, and runs a per-stack verifier that
@@ -135,18 +136,49 @@ Before making changes, read these files:
     Skips toolchains that aren't installed (`java`, `cargo`, `node`)
     gracefully so it runs on minimal CI hosts. Backs the
     `make test-shared-db` family of targets.
-10. **`_bin/install-dev-skel` / `update-dev-skel` / `sync-dev-skel` /
+12. **`_bin/_frontend_backend_lib.py`** - Shared helpers for the
+    frontend + backend cross-stack integration tests. Defines:
+    - `BackendSpec` (declarative description of a backend: skel name,
+      service display name, server argv, optional pre-server setup).
+    - `Frontend` (declarative description of a frontend: skel name,
+      toolchain probe, build callable, build-output inspector).
+    - `REACT_FRONTEND` and `FLUTTER_FRONTEND` instances ready to plug
+      into the generic driver.
+    - `run_frontend_backend_integration(frontend, spec, ...)` —
+      generic 9-step driver: generate wrapper → set BACKEND_URL →
+      build frontend → inspect bundle → run backend setup → start
+      server → exercise items API → stop server → clean up. The HTTP
+      exercise hits the BACKEND, so the same `BackendSpec` works for
+      every frontend.
+    - `run_react_backend_integration(...)` — backwards-compat shim
+      that forwards to the generic driver with `REACT_FRONTEND`.
+13. **`_bin/test-react-django-bolt-integration`,
+    `_bin/test-react-fastapi-integration`,
+    `_bin/test-flutter-django-bolt-integration`,
+    `_bin/test-flutter-fastapi-integration`** - Per-(frontend, backend)
+    cross-stack integration tests. Each is a ~150-line driver that
+    builds a `BackendSpec` and forwards to
+    `run_frontend_backend_integration`. The React tests verify the
+    Vite-baked bundle (`dist/assets/*.js`); the Flutter tests verify
+    the bundled `.env` asset (`build/web/assets/.env`) and the
+    compiled `main.dart.js`. All four hit the canonical 9-step
+    `register → login → CRUD → complete → reject` items API flow.
+    Backs `make test-react-django-bolt`, `make test-react-fastapi`,
+    `make test-flutter-django-bolt`, `make test-flutter-fastapi`,
+    and `make test-cross-stack` (the umbrella that runs every
+    cross-stack test back-to-back).
+15. **`_bin/install-dev-skel` / `update-dev-skel` / `sync-dev-skel` /
     `skel-list`** - Other relocatable Python CLIs that share `dev_skel_lib.py`
-11. **`_skels/_common/common-wrapper.sh`** - Wrapper-directory scaffolder used
+16. **`_skels/_common/common-wrapper.sh`** - Wrapper-directory scaffolder used
     by all skeletons
-12. **`_skels/_common/AGENTS.md`** - Templated agents file rendered into
+17. **`_skels/_common/AGENTS.md`** - Templated agents file rendered into
     every generated project
-13. **`_skels/_common/manifests/<skel>.py`** - Per-skeleton AI generation
+18. **`_skels/_common/manifests/<skel>.py`** - Per-skeleton AI generation
     manifests consumed by `skel-gen-ai`. Each manifest exports a top-level
     `MANIFEST` dict listing the files to (re)generate, the template files
     they should reference, and the prompt for each.
-14. **`skel-deps`** - Main dependency installer
-15. **`_skels/*/deps`** - Per-skeleton dependency installers
+19. **`skel-deps`** - Main dependency installer
+20. **`_skels/*/deps`** - Per-skeleton dependency installers
 
 ## Common Tasks
 
@@ -753,23 +785,128 @@ native variable name) side-by-side. When you switch the wrapper to
 Postgres, update **all three** in lockstep — the dev_skel `.env.example`
 documents this requirement.
 
-### `_bin/skel_ai_lib.py` (Ollama AI generator)
+### `_bin/skel_ai_lib.py` (legacy shim) + `_bin/skel_rag/` (RAG agent)
 
-The AI generator is intentionally separate from `dev_skel_lib.py` to keep
-the static-generation path dependency-free and to make the AI layer easy to
-mock or replace.
+As of the 2026-04 RAG refactor, the AI orchestration lives in
+`_bin/skel_rag/` and `_bin/skel_ai_lib.py` is a backwards-compat shim
+that re-exports every public symbol used by `skel-gen-ai` and
+`test-ai-generators`. The shim delegates the four orchestration
+functions (`generate_targets`, `run_integration_phase`,
+`run_test_and_fix_loop`, and the private `_ask_ollama_to_fix`) to
+`skel_rag.agent.RagAgent`. `OllamaClient.chat` proxies to
+`langchain_ollama.ChatOllama` via `skel_rag.llm`. Every other helper
+(dataclasses, manifest loaders, dialogs, `format_prompt`,
+`clean_response`, `build_system_prompt`, `expand_target_paths`,
+`discover_siblings`, `run_service_tests`, the `_FIX_*` prompt
+templates) is preserved verbatim because the agent imports it.
 
-Key entry points:
+The RAG layer adds two new placeholders manifests can opt into:
+
+* `{retrieved_context}` — Markdown rendering of the chunks retrieved
+  from the **skeleton corpus** for the current per-target generation.
+  Augments the legacy `{template}` placeholder (which keeps working).
+* `{retrieved_siblings}` — Markdown rendering of the chunks retrieved
+  from the **wrapper corpus** for the current integration target.
+  Augments `{wrapper_snapshot}`.
+
+Manifests that do not reference the new placeholders behave exactly
+as before, so all 10 skeletons keep working without an opt-in.
+
+#### `_bin/skel_rag/` package layout
+
+| Module | Purpose |
+| --- | --- |
+| `config.py` | `OllamaConfig` (env-driven) and `RagConfig` (env-driven knobs: embedding model, top-K, max context chars, cache dir, fallback chunk size). |
+| `chunker.py` | Code-aware chunker. Tree-sitter for Python / Java / TypeScript / Rust / Dart / JS / Go / C / C++ / C#; stdlib `ast` fallback for Python; `RecursiveCharacterTextSplitter` fallback for everything else. Each `CodeChunk` records `(file, language, kind, name, start_line, end_line, source)`. |
+| `corpus.py` | `Corpus` discovery for a single skeleton or a generated wrapper. Reuses the `discover_siblings` skip set plus `.skel_rag_index`. `compute_manifest()` records `{rel_path: {mtime, size, sha[:16]}}` for cache invalidation. |
+| `embedder.py` | Lazy `HuggingFaceEmbeddings` factory. Default model `BAAI/bge-small-en-v1.5` (~130 MB, normalisable). Cached at `~/.cache/dev_skel/embeddings/`. |
+| `vectorstore.py` | `FAISS.load_local` / `FAISS.from_documents` wrapper with manifest-based cache invalidation. Persisted per skeleton at `_skels/<name>/.skel_rag_index/`; ephemeral (in-memory) for the wrapper integration phase. |
+| `retriever.py` | `Retriever` with metadata-aware `similarity_search`. Filters by language, falls back to widening when fewer than `min_k` results match, and truncates the result to `max_context_chars` total. |
+| `llm.py` | `ChatOllama` factory + `verify()` reachability check + `chat(config, system, user)` helper that mimics the legacy `OllamaClient.chat` signature. |
+| `prompts.py` | `render_retrieved_block(chunks, max_chars)` — Markdown renderer for the `{retrieved_context}` / `{retrieved_siblings}` placeholders. `build_query_for_target(...)` — natural-language query builder used by the retriever. |
+| `agent.py` | `RagAgent` — high-level orchestrator. `generate_targets`, `run_integration_phase`, `fix_target` methods. Maintains a per-corpus retriever cache keyed on `(corpus_id, root)`. |
+| `cli.py` | argparse-based `skel-rag` CLI. Subcommands: `index`, `search`, `info`, `clean`. |
+
+The shipped CLI is at `_bin/skel-rag` (a 20-line dispatcher that adds
+`_bin/` to `sys.path` and calls `skel_rag.cli:main`). Examples:
+
+```bash
+# Build / refresh a skeleton's local FAISS index
+_bin/skel-rag index _skels/python-fastapi-skel
+
+# Inspect what the retriever returns for a query
+_bin/skel-rag search "FastAPI repository CRUD" \
+    --path _skels/python-fastapi-skel --language python
+
+# Show stats about the persisted index
+_bin/skel-rag info --path _skels/python-fastapi-skel
+
+# Wipe the persisted index for one skeleton
+_bin/skel-rag clean --path _skels/python-fastapi-skel
+```
+
+#### Installing dependencies
+
+The RAG stack adds heavy dependencies (LangChain + sentence-transformers
++ FAISS + tree-sitter). They are loaded **lazily** inside
+`_bin/skel_rag/` so the static-generation path (`_bin/skel-gen-static`)
+keeps its stdlib-only contract; the legacy `{template}` /
+`{wrapper_snapshot}` placeholders also keep working without the install
+because the RAG agent falls back to a "_(retrieval disabled)_" string
+when the imports fail.
+
+```bash
+make install-rag-deps
+```
+
+The Makefile target installs:
+
+```
+langchain-core langchain-community langchain-huggingface langchain-ollama
+langchain-text-splitters sentence-transformers faiss-cpu tree-sitter
+tree-sitter-languages
+```
+
+If `tree-sitter-languages` has no prebuilt wheel for your platform,
+install `tree-sitter-language-pack` instead — the chunker auto-detects
+both packages.
+
+Convenience targets:
+
+* `make rag-index-skels` — `skel-rag index` every skeleton in one go (CI
+  warm-up so no developer pays the cold-build cost).
+* `make rag-clean-skels` — wipe `.skel_rag_index/` from every skeleton.
+
+#### Tunable knobs (env vars)
+
+Every `RagConfig` field has a corresponding env var:
+
+| Env var | Default | Notes |
+| --- | --- | --- |
+| `SKEL_RAG_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | Override to swap in a heavier model (e.g. `BAAI/bge-base-en-v1.5` or `google/embeddinggemma-300m`). |
+| `SKEL_RAG_INDEX_DIRNAME` | `.skel_rag_index` | Where the persisted FAISS index lives inside each corpus root. |
+| `SKEL_RAG_CACHE_DIR` | `~/.cache/dev_skel/embeddings` | Embedding model download cache. |
+| `SKEL_RAG_TOP_K` | `8` | Top-K for retrieval. |
+| `SKEL_RAG_MIN_K` | `3` | Floor when language filtering rejects too many results. |
+| `SKEL_RAG_MAX_CONTEXT_CHARS` | `12000` | Hard cap on the total characters injected into a single prompt's retrieved-context block. |
+| `SKEL_RAG_CHUNK_MAX_CHARS` | `2000` | Per-chunk truncation. |
+| `SKEL_RAG_FALLBACK_CHUNK_SIZE` / `SKEL_RAG_FALLBACK_CHUNK_OVERLAP` | `1500` / `150` | RecursiveCharacterTextSplitter parameters for unknown file types. |
+
+The Ollama side keeps its existing env vars (`OLLAMA_MODEL`,
+`OLLAMA_BASE_URL`, `OLLAMA_TIMEOUT`, `OLLAMA_TEMPERATURE`).
+
+#### Legacy entry points (preserved by the shim)
 
 - `OllamaConfig.from_env()` — read `OLLAMA_MODEL`, `OLLAMA_BASE_URL`,
   `OLLAMA_TIMEOUT`, `OLLAMA_TEMPERATURE`. The `/v1` suffix on
-  `OLLAMA_BASE_URL` is normalised away because the client appends the route
-  segment itself.
-- `OllamaClient.verify()` — pings `/api/tags` and confirms the configured
-  model is loaded locally; raises a friendly `OllamaError` otherwise.
-- `OllamaClient.chat(system, user)` — single chat completion call against
-  the OpenAI-compatible `/v1/chat/completions` endpoint. Stdlib only
-  (`urllib.request`), so no extra Python dependency is needed.
+  `OLLAMA_BASE_URL` is normalised away because the rest of the package
+  appends the route segment itself.
+- `OllamaClient.verify()` — proxies to `skel_rag.llm.verify`, which
+  pings `/api/tags` and confirms the configured model is loaded
+  locally; raises a friendly `OllamaError` otherwise.
+- `OllamaClient.chat(system, user)` — proxies to `RagAgent.chat`, which
+  invokes `langchain_ollama.ChatOllama` with the same temperature /
+  timeout configured on the `OllamaConfig`.
 - `GenerationContext` — dataclass holding the user's answers (service label,
   item name, auth type, auth notes) plus derived helpers (`item_class`,
   `items_plural`, `service_slug`, `auth_is_none`, `auth_required`). Its
@@ -792,25 +929,28 @@ Key entry points:
 - `expand_target_paths(target, ctx)` — formats placeholders inside a
   target's `path`, `template`, and `description` so manifest entries can use
   `{service_slug}` etc. directly.
-- `generate_targets(client, manifest, ctx, dry_run, progress)` — runs every
-  manifest target through Ollama, cleans the response of stray markdown
-  fences, and writes the result into the project directory.
-- `run_integration_phase(client, manifest, ctx, ...)` — second Ollama
-  pass that uses the integration manifest's prompts. Identical
-  bookkeeping to `generate_targets` but separates the system prompt
-  and target list so the per-target and integration phases can have
-  totally different "voices" (the per-target prompts know nothing
-  about siblings; the integration prompts know nothing about
-  rewriting templates).
+- `generate_targets(client, manifest, ctx, dry_run, progress)` — thin
+  wrapper that delegates to `RagAgent.generate_targets`. The agent
+  indexes the skeleton corpus once per call (cached on the client),
+  retrieves the most relevant chunks per target, exposes them as
+  `{retrieved_context}`, and still populates the legacy `{template}`
+  placeholder so unmigrated manifests behave identically.
+- `run_integration_phase(client, manifest, ctx, ...)` — thin wrapper
+  that delegates to `RagAgent.run_integration_phase`. The agent builds
+  an **ephemeral** wrapper-level corpus (in memory; not persisted to
+  disk so wrapper directories stay clean) and exposes the results as
+  both `{retrieved_context}` and `{retrieved_siblings}`, alongside the
+  legacy `{wrapper_snapshot}` blob.
 - `run_service_tests(test_command, ctx, *, timeout_s)` — runs the
   integration manifest's test command inside the new service
   directory, returning a `TestRunResult` with stdout/stderr/exit code
   whether the run passed or failed.
 - `run_test_and_fix_loop(client, ctx, manifest, integration_results)` —
-  bounded loop that runs the test command, asks Ollama to repair each
-  failing integration file via a second-turn prompt that includes the
-  current contents + truncated test output, then re-runs. Bounded by
-  `manifest.fix_iterations` (default `2`).
+  bounded loop that runs the test command, asks the RAG agent to
+  repair each failing integration file via `RagAgent.fix_target` (the
+  agent enriches the prompt with retrieved sibling chunks scoped to
+  the failing file), then re-runs. Bounded by `manifest.fix_iterations`
+  (default `2`).
 
 ### `_bin/test-ai-generators` (AI end-to-end runner)
 
@@ -1003,7 +1143,7 @@ project to exist already.)
    ```
 
 3. **Verify output**:
-   - All 9 generators should pass
+   - All 10 generators should pass
    - Check for any warnings or unexpected output
 
 ### Test Output Expectations
@@ -1067,8 +1207,8 @@ Flask generator test passed
 
 When maintaining this project, ensure:
 
-- [ ] All 9 generators pass: `make test-generators`
-- [ ] All 9 dependency scripts are executable: `ls -l _skels/*/deps`
+- [ ] All 10 generators pass: `make test-generators`
+- [ ] All 10 dependency scripts are executable: `ls -l _skels/*/deps`
 - [ ] No hardcoded absolute paths in Makefiles or scripts
 - [ ] `merge` scripts' exclusions are up to date
 - [ ] `deps` scripts support all target platforms (macOS, Ubuntu, Arch, Fedora)

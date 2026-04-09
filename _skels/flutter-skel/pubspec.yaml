@@ -1,0 +1,42 @@
+name: flutter_skel
+description: dev_skel Flutter frontend example — wrapper-shared items + auth + state.
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+  flutter: '>=3.22.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Stdlib HTTP client. We deliberately avoid `dio` / `chopper` so the
+  # generated example mirrors the React skel's "no axios / swr /
+  # react-query" minimalism.
+  http: ^1.2.0
+
+  # Native secure storage for the JWT bearer token. Uses Keychain on
+  # iOS / macOS, Keystore on Android, encrypted localStorage on web,
+  # libsecret on Linux, and the credential locker on Windows.
+  flutter_secure_storage: ^9.2.0
+
+  # Loads the wrapper-shared `<wrapper>/.env` (copied into the app
+  # bundle as an asset by the gen script) so the frontend reads
+  # BACKEND_URL / JWT_* without hard-coding values.
+  flutter_dotenv: ^5.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+
+  # `flutter_dotenv` reads `.env` from the asset bundle. The gen script
+  # copies the wrapper-level `<wrapper>/.env` into this directory after
+  # `common-wrapper.sh` runs, so the app loads the same env every other
+  # service in the wrapper does.
+  assets:
+    - .env

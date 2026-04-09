@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+echo "[install-deps] Checking Flutter toolchain..."
+bash "$SCRIPT_DIR/deps" || {
+  echo "Install the Flutter SDK first (https://docs.flutter.dev/get-started/install)."
+  exit 1
+}
+
+echo "[install-deps] Nothing to install globally — the generator runs"
+echo "                'flutter pub get' inside each generated project."

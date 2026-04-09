@@ -173,7 +173,17 @@
       "Bash(mkdir /tmp/skel-legacy-smoke)",
       "Bash(/Users/beret/dev_skel/_bin/skel-gen --no-input --dry-run . python-django-bolt-skel \"Tickets API\" --item-name ticket --auth-type jwt)",
       "Bash(_bin/skel-gen python-django-bolt-skel:*)",
-      "Bash(_bin/skel-gen --static python-django-bolt-skel)"
+      "Bash(_bin/skel-gen --static python-django-bolt-skel)",
+      "Bash(_bin/skel-rag --help)",
+      "Bash(_bin/skel-rag info:*)",
+      "Bash(_bin/skel-gen-ai --help)",
+      "Bash(make clean-test:*)",
+      "Bash(wc:*)",
+      "Bash(git mv:*)",
+      "Bash(make test-flutter-fastapi:*)",
+      "Bash(flutter build:*)",
+      "Bash(make test-flutter-django-bolt:*)",
+      "Bash(make test-cross-stack:*)"
     ],
     "deny": [],
     "ask": []

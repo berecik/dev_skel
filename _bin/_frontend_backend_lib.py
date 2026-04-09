@@ -1,36 +1,46 @@
-"""Shared helpers for the React + <backend> cross-stack integration tests.
+"""Shared helpers for the <frontend> + <backend> cross-stack integration tests.
 
-`_bin/test-react-django-bolt-integration` and
-`_bin/test-react-fastapi-integration` (and any future
-`test-react-<backend>-integration` script) all do the same thing:
+`_bin/test-react-django-bolt-integration`,
+`_bin/test-react-fastapi-integration`,
+`_bin/test-flutter-django-bolt-integration`, and
+`_bin/test-flutter-fastapi-integration` all do the same thing:
 
-1. Generate a wrapper containing the backend skeleton + ts-react-skel.
+1. Generate a wrapper containing the backend skeleton + a frontend
+   skeleton (React or Flutter).
 2. Rewrite ``BACKEND_URL`` in the wrapper ``.env`` to a non-conflicting
-   port and re-build the React frontend so the Vite plugin bakes the
-   new URL into the bundle.
-3. Inspect the bundle to confirm the URL + canonical endpoint paths
-   are present.
-4. Run any backend-specific setup (django-bolt → makemigrations + migrate;
-   fastapi → nothing because the wrapper-shared API auto-creates tables).
+   port. For React, this triggers a Vite re-build that bakes the new
+   URL into the bundle. For Flutter, the wrapper ``.env`` is also
+   re-copied into the project's bundled ``.env`` asset (since the gen
+   script copied the OLD value during scaffold) and ``flutter build
+   web`` produces a fresh asset bundle that includes the updated env.
+3. Inspect the build output to confirm the URL + canonical endpoint
+   paths are bundled correctly (React: dist/assets/*.js; Flutter:
+   build/web/assets/.env + the compiled main.dart.js).
+4. Run any backend-specific setup (django-bolt → makemigrations +
+   migrate; fastapi → nothing because the wrapper-shared API
+   auto-creates tables).
 5. Start the backend server in the background on the chosen port.
 6. Exercise the canonical 9 sub-step ``register → login → CRUD →
    complete → reject anonymous → reject invalid token`` flow over real
-   HTTP.
+   HTTP. The exercise hits the BACKEND, not the frontend, so it works
+   identically for React and Flutter.
 7. Stop the server cleanly and clean up the wrapper.
 
-This module exposes the helpers + the 9-step HTTP exercise so each
-per-backend script only needs to declare:
+This module exposes:
 
-* the backend skeleton name (``python-django-bolt-skel``,
-  ``python-fastapi-skel``, ...),
-* the service display name to give the backend in the wrapper,
-* the optional pre-server setup callback (for things like Django
-  ``makemigrations``),
-* the argv used to start the server in the background.
-
-The django-bolt script predates this module and is intentionally kept
-self-contained so its battle-tested implementation does not change
-underneath us; new backend tests should use this library.
+* :class:`BackendSpec` — declarative description of a backend (skel
+  name, service display name, server argv, optional pre-server setup).
+* :class:`Frontend` — declarative description of a frontend (skel
+  name, toolchain probe, build callable, build-output inspector).
+* :data:`REACT_FRONTEND` and :data:`FLUTTER_FRONTEND` — pre-built
+  instances for the two shipped frontends.
+* :func:`run_frontend_backend_integration` — generic driver that
+  runs the full 7-step flow for any (frontend, backend) pair.
+* :func:`run_react_backend_integration` — backwards-compatible alias
+  for the React-only entrypoint that the older FastAPI/django-bolt
+  scripts call. New scripts should call
+  :func:`run_frontend_backend_integration` directly with an explicit
+  ``frontend=`` argument.
 """
 
 from __future__ import annotations
@@ -58,6 +68,10 @@ EXIT_OK = 0
 EXIT_FAIL = 1
 EXIT_SETUP = 2
 
+# Legacy constants kept for backwards compat with the React-only
+# `run_react_backend_integration` shim (and any third-party scripts).
+# New code should pull the equivalent values off a :class:`Frontend`
+# instance — see :data:`REACT_FRONTEND` below.
 FRONTEND_SKEL = "ts-react-skel"
 FRONTEND_SERVICE_NAME = "Web UI"
 
@@ -68,7 +82,7 @@ TEST_USERNAME = "react-integration-user"
 TEST_PASSWORD = "react-integration-pw-12345"
 TEST_EMAIL = "react-test@example.com"
 TEST_ITEM_NAME = "react-integration-test-item"
-TEST_ITEM_DESCRIPTION = "Created by the React + <backend> integration test"
+TEST_ITEM_DESCRIPTION = "Created by the cross-stack integration test"
 
 
 # --------------------------------------------------------------------------- #
@@ -297,6 +311,240 @@ def run_backend_setup(
 
 
 # --------------------------------------------------------------------------- #
+#  Frontend abstraction
+# --------------------------------------------------------------------------- #
+#
+# Each cross-stack integration test is parameterised by a `Frontend` and
+# a `BackendSpec`. The `Frontend` captures the per-frontend bits the
+# generic driver does not know about:
+#
+#   - which skel + service display name to generate
+#   - how to detect that the toolchain is installed (so unsupported
+#     hosts skip cleanly with EXIT_SETUP)
+#   - what to do AFTER the wrapper `.env` has been rewritten (e.g.
+#     re-build the bundle, or re-copy the env into a runtime asset)
+#   - how to inspect the build artifacts to confirm the new
+#     `BACKEND_URL` actually got baked / bundled in
+#
+# Two pre-built instances ship today: :data:`REACT_FRONTEND` and
+# :data:`FLUTTER_FRONTEND`. New frontends only need to add a third
+# instance and a one-liner driver script that calls
+# :func:`run_frontend_backend_integration` with it.
+
+
+@dataclass
+class Frontend:
+    """Per-frontend hooks consumed by :func:`run_frontend_backend_integration`."""
+
+    name: str
+    skel: str
+    service_name: str
+    # Human-readable name of the missing tooling, used in skip messages.
+    toolchain_label: str
+    # Returns True when the host can build this frontend (e.g. Node + npm
+    # for React, the Flutter SDK for Flutter).
+    toolchain_probe: Callable[[], bool]
+    # Called after the wrapper has been generated AND `BACKEND_URL` has
+    # been rewritten in `<wrapper>/.env`. Receives `(wrapper, frontend_dir,
+    # backend_url)` and is expected to (re)produce the build artifacts
+    # the next step inspects. May raise on failure.
+    build: Callable[[Path, Path, str], None]
+    # Inspects the freshly built artifacts and returns a list of
+    # `(label, value)` pairs that the runner asserts are present in the
+    # bundle / asset. Raises AssertionError on missing strings.
+    inspect_bundle: Callable[[Path, str, Optional[Dict[str, str]]], None]
+
+
+def _react_build(wrapper: Path, frontend_dir: Path, backend_url: str) -> None:
+    """`npm run build` against ``frontend_dir`` so Vite re-bakes the env."""
+
+    started = time.monotonic()
+    result = subprocess.run(
+        ["npm", "run", "build"],
+        cwd=frontend_dir,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    if result.returncode != 0:
+        tail = result.stderr.strip()[-2000:]
+        raise RuntimeError(f"npm run build failed:\n{tail}")
+    print(f"  ✓ React build OK in {time.monotonic() - started:.1f}s")
+
+
+def _react_inspect_bundle(
+    frontend_dir: Path,
+    backend_url: str,
+    extra: Optional[Dict[str, str]] = None,
+) -> None:
+    """Concatenate `dist/assets/*.js` and assert the canonical strings."""
+
+    bundle = collect_react_bundle(frontend_dir)
+    expected: Dict[str, str] = {
+        "BACKEND_URL value": backend_url,
+        "items endpoint path": "/api/items",
+        "auth login path": "/api/auth/login",
+        "Bearer header": "Bearer",
+        "JWT issuer (devskel)": "devskel",
+    }
+    if extra:
+        expected.update(extra)
+    missing = [
+        label for label, needle in expected.items() if needle not in bundle
+    ]
+    if missing:
+        raise AssertionError(
+            f"React bundle is missing expected strings: {missing}"
+        )
+    print(f"  ✓ bundle ({len(bundle)} chars) contains all expected strings")
+    for label, needle in expected.items():
+        print(f"     · {label}: '{needle}'")
+
+
+def _flutter_build(wrapper: Path, frontend_dir: Path, backend_url: str) -> None:
+    """`flutter pub get` + `flutter build web` against ``frontend_dir``.
+
+    Before invoking the build we re-copy the wrapper-level ``.env`` into
+    the project directory so the bundled asset reflects the freshly
+    rewritten ``BACKEND_URL``. The skeleton's gen script copies the env
+    on initial generation, but at that point the wrapper still has the
+    default ``BACKEND_URL=http://localhost:8000`` — we need to refresh
+    it AFTER the test driver rewrites the wrapper env.
+    """
+
+    wrapper_env = wrapper / ".env"
+    project_env = frontend_dir / ".env"
+    if wrapper_env.is_file():
+        shutil.copyfile(wrapper_env, project_env)
+        print(f"  ✓ refreshed {project_env.name} from <wrapper>/.env")
+
+    started = time.monotonic()
+    pub_get = subprocess.run(
+        ["flutter", "pub", "get"],
+        cwd=frontend_dir,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if pub_get.returncode != 0:
+        tail = (pub_get.stdout + pub_get.stderr).strip()[-2000:]
+        raise RuntimeError(f"flutter pub get failed:\n{tail}")
+
+    build = subprocess.run(
+        ["flutter", "build", "web", "--no-tree-shake-icons"],
+        cwd=frontend_dir,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=900,
+    )
+    if build.returncode != 0:
+        tail = (build.stdout + build.stderr).strip()[-2000:]
+        raise RuntimeError(f"flutter build web failed:\n{tail}")
+    print(f"  ✓ Flutter web build OK in {time.monotonic() - started:.1f}s")
+
+
+def _flutter_inspect_bundle(
+    frontend_dir: Path,
+    backend_url: str,
+    extra: Optional[Dict[str, str]] = None,
+) -> None:
+    """Verify the bundled `.env` asset and the compiled main.dart.js.
+
+    Flutter ships the env at runtime via `flutter_dotenv`, so the
+    primary check is that `build/web/assets/.env` contains the
+    rewritten `BACKEND_URL`. As a defence-in-depth check we also grep
+    the compiled `main.dart.js` for the canonical endpoint paths so a
+    silent dotenv rename or asset-bundle regression is caught early.
+    """
+
+    web_dist = frontend_dir / "build" / "web"
+    if not web_dist.is_dir():
+        raise AssertionError(
+            f"flutter build did not produce build/web/ at {web_dist}"
+        )
+
+    # The bundled .env asset can land at one of two paths depending on
+    # the Flutter version. Check both and use whichever exists.
+    env_candidates = [
+        web_dist / "assets" / ".env",
+        web_dist / "assets" / "assets" / ".env",
+    ]
+    env_path = next((p for p in env_candidates if p.is_file()), None)
+    if env_path is None:
+        raise AssertionError(
+            "Bundled .env asset missing — looked at: "
+            + ", ".join(str(p) for p in env_candidates)
+        )
+
+    env_text = env_path.read_text(encoding="utf-8", errors="replace")
+    if f"BACKEND_URL={backend_url}" not in env_text:
+        raise AssertionError(
+            f"Bundled .env asset at {env_path} does not contain "
+            f"BACKEND_URL={backend_url}\n"
+            f"  contents (truncated): {env_text[:400]!r}"
+        )
+    print(f"  ✓ bundled .env asset at {env_path.relative_to(frontend_dir)}")
+    print(f"     · BACKEND_URL value: '{backend_url}'")
+
+    # Compiled Dart bundle. main.dart.js is the canonical name produced
+    # by `flutter build web`; the AssetManifest references it from
+    # index.html. We do NOT assert on its size — only that the canonical
+    # endpoint strings the dart code uses are present.
+    main_js = web_dist / "main.dart.js"
+    if not main_js.is_file():
+        raise AssertionError(f"main.dart.js missing at {main_js}")
+    bundle = main_js.read_text(encoding="utf-8", errors="replace")
+
+    expected: Dict[str, str] = {
+        "items endpoint path": "/api/items",
+        "auth login path": "/api/auth/login",
+        "Bearer header": "Bearer",
+    }
+    if extra:
+        expected.update(extra)
+    missing = [
+        label for label, needle in expected.items() if needle not in bundle
+    ]
+    if missing:
+        raise AssertionError(
+            f"main.dart.js is missing expected strings: {missing}"
+        )
+    print(
+        f"  ✓ main.dart.js ({len(bundle)} chars) contains all expected strings"
+    )
+    for label, needle in expected.items():
+        print(f"     · {label}: '{needle}'")
+
+
+def have_flutter() -> bool:
+    return bool(shutil.which("flutter"))
+
+
+REACT_FRONTEND = Frontend(
+    name="React",
+    skel=FRONTEND_SKEL,
+    service_name=FRONTEND_SERVICE_NAME,
+    toolchain_label="Node.js / npm",
+    toolchain_probe=have_node,
+    build=_react_build,
+    inspect_bundle=_react_inspect_bundle,
+)
+
+FLUTTER_FRONTEND = Frontend(
+    name="Flutter",
+    skel="flutter-skel",
+    service_name="Mobile UI",
+    toolchain_label="Flutter SDK",
+    toolchain_probe=have_flutter,
+    build=_flutter_build,
+    inspect_bundle=_flutter_inspect_bundle,
+)
+
+
+# --------------------------------------------------------------------------- #
 #  9-step HTTP exercise
 # --------------------------------------------------------------------------- #
 
@@ -467,8 +715,9 @@ def exercise_items_api(backend_url: str) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def run_react_backend_integration(
+def run_frontend_backend_integration(
     *,
+    frontend: Frontend,
     project_name: str,
     title: str,
     spec: BackendSpec,
@@ -479,21 +728,39 @@ def run_react_backend_integration(
     no_skip: bool,
     expected_bundle_strings: Optional[Dict[str, str]] = None,
 ) -> int:
-    """Run a full React + <backend> integration test against ``spec``.
+    """Run a full ``<frontend>`` + ``<backend>`` integration test.
 
     Returns the exit code (0 = pass, 1 = fail, 2 = setup skip).
+
+    The orchestration is the same for every (frontend, backend) pair:
+
+    1. Toolchain probe (skipped via ``EXIT_SETUP`` when missing).
+    2. Generate ``backend`` and ``frontend.skel`` into the wrapper.
+    3. Rewrite ``BACKEND_URL`` in the wrapper ``.env``.
+    4. Call ``frontend.build(...)`` to (re)produce the bundle.
+    5. Call ``frontend.inspect_bundle(...)`` to assert the bundle
+       contains the expected strings.
+    6. Run ``spec.pre_server_setup`` (Django migrations, ...).
+    7. Start the backend in the background and wait for it.
+    8. Exercise the canonical 9-step items API flow.
+    9. Stop the server and clean up the wrapper (unless ``keep``).
     """
 
     wrapper = repo_root / "_test_projects" / project_name
 
     print()
     print(f"=== {title} ===")
-    print(f"  wrapper: {wrapper}")
-    print(f"  port:    {port}")
+    print(f"  frontend: {frontend.name} ({frontend.skel})")
+    print(f"  backend:  {spec.skeleton}")
+    print(f"  wrapper:  {wrapper}")
+    print(f"  port:     {port}")
     print()
 
-    if not have_node():
-        msg = "Node.js / npm not installed (required for the React build)"
+    if not frontend.toolchain_probe():
+        msg = (
+            f"{frontend.toolchain_label} not installed "
+            f"(required for the {frontend.name} build)"
+        )
         if no_skip:
             print(f"  ✗ {msg}")
             return EXIT_FAIL
@@ -513,7 +780,7 @@ def run_react_backend_integration(
             shutil.rmtree(wrapper)
         wrapper.parent.mkdir(parents=True, exist_ok=True)
 
-        # 2. Generate backend + ts-react
+        # 2. Generate backend + frontend
         print()
         print("Generating services...")
         backend_slug = generate_one_service(
@@ -527,10 +794,10 @@ def run_react_backend_integration(
         frontend_slug = generate_one_service(
             repo_root=repo_root,
             wrapper_dir=wrapper,
-            skeleton=FRONTEND_SKEL,
-            service_label=FRONTEND_SERVICE_NAME,
+            skeleton=frontend.skel,
+            service_label=frontend.service_name,
         )
-        print(f"  + {frontend_slug}/  ({FRONTEND_SKEL})")
+        print(f"  + {frontend_slug}/  ({frontend.skel})")
 
         # 3. Update BACKEND_URL in wrapper .env
         print()
@@ -541,47 +808,18 @@ def run_react_backend_integration(
             f"BACKEND_URL update did not stick in {wrapper / '.env'}"
         )
 
-        # 4. Re-build the React frontend with the updated BACKEND_URL
+        # 4. Re-build the frontend with the updated BACKEND_URL
         print()
-        print("Re-building the React frontend with the updated BACKEND_URL...")
+        print(f"Re-building the {frontend.name} frontend with the updated BACKEND_URL...")
         frontend_dir = wrapper / frontend_slug
-        build_started = time.monotonic()
-        result = subprocess.run(
-            ["npm", "run", "build"],
-            cwd=frontend_dir,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-        if result.returncode != 0:
-            print("  ✗ npm run build failed")
-            print(f"    stderr: {result.stderr.strip()[-2000:]}")
-            return EXIT_FAIL
-        print(f"  ✓ React build OK in {time.monotonic() - build_started:.1f}s")
+        frontend.build(wrapper, frontend_dir, backend_url)
 
-        # 5. Verify the bundle bakes in the right values
+        # 5. Verify the build artifacts bake in the right values
         print()
-        print("Inspecting the React bundle...")
-        bundle = collect_react_bundle(frontend_dir)
-        defaults = {
-            "BACKEND_URL value": backend_url,
-            "items endpoint path": "/api/items",
-            "auth login path": "/api/auth/login",
-            "Bearer header": "Bearer",
-            "JWT issuer (devskel)": "devskel",
-        }
-        if expected_bundle_strings:
-            defaults.update(expected_bundle_strings)
-        missing = [
-            label for label, needle in defaults.items() if needle not in bundle
-        ]
-        if missing:
-            print(f"  ✗ React bundle is missing expected strings: {missing}")
-            return EXIT_FAIL
-        print(f"  ✓ bundle ({len(bundle)} chars) contains all expected strings")
-        for label, needle in defaults.items():
-            print(f"     · {label}: '{needle}'")
+        print(f"Inspecting the {frontend.name} build artifacts...")
+        frontend.inspect_bundle(
+            frontend_dir, backend_url, expected_bundle_strings
+        )
 
         # 6. Backend-specific pre-server setup
         backend_dir = wrapper / backend_slug
@@ -691,3 +929,49 @@ def run_react_backend_integration(
             shutil.rmtree(wrapper, ignore_errors=True)
 
     return final_exit
+
+
+# --------------------------------------------------------------------------- #
+#  Backwards-compatible React-only entrypoint
+# --------------------------------------------------------------------------- #
+#
+# `run_react_backend_integration` is the historical entrypoint used by
+# `_bin/test-react-fastapi-integration` and (after the consolidation
+# refactor) `_bin/test-react-django-bolt-integration`. It is now a thin
+# shim around :func:`run_frontend_backend_integration` so existing
+# scripts keep working without import changes.
+
+
+def run_react_backend_integration(
+    *,
+    project_name: str,
+    title: str,
+    spec: BackendSpec,
+    repo_root: Path,
+    port: int,
+    server_startup_timeout: int,
+    keep: bool,
+    no_skip: bool,
+    expected_bundle_strings: Optional[Dict[str, str]] = None,
+) -> int:
+    """Run a full React + ``<backend>`` integration test against ``spec``.
+
+    Forwards to :func:`run_frontend_backend_integration` with
+    :data:`REACT_FRONTEND` so the older per-backend scripts keep their
+    historical signature. New tests should call
+    :func:`run_frontend_backend_integration` directly with an explicit
+    ``frontend=`` argument.
+    """
+
+    return run_frontend_backend_integration(
+        frontend=REACT_FRONTEND,
+        project_name=project_name,
+        title=title,
+        spec=spec,
+        repo_root=repo_root,
+        port=port,
+        server_startup_timeout=server_startup_timeout,
+        keep=keep,
+        no_skip=no_skip,
+        expected_bundle_strings=expected_bundle_strings,
+    )

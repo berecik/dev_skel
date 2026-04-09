@@ -99,6 +99,11 @@ REFERENCE (`app/example_items/models.py`):
 ---
 {template}
 ---
+
+ADDITIONAL CONTEXT (retrieved from the skeleton corpus by the local
+RAG agent — use these for grounding when the REFERENCE alone is
+ambiguous, do NOT copy verbatim):
+{retrieved_context}
 """,
         },
         {
@@ -143,6 +148,11 @@ REFERENCE (`app/example_items/adapters/sql.py`):
 ---
 {template}
 ---
+
+ADDITIONAL CONTEXT (retrieved from the skeleton corpus by the local
+RAG agent — use these for grounding when the REFERENCE alone is
+ambiguous, do NOT copy verbatim):
+{retrieved_context}
 """,
         },
         {
@@ -166,6 +176,11 @@ REFERENCE (`app/example_items/depts.py`):
 ---
 {template}
 ---
+
+ADDITIONAL CONTEXT (retrieved from the skeleton corpus by the local
+RAG agent — use these for grounding when the REFERENCE alone is
+ambiguous, do NOT copy verbatim):
+{retrieved_context}
 """,
         },
         {
@@ -197,6 +212,11 @@ REFERENCE (`app/example_items/routes.py`):
 ---
 {template}
 ---
+
+ADDITIONAL CONTEXT (retrieved from the skeleton corpus by the local
+RAG agent — use these for grounding when the REFERENCE alone is
+ambiguous, do NOT copy verbatim):
+{retrieved_context}
 """,
         },
         {

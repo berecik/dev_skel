@@ -1,26 +1,29 @@
 #!/usr/bin/env python3
-"""Ollama-backed AI project generation for dev_skel.
+"""Backwards-compat shim for the legacy ``skel_ai_lib`` API.
 
-This module provides a generic generator that uses Ollama's OpenAI-compatible
-chat-completions endpoint to populate "core" service files (models, schemas,
-routes, services, tests, ...) inside a freshly scaffolded project. The
-existing per-skeleton ``gen`` scripts still take care of the wrapper layout,
-virtual environments, and static assets; the AI layer only rewrites the files
-listed in a per-skeleton manifest at ``_skels/_common/manifests/<skel>.py``.
+This module used to contain the entire Ollama-driven project generator
+(prompt building, urllib HTTP client, per-target loop, integration phase,
+test-and-fix loop). As of the 2026-04 RAG refactor the orchestration
+lives in :mod:`skel_rag` and this file's job is to keep every public
+symbol (data classes, manifest loaders, dialogs, prompt helpers, the
+``OllamaClient`` shim) importable under its original name so:
 
-Design notes:
+* ``_bin/skel-gen-ai`` and ``_bin/test-ai-generators`` keep working
+  without touching their import statements;
+* manifests using the legacy ``{template}`` / ``{wrapper_snapshot}``
+  placeholders keep generating identical prompts;
+* manifests opting into the new ``{retrieved_context}`` /
+  ``{retrieved_siblings}`` placeholders get RAG-driven context blocks
+  via :class:`skel_rag.agent.RagAgent`.
 
-* Stdlib only. The HTTP call uses ``urllib.request`` so the CLI does not need
-  any extra dependency to talk to Ollama.
-* Manifests are plain Python files exposing a ``MANIFEST`` dict so they can
-  use multi-line strings and inline helpers naturally.
-* Each manifest target points to a *template* file inside the skeleton tree.
-  The library reads that template, embeds it as ``REFERENCE`` context in the
-  prompt, and asks Ollama to adapt it to the user's service / item / auth
-  choices. The generated code is then cleaned of stray markdown fences and
-  written into the target path of the new project.
-* All Ollama interaction goes through :class:`OllamaClient` so the CLI stays
-  thin and the implementation is easy to mock in tests.
+The four orchestration functions (:func:`generate_targets`,
+:func:`run_integration_phase`, :func:`run_test_and_fix_loop`, and the
+private :func:`_ask_ollama_to_fix`) now delegate to ``RagAgent``;
+:class:`OllamaClient.chat` proxies to LangChain's ``ChatOllama`` via
+:mod:`skel_rag.llm`. Everything else (dataclasses, manifest loaders,
+``format_prompt``, ``clean_response``, ``build_system_prompt``,
+``discover_siblings``, ``run_service_tests``, the interactive dialogs)
+is preserved verbatim because the RAG agent imports it.
 """
 
 from __future__ import annotations
@@ -318,6 +321,11 @@ _SIBLING_KEY_FILES: Dict[str, List[str]] = {
         "src/api/items.ts",
         "src/state/state-api.ts",
     ],
+    "flutter-skel": [
+        "lib/config.dart",
+        "lib/api/items_client.dart",
+        "lib/state/state_api.dart",
+    ],
 }
 
 
@@ -367,6 +375,7 @@ _SERVICE_KIND_BY_TECH: Dict[str, str] = {
     "rust-axum-skel": "backend",
     "js-skel": "backend",
     "ts-react-skel": "frontend",
+    "flutter-skel": "frontend",
 }
 
 
@@ -411,6 +420,16 @@ def _detect_service_tech(service_dir: Path) -> Optional[str]:
         return "rust-actix-skel"
     if (service_dir / "vite.config.ts").is_file():
         return "ts-react-skel"
+    pubspec = service_dir / "pubspec.yaml"
+    if pubspec.is_file():
+        # `pubspec.yaml` is also a thing for pure-Dart packages, but
+        # only Flutter projects depend on `flutter:` from the SDK.
+        try:
+            content = pubspec.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            content = ""
+        if "flutter:" in content and "sdk: flutter" in content:
+            return "flutter-skel"
     if (service_dir / "package.json").is_file():
         return "js-skel"
     return None
@@ -522,79 +541,70 @@ class OllamaError(RuntimeError):
 
 
 class OllamaClient:
-    """Tiny stdlib-only Ollama client (OpenAI-compatible chat endpoint)."""
+    """Compatibility shim around :class:`skel_rag.agent.RagAgent`.
+
+    The class keeps the public surface (``config``, :meth:`verify`,
+    :meth:`chat`) used by ``skel-gen-ai`` and ``test-ai-generators``
+    unchanged. Internally it lazily constructs a :class:`RagAgent` so
+    one ``OllamaClient`` instance is enough to drive the per-target,
+    integration, and fix-loop phases.
+
+    The agent is instantiated on first use (not in ``__init__``) so the
+    legacy ``--check`` smoke test at the bottom of this file can verify
+    Ollama reachability without paying the LangChain import cost.
+    """
 
     def __init__(self, config: Optional[OllamaConfig] = None) -> None:
         self.config = config or OllamaConfig.from_env()
+        self._agent: Optional[Any] = None
+
+    # ---- internals --------------------------------------------------------
+
+    @property
+    def agent(self) -> Any:
+        """Lazily-constructed :class:`skel_rag.agent.RagAgent`."""
+
+        if self._agent is None:
+            from skel_rag.agent import RagAgent  # local: heavy import
+
+            self._agent = RagAgent(ollama_cfg=self.config)
+        return self._agent
 
     # ---- introspection ----------------------------------------------------
 
     def verify(self) -> None:
         """Confirm Ollama is reachable and the requested model is loaded.
 
-        Raises :class:`OllamaError` with a friendly message on any failure so
-        the CLI can surface a single actionable error.
+        Implementation moved to :func:`skel_rag.llm.verify`. The new
+        function raises :class:`skel_rag.llm.OllamaError` which we
+        convert to the legacy :class:`OllamaError` defined in this
+        module so call sites that catch the old exception keep working.
         """
 
-        url = f"{self.config.base_url}/api/tags"
-        try:
-            with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310
-                payload = json.loads(resp.read().decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError) as exc:
-            raise OllamaError(
-                f"Could not reach Ollama at {self.config.base_url}: {exc}.\n"
-                "Make sure `ollama serve` is running, or set OLLAMA_BASE_URL."
-            ) from exc
+        from skel_rag.llm import OllamaError as _NewOllamaError, verify
 
-        names = [m.get("name", "") for m in payload.get("models", [])]
-        if self.config.model not in names:
-            available = ", ".join(sorted(n for n in names if n)) or "(none)"
-            raise OllamaError(
-                f"Ollama model '{self.config.model}' is not available locally.\n"
-                f"Models present: {available}\n"
-                f"Pull it with: ollama pull {self.config.model}"
-            )
+        try:
+            verify(self.config)
+        except _NewOllamaError as exc:
+            raise OllamaError(str(exc)) from exc
 
     # ---- chat completion --------------------------------------------------
 
     def chat(self, system: str, user: str) -> str:
-        """Send a single user/system turn and return the assistant content."""
+        """Send one user/system turn and return the assistant text.
 
-        url = f"{self.config.base_url}/v1/chat/completions"
-        body = {
-            "model": self.config.model,
-            "temperature": self.config.temperature,
-            "stream": False,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        }
-        data = json.dumps(body).encode("utf-8")
-        request = urllib.request.Request(
-            url,
-            data=data,
-            headers={"Content-Type": "application/json"},
-        )
-        try:
-            with urllib.request.urlopen(  # noqa: S310
-                request, timeout=self.config.timeout
-            ) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise OllamaError(
-                f"Ollama returned HTTP {exc.code}: {detail}"
-            ) from exc
-        except (urllib.error.URLError, TimeoutError) as exc:
-            raise OllamaError(
-                f"Ollama request failed: {exc}. Is `ollama serve` running?"
-            ) from exc
+        Delegates to :meth:`skel_rag.agent.RagAgent.chat`, which goes
+        through ``langchain_ollama.ChatOllama``. The new path raises
+        :class:`skel_rag.llm.OllamaError` on failure; we re-raise as the
+        local :class:`OllamaError` so existing handlers keep matching.
+        """
+
+        from skel_rag.llm import OllamaError as _NewOllamaError
 
         try:
-            return payload["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise OllamaError(f"Unexpected Ollama response: {payload!r}") from exc
+            return self.agent.chat(system, user)
+        except _NewOllamaError as exc:
+            raise OllamaError(str(exc)) from exc
 
 
 # --------------------------------------------------------------------------- #
@@ -801,6 +811,7 @@ SKELETON_DESCRIPTIONS: Dict[str, str] = {
     "rust-axum-skel": "Rust Axum (sqlite via stdlib)",
     "js-skel": "Node 22 (node:sqlite + node:test)",
     "ts-react-skel": "React + Vite + TypeScript (typed fetch client + items hook)",
+    "flutter-skel": "Flutter / Dart (Material 3, secure token store, items + /api/state client)",
 }
 
 
@@ -1352,124 +1363,23 @@ def run_integration_phase(
 ) -> List[TargetResult]:
     """Render every integration target through Ollama and write the result.
 
-    Identical bookkeeping to :func:`generate_targets` but uses the
-    integration manifest's system prompt and is meant to be called
-    AFTER the per-target generation has finished. The function does not
-    discover siblings on its own — that's the caller's responsibility
-    so the same snapshot can be reused for the test-and-fix loop and
-    surfaced in CLI summaries.
+    Thin wrapper that delegates to
+    :meth:`skel_rag.agent.RagAgent.run_integration_phase`. The agent is
+    cached on the :class:`OllamaClient` instance so the per-target
+    phase, integration phase, and fix loop all share one retriever
+    cache.
 
-    **Error policy**: errors during a single target's render or write
-    are caught and logged, then the loop moves on to the next target.
-    The successfully-written files (if any) are still returned so the
-    test-and-fix loop has something to repair. This matches the
-    project-wide rule that integration / test failures bypass the
-    Python crash path and surface as Ollama context instead.
+    Same error policy as before: failures during a single target's
+    render / chat / write are surfaced through ``progress`` and the
+    loop moves on to the next target.
     """
 
-    if not manifest.targets:
-        if progress is not None:
-            progress.write(
-                "  (integration manifest has no targets — nothing to do)\n"
-            )
-        return []
-
-    results: List[TargetResult] = []
-    try:
-        system = build_system_prompt(
-            AiManifest(
-                skeleton_name=manifest.skeleton_name,
-                targets=[],
-                system_prompt=manifest.system_prompt,
-                notes=manifest.notes,
-            ),
-            ctx,
-        )
-    except Exception as exc:  # noqa: BLE001 — system prompt render error
-        if progress is not None:
-            progress.write(
-                f"  (integration system prompt render failed: {exc!r}; "
-                "skipping the integration phase)\n"
-            )
-        return []
-
-    for index, target in enumerate(manifest.targets, start=1):
-        try:
-            expanded = expand_target_paths(target, ctx)
-        except Exception as exc:  # noqa: BLE001 — placeholder render error
-            if progress is not None:
-                progress.write(
-                    f"  [int {index}/{len(manifest.targets)}] "
-                    f"(skipping — path expansion failed: {exc})\n"
-                )
-            continue
-
-        label = expanded.description or expanded.path
-        if progress is not None:
-            progress.write(
-                f"  [int {index}/{len(manifest.targets)}] {label}\n"
-            )
-
-        try:
-            reference = _read_reference(ctx.skeleton_path, expanded.template)
-            user_prompt = format_prompt(target.prompt, ctx, reference=reference)
-        except Exception as exc:  # noqa: BLE001 — prompt render error
-            if progress is not None:
-                progress.write(
-                    f"      (skipping — prompt render failed: {exc})\n"
-                )
-            continue
-
-        if dry_run:
-            destination = ctx.project_dir / expanded.path
-            results.append(
-                TargetResult(
-                    target=expanded,
-                    written_to=destination,
-                    bytes_written=0,
-                )
-            )
-            continue
-
-        try:
-            raw = client.chat(system=system, user=user_prompt)
-        except OllamaError as exc:
-            if progress is not None:
-                progress.write(
-                    f"      (Ollama error on integration target: {exc}; "
-                    "continuing to next target)\n"
-                )
-            continue
-        except Exception as exc:  # noqa: BLE001 — last-resort safety net
-            if progress is not None:
-                progress.write(
-                    f"      (unexpected Ollama failure: {exc!r}; "
-                    "continuing to next target)\n"
-                )
-            continue
-
-        cleaned = clean_response(raw, target.language)
-
-        destination = ctx.project_dir / expanded.path
-        try:
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text(cleaned, encoding="utf-8")
-        except OSError as exc:
-            if progress is not None:
-                progress.write(
-                    f"      (could not write {destination}: {exc}; skipping)\n"
-                )
-            continue
-
-        results.append(
-            TargetResult(
-                target=expanded,
-                written_to=destination,
-                bytes_written=len(cleaned.encode("utf-8")),
-            )
-        )
-
-    return results
+    return client.agent.run_integration_phase(
+        manifest=manifest,
+        ctx=ctx,
+        dry_run=dry_run,
+        progress=progress,
+    )
 
 
 @dataclass
@@ -1671,39 +1581,19 @@ def _ask_ollama_to_fix(
     test_run: TestRunResult,
     test_command: str,
 ) -> str:
-    """Single Ollama round-trip asking the model to repair one file."""
+    """Delegate one fix round-trip to :meth:`RagAgent.fix_target`.
 
-    file_path = target_result.written_to
-    try:
-        current_contents = file_path.read_text(encoding="utf-8")
-    except OSError:
-        current_contents = ""
+    The RAG agent enriches the prompt with retrieved sibling chunks
+    (so the model has the wrapper's API surface to ground its repair),
+    then runs the same ``clean_response`` pass we always did.
+    """
 
-    try:
-        rel_path = file_path.relative_to(ctx.project_dir)
-    except ValueError:
-        # Belt-and-braces: when the integration phase wrote a file
-        # outside the service directory (e.g. `--skip-base` runs against
-        # a relocated wrapper), `relative_to` raises. Fall back to the
-        # absolute path so the prompt still renders.
-        rel_path = file_path
-
-    system = format_prompt(_FIX_SYSTEM_PROMPT, ctx)
-    user = format_prompt(
-        _FIX_USER_PROMPT,
-        ctx,
-        reference=None,
-        extra={
-            "rel_path": str(rel_path),
-            "language": target_result.target.language,
-            "current_contents": current_contents,
-            "test_command": test_command,
-            "returncode": test_run.returncode,
-            "test_output": test_run.combined_output(),
-        },
+    return client.agent.fix_target(
+        target_result=target_result,
+        test_run=test_run,
+        test_command=test_command,
+        ctx=ctx,
     )
-    raw = client.chat(system=system, user=user)
-    return clean_response(raw, target_result.target.language)
 
 
 def run_test_and_fix_loop(
@@ -1842,43 +1732,28 @@ def generate_targets(
     dry_run: bool = False,
     progress: Optional[Any] = None,
 ) -> List[TargetResult]:
-    """Run every manifest target through Ollama and write the result.
+    """Run every manifest target through the RAG-aware agent.
+
+    Thin wrapper around
+    :meth:`skel_rag.agent.RagAgent.generate_targets`. The agent
+    indexes the skeleton corpus once (cached on the client), retrieves
+    the most relevant chunks per target, and exposes them to manifest
+    prompts via the new ``{retrieved_context}`` placeholder while still
+    populating the legacy ``{template}`` placeholder for unmigrated
+    manifests.
 
     ``progress`` may be any object with a ``write(str)`` method (e.g.
-    ``sys.stdout``). It receives a one-line update per target so the CLI can
-    show progress without depending on a particular logging framework.
+    ``sys.stdout``); the agent forwards one-line updates so the CLI
+    keeps showing progress without depending on a particular logging
+    framework.
     """
 
-    results: List[TargetResult] = []
-    system = build_system_prompt(manifest, ctx)
-
-    for index, target in enumerate(manifest.targets, start=1):
-        expanded = expand_target_paths(target, ctx)
-        label = expanded.description or expanded.path
-        if progress is not None:
-            progress.write(
-                f"  [{index}/{len(manifest.targets)}] {label}\n"
-            )
-
-        reference = _read_reference(ctx.skeleton_path, expanded.template)
-        user_prompt = format_prompt(target.prompt, ctx, reference=reference)
-        raw = client.chat(system=system, user=user_prompt)
-        cleaned = clean_response(raw, target.language)
-
-        destination = ctx.project_dir / expanded.path
-        if not dry_run:
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text(cleaned, encoding="utf-8")
-
-        results.append(
-            TargetResult(
-                target=expanded,
-                written_to=destination,
-                bytes_written=len(cleaned.encode("utf-8")),
-            )
-        )
-
-    return results
+    return client.agent.generate_targets(
+        manifest=manifest,
+        ctx=ctx,
+        dry_run=dry_run,
+        progress=progress,
+    )
 
 
 # --------------------------------------------------------------------------- #

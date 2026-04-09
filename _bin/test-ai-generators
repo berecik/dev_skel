@@ -363,6 +363,34 @@ def _validate_react(project_dir: Path, files: Sequence[Path]) -> Optional[str]:
     return None
 
 
+def _validate_flutter(project_dir: Path, files: Sequence[Path]) -> Optional[str]:
+    """Run `flutter pub get` + `flutter analyze` on the regen project.
+
+    We deliberately stop short of `flutter test` here — that runs
+    inside `_skels/flutter-skel/test_skel` and is much slower because
+    it spins up the test runner per package. Static analysis catches
+    the most common AI regressions (typos, missing imports, broken
+    type signatures) without paying that cost on every run.
+
+    Treats Flutter-not-installed as a soft skip so the AI runner stays
+    green on CI hosts without the SDK, mirroring `_validate_react`.
+    """
+
+    if not shutil.which("flutter"):
+        return None  # treat as smoke-only when Flutter is not installed
+
+    proc = _run(["flutter", "pub", "get"], cwd=project_dir)
+    if proc.returncode != 0:
+        tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-30:])
+        return f"`flutter pub get` failed:\n{tail}"
+
+    proc = _run(["flutter", "analyze"], cwd=project_dir)
+    if proc.returncode != 0:
+        tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-30:])
+        return f"`flutter analyze` failed:\n{tail}"
+    return None
+
+
 VALIDATORS: Dict[str, Callable[[Path, Sequence[Path]], Optional[str]]] = {
     "python-django-skel": _validate_django,
     "python-django-bolt-skel": _validate_django_bolt,
@@ -373,6 +401,7 @@ VALIDATORS: Dict[str, Callable[[Path, Sequence[Path]], Optional[str]]] = {
     "rust-axum-skel": _validate_rust,
     "js-skel": _validate_js,
     "ts-react-skel": _validate_react,
+    "flutter-skel": _validate_flutter,
 }
 
 

@@ -15,3 +15,8 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# RAG agent local indexes (built lazily by _bin/skel-rag /
+# _bin/skel-gen-ai). Persisted per skeleton at
+# `_skels/<name>/.skel_rag_index/`; never check in.
+**/.skel_rag_index/

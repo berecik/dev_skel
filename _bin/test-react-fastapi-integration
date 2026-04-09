@@ -49,7 +49,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from dev_skel_lib import DevSkelConfig, detect_root, load_config  # noqa: E402
 
-from _react_backend_lib import (  # noqa: E402
+from _frontend_backend_lib import (  # noqa: E402
     DEFAULT_PORT,
     DEFAULT_STARTUP_TIMEOUT,
     BackendSpec,

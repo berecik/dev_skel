@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+COMMON_DIR="$SKEL_DIR/../_common"
+# shellcheck disable=SC1091
+. "$COMMON_DIR/common-config.sh"
+# shellcheck disable=SC1091
+. "$COMMON_DIR/slug.sh"
+
+# Arguments:
+#   1) main-dir (required)
+#   2) optional service display name (must not start with --) — slugified
+#      to the on-disk service directory
+#   remaining: CLI options
+#     --name <pkg>          override the dart package name (default: derived
+#                           from the project subdir, dashes → underscores)
+#     --org  <reverse-dns>  iOS / Android bundle id prefix (default: com.devskel)
+#     --platforms <list>    comma-separated subset of
+#                           web,android,ios,macos,linux,windows (default: ALL)
+#     --no-install          skip `flutter pub get`
+MAIN_DIR="${1:-}"
+shift || true
+
+PROJECT_SUBDIR_OVERRIDE=""
+if [[ ${1:-} != "" && "$1" != --* ]]; then
+  PROJECT_SUBDIR_OVERRIDE="$(slugify_service_name "$1")"
+  shift || true
+fi
+
+NAME_OVERRIDE=""
+ORG_OVERRIDE=""
+# Default to all platforms per the dev_skel design choice. Users can
+# trim this with --platforms web (for a Flutter Web-only project) or
+# similar.
+PLATFORMS="web,android,ios,macos,linux,windows"
+NO_INSTALL=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --name)
+      NAME_OVERRIDE="${2:-}"; shift 2;;
+    --org)
+      ORG_OVERRIDE="${2:-}"; shift 2;;
+    --platforms)
+      PLATFORMS="${2:-}"; shift 2;;
+    --no-install)
+      NO_INSTALL=true; shift;;
+    *)
+      echo "Unknown option: $1"; exit 1;;
+  esac
+done
+
+if [[ -z "$MAIN_DIR" ]]; then
+  echo "Usage: $(basename "$0") <main-dir> [service_subdir] [--name <name>] [--org <reverse-dns>] [--platforms web,android,ios,macos,linux,windows] [--no-install]" >&2
+  exit 1
+fi
+
+# MAIN_DIR is already an absolute wrapper directory; the Flutter app
+# lives in PROJECT_SUBDIR (default `frontend`, matching ts-react-skel).
+PROJECT_SUBDIR="${PROJECT_SUBDIR_OVERRIDE:-frontend}"
+PROJECT_DIR="$MAIN_DIR/$PROJECT_SUBDIR"
+
+PARENT_DIR="$(dirname "$PROJECT_DIR")"
+BASENAME="$(basename "$PROJECT_DIR")"
+
+# Dart package names must be snake_case identifiers, so dash → underscore.
+DART_PACKAGE_NAME="${NAME_OVERRIDE:-${SKEL_PROJECT_NAME:-$BASENAME}}"
+DART_PACKAGE_NAME="${DART_PACKAGE_NAME//-/_}"
+
+ORG="${ORG_OVERRIDE:-${SKEL_ORG_REVERSE_DNS:-com.devskel}}"
+
+if ! command -v flutter >/dev/null 2>&1; then
+  echo "[flutter-skel] ERROR: flutter SDK is required but not on PATH." >&2
+  echo "  Install: https://docs.flutter.dev/get-started/install" >&2
+  exit 1
+fi
+
+echo "[flutter-skel] Generating into: $MAIN_DIR (project dir: $PROJECT_SUBDIR, platforms=$PLATFORMS, org=$ORG)"
+mkdir -p "$PARENT_DIR"
+
+# `flutter create` writes the platform scaffolds + a default `lib/main.dart`
+# we are about to overlay. We pin the project name explicitly so the dart
+# package id is consistent across re-runs and `flutter test` finds it.
+(
+  cd "$PARENT_DIR"
+  rm -rf "$BASENAME"
+  flutter create \
+    --platforms="$PLATFORMS" \
+    --org "$ORG" \
+    --project-name "$DART_PACKAGE_NAME" \
+    "$BASENAME" >/dev/null
+)
+
+# Overlay skeleton files (lib/, test/, pubspec.yaml, analysis_options.yaml,
+# .gitignore). Platform directories (android/ ios/ web/ ...) and build
+# artifacts are excluded by `merge`.
+bash "$SKEL_DIR/merge" "$SKEL_DIR" "$PROJECT_DIR"
+
+# The skeleton ships pubspec.yaml under the package name `flutter_skel`;
+# rewrite it to the chosen package name so import paths line up. We do
+# this with sed instead of yq so the script stays dependency-free.
+if [[ -f "$PROJECT_DIR/pubspec.yaml" ]]; then
+  # Only touch the leading `name: flutter_skel` line — never any other
+  # occurrence of the literal `flutter_skel` (there shouldn't be any
+  # in the shipped pubspec, but the anchored substitution is safer).
+  sed -i.bak -E "s/^name: flutter_skel\$/name: ${DART_PACKAGE_NAME}/" "$PROJECT_DIR/pubspec.yaml"
+  rm -f "$PROJECT_DIR/pubspec.yaml.bak"
+fi
+
+# The shipped lib/ files import via `package:flutter_skel/...`; rewrite
+# those import URIs to use the chosen package name so generated apps
+# compile without further edits. Restricted to lib/ + test/ to keep
+# the substitution surface tiny and predictable.
+if command -v find >/dev/null 2>&1; then
+  while IFS= read -r -d '' dart_file; do
+    # Use a portable in-place sed (`-i ''` on BSD, `-i` on GNU). The
+    # `.bak` suffix works on both.
+    sed -i.bak -E "s|package:flutter_skel/|package:${DART_PACKAGE_NAME}/|g" "$dart_file"
+    rm -f "${dart_file}.bak"
+  done < <(find "$PROJECT_DIR/lib" "$PROJECT_DIR/test" -type f -name '*.dart' -print0 2>/dev/null || true)
+fi
+
+# Add standard files
+cat >"$PROJECT_DIR/.editorconfig" <<'EC'
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = true
+EC
+
+if [[ ! -f "$PROJECT_DIR/LICENSE" ]]; then
+  YEAR=$(date +%Y)
+  AUTHOR="${SKEL_AUTHOR_NAME:-Your Name}"
+  case "${SKEL_LICENSE:-MIT}" in
+    MIT)
+      cat >"$PROJECT_DIR/LICENSE" <<LIC
+MIT License
+
+Copyright (c) $YEAR $AUTHOR
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+LIC
+      ;;
+    *)
+      echo "${SKEL_LICENSE:-} License" >"$PROJECT_DIR/LICENSE"
+      ;;
+  esac
+fi
+
+# Resolve dependencies (pulls http, flutter_secure_storage, flutter_dotenv,
+# flutter_lints from pub.dev) unless --no-install was passed.
+if [[ "$NO_INSTALL" == false ]]; then
+  (
+    cd "$PROJECT_DIR"
+    flutter pub get >/dev/null 2>&1 || true
+  )
+fi
+
+# Create wrapper-level README, Makefile, and thin scripts. Same call as
+# every other skeleton — the wrapper layout is framework-agnostic.
+bash "$COMMON_DIR/common-wrapper.sh" "$MAIN_DIR" "$PROJECT_SUBDIR" "Flutter Frontend"
+
+# `flutter_dotenv` reads the bundled `.env` asset at runtime. The wrapper
+# already has its `.env` from `common-wrapper.sh`; we copy it into the
+# project directory so the asset bundle picks it up. Re-runs always
+# refresh the copy so the frontend keeps in sync with the wrapper.
+if [[ -f "$MAIN_DIR/.env" ]]; then
+  cp "$MAIN_DIR/.env" "$PROJECT_DIR/.env"
+fi
+
+echo "[flutter-skel] Done."

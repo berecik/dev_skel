@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SKEL_DIR/../.." && pwd)"
+TEST_PROJECTS_DIR="$REPO_ROOT/_test_projects"
+TARGET_NAME="test-flutter-app"
+TARGET="$TEST_PROJECTS_DIR/$TARGET_NAME"
+
+mkdir -p "$TEST_PROJECTS_DIR"
+
+if ! command -v flutter >/dev/null 2>&1; then
+  echo "[test_skel] flutter SDK not on PATH — skipping (exit 0 so CI keeps green)" >&2
+  exit 0
+fi
+
+cleanup() {
+  true
+}
+trap cleanup EXIT
+
+echo "[test_skel] Generating Flutter project in $TARGET ..."
+rm -rf "$TARGET"
+# `--no-install` keeps the generator fast — we run `flutter pub get`
+# explicitly below so the test surface includes a real dependency
+# resolution step.
+"$SKEL_DIR/gen" "$TARGET" --no-install
+
+MAIN_DIR="$TARGET"
+PROJECT_DIR="$MAIN_DIR/frontend"
+
+cd "$PROJECT_DIR"
+
+echo ""
+echo "[test_skel] Resolving dependencies (flutter pub get)..."
+flutter pub get
+
+echo ""
+echo "[test_skel] Running analyzer (soft check — warnings do not fail the run)..."
+# `flutter analyze` is the canonical Dart static check. Treat it as a
+# soft warning so test_skel does not bail on a stricter analysis_options
+# than the upstream `flutter create` template ships — the user is
+# expected to tighten lints over time.
+if ! flutter analyze; then
+  echo "[test_skel]   (analyzer reported issues — ignoring; tighten lints in analysis_options.yaml when ready)"
+fi
+
+echo ""
+echo "[test_skel] Running widget tests..."
+# `flutter test` exits non-zero on real failures and we surface them as
+# a hard error (no `|| true`).
+flutter test
+
+echo ""
+echo "[test_skel] Flutter skeleton tests passed!"

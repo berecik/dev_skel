@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+OK=0
+
+if have flutter; then
+  echo "[deps] Found Flutter: $(flutter --version 2>/dev/null | head -1)"
+else
+  echo "[deps] Flutter SDK is required."
+  echo "       Install from https://docs.flutter.dev/get-started/install"
+  OK=1
+fi
+
+if have dart; then
+  echo "[deps] Dart: $(dart --version 2>&1)"
+else
+  echo "[deps] (note: dart command not on PATH — usually bundled with Flutter)"
+fi
+
+exit $OK

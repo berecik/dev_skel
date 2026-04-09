@@ -94,26 +94,43 @@ make rule-affecting edits.
     `skel_name` is given, only that one skeleton is generated.
     Same behavior as pre-2026-04 invocations — kept for scripted
     users.
-- **All 9 skeletons are AI-supported** — Python (django, django-bolt,
-  fastapi, flask), Java (spring), Rust (actix, axum), Node (js), and
-  React (ts-react). The full-stack picker auto-partitions them via
-  `split_skels_by_kind()` (everything that returns `kind=frontend`
-  from the marker-file detector goes into the frontend list; the rest
-  are backends). Run `_bin/skel-gen-ai` with no arguments to enter
-  the dialog. The older `--auth-details` flag is still accepted as
-  a backwards-compat alias for `--backend-extra`.
-- `_bin/skel-gen-ai` runs **two Ollama sessions back-to-back**:
+- **All 10 skeletons are AI-supported** — Python (django, django-bolt,
+  fastapi, flask), Java (spring), Rust (actix, axum), Node (js),
+  React (ts-react), and Flutter (flutter). The full-stack picker
+  auto-partitions them via `split_skels_by_kind()` (everything that
+  returns `kind=frontend` from the marker-file detector goes into the
+  frontend list; the rest are backends — `ts-react-skel` and
+  `flutter-skel` are the two frontend kinds today). Run
+  `_bin/skel-gen-ai` with no arguments to enter the dialog. The
+  older `--auth-details` flag is still accepted as a backwards-compat
+  alias for `--backend-extra`.
+- `_bin/skel-gen-ai` runs **two Ollama sessions back-to-back** (both now
+  routed through the `_bin/skel_rag/` RAG agent — see below):
   1. **Per-target phase** (always) — rewrites the files listed in the
      per-skel `MANIFEST` for the user's `{item_class}`.
   2. **Integration phase** (opt-in via `INTEGRATION_MANIFEST` in the
      same per-skel file) — discovers sibling services in the wrapper,
      embeds their key files into a `{wrapper_snapshot}` prompt
-     placeholder, writes integration code + tests, then runs a
+     placeholder (or the new `{retrieved_siblings}` block when the
+     manifest opts in), writes integration code + tests, then runs a
      bounded test-and-fix loop (`./test` → ask Ollama to patch failing
      files → re-run, capped at `fix_iterations`). The integration
      phase is currently shipped only for `python-django-bolt-skel`;
      other skels gracefully skip it. Disable with `--no-integrate` /
      `--no-test-fix` when iterating on prompts.
+- **AI generation goes through `_bin/skel_rag/`** (since 2026-04). The
+  package indexes each skeleton's reference templates with tree-sitter
+  + FAISS so prompts retrieve only the most relevant chunks via a local
+  embedding model (default `BAAI/bge-small-en-v1.5`). `skel_ai_lib.py`
+  is now a thin shim that re-exports every public symbol and delegates
+  orchestration to `skel_rag.agent.RagAgent`; the LLM call goes through
+  `langchain_ollama.ChatOllama`. The legacy `{template}` /
+  `{wrapper_snapshot}` placeholders still work, and manifests can opt
+  into `{retrieved_context}` / `{retrieved_siblings}` (FastAPI is the
+  reference migration). Install once with `make install-rag-deps`. The
+  debug CLI is `_bin/skel-rag` (`index` / `search` / `info` / `clean`).
+  Full reference: `_docs/LLM-MAINTENANCE.md` → "`_bin/skel_ai_lib.py`
+  (legacy shim) + `_bin/skel_rag/` (RAG agent)".
 - **Every backend skel** — Python (`python-django-skel`,
   `python-django-bolt-skel`, `python-fastapi-skel`, `python-flask-skel`),
   Java (`java-spring-skel`), Rust (`rust-actix-skel`, `rust-axum-skel`),
@@ -141,6 +158,23 @@ make rule-affecting edits.
   wrapper `.env` ships `DATABASE_URL` (Python form), `DATABASE_JDBC_URL`
   / `SPRING_DATASOURCE_URL` (JVM form) side-by-side — keep them in sync
   when switching to Postgres.
+- **Frontend skels** read the same wrapper-shared env, just at
+  different lifecycle points:
+  - **React** (`ts-react-skel`): `vite.config.ts` reads
+    `<wrapper>/.env` at *build time* and bakes the safe subset into
+    the bundle as `VITE_*` keys; `src/config.ts` re-exports them as
+    `config.backendUrl` / `config.jwt.*` / `config.services`.
+    `JWT_SECRET` is NOT promoted into the bundle.
+  - **Flutter** (`flutter-skel`): the gen script copies
+    `<wrapper>/.env` into the project as a bundled asset
+    (`pubspec.yaml`'s `flutter.assets`), and `lib/config.dart` reads
+    it at *runtime* via `flutter_dotenv`. The JWT bearer token is
+    persisted via `flutter_secure_storage` (Keychain on iOS,
+    EncryptedSharedPreferences on Android, encrypted localStorage on
+    web). `AppConfig` deliberately omits `JWT_SECRET` so it never
+    lands in a mobile bundle. State management uses Flutter's
+    built-in `ValueNotifier` / `ChangeNotifier` / `InheritedNotifier`
+    primitives — no `provider` / `riverpod` / `bloc` dep.
 - After generation, `skel-gen` renders the templated `_skels/_common/AGENTS.md`
   (and, when present, the matching `CLAUDE.md`) into the new project so the
   generated tree ships with agent rules wired in.
