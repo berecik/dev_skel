@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# skel-install-macos — install all dev_skel dependencies on macOS.
+#
+# Sections:
+#   1. Core tools         (make, git, rsync, python3)
+#   2. Build dependencies (cmake, openblas — needed to compile native exts)
+#   3. Node.js            (js-skel, ts-react-skel)
+#   4. Java + Maven       (java-spring-skel)
+#   5. Rust               (rust-actix-skel, rust-axum-skel)
+#   6. Flutter            (flutter-skel)
+#   7. Ollama             (AI-augmented generation)
+#   8. RAG agent venv     (langchain, faiss, tree-sitter — via skel-install-rag)
+#
+# Usage:
+#   _bin/skel-install-macos              # install everything
+#   _bin/skel-install-macos --core-only  # just sections 1-2
+
+GREEN='\033[0;32m'  YELLOW='\033[1;33m'
+RED='\033[0;31m'    NC='\033[0m'
+
+info()  { printf "${GREEN}%s${NC}\n" "$*"; }
+warn()  { printf "${YELLOW}%s${NC}\n" "$*"; }
+err()   { printf "${RED}%s${NC}\n" "$*" >&2; }
+
+CORE_ONLY=false
+for arg in "$@"; do [[ "$arg" == "--core-only" ]] && CORE_ONLY=true; done
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ── preflight ────────────────────────────────────────────────────────
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+    err "This script is for macOS. Use the matching skel-install-* for your platform."
+    exit 1
+fi
+
+if ! command -v brew >/dev/null 2>&1; then
+    err "Homebrew not found. Install it from https://brew.sh and re-run."
+    exit 1
+fi
+
+brew_install() {
+    # Install packages that aren't already present.
+    local missing=()
+    for pkg in "$@"; do
+        if ! brew list --formula "$pkg" >/dev/null 2>&1 \
+        && ! brew list --cask "$pkg" >/dev/null 2>&1; then
+            missing+=("$pkg")
+        fi
+    done
+    if (( ${#missing[@]} > 0 )); then
+        info "  Installing: ${missing[*]}"
+        brew install "${missing[@]}"
+    else
+        info "  Already installed."
+    fi
+}
+
+brew_cask_install() {
+    local missing=()
+    for pkg in "$@"; do
+        if ! brew list --cask "$pkg" >/dev/null 2>&1; then
+            missing+=("$pkg")
+        fi
+    done
+    if (( ${#missing[@]} > 0 )); then
+        info "  Installing: ${missing[*]}"
+        brew install --cask "${missing[@]}"
+    else
+        info "  Already installed."
+    fi
+}
+
+# =====================================================================
+# 1. Core tools
+# =====================================================================
+info "=== [1/8] Core tools ==="
+# Xcode CLT provides make, git, and a C compiler.
+if ! xcode-select -p >/dev/null 2>&1; then
+    info "  Installing Xcode Command Line Tools …"
+    xcode-select --install 2>/dev/null || true
+    warn "  ↳ Complete the Xcode CLT dialog, then re-run this script."
+    exit 0
+fi
+brew_install git rsync python@3
+
+# =====================================================================
+# 2. Build dependencies (native extensions: faiss-cpu, tree-sitter)
+# =====================================================================
+info "=== [2/8] Build dependencies ==="
+brew_install cmake openblas pkg-config
+
+if [[ "$CORE_ONLY" == true ]]; then
+    info ""
+    info "=== --core-only: skipping skeleton toolchains, Ollama, and RAG ==="
+    exit 0
+fi
+
+# =====================================================================
+# 3. Node.js  (js-skel, ts-react-skel)
+# =====================================================================
+info "=== [3/8] Node.js ==="
+brew_install node
+
+# =====================================================================
+# 4. Java + Maven  (java-spring-skel)
+# =====================================================================
+info "=== [4/8] Java + Maven ==="
+brew_install openjdk maven
+
+# Symlink so /usr/bin/java resolves (Homebrew doesn't do this by default).
+JDK_HOME="$(brew --prefix openjdk)/libexec/openjdk.jdk"
+if [[ -d "$JDK_HOME" ]] && [[ ! -e /Library/Java/JavaVirtualMachines/openjdk.jdk ]]; then
+    info "  Symlinking JDK into /Library/Java/JavaVirtualMachines/"
+    sudo ln -sfn "$JDK_HOME" /Library/Java/JavaVirtualMachines/openjdk.jdk 2>/dev/null || true
+fi
+
+# =====================================================================
+# 5. Rust  (rust-actix-skel, rust-axum-skel)
+# =====================================================================
+info "=== [5/8] Rust ==="
+if command -v rustup >/dev/null 2>&1; then
+    info "  rustup found — updating toolchain"
+    rustup update stable
+else
+    info "  Installing Rust via rustup"
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+    # Make cargo available in the current shell.
+    # shellcheck source=/dev/null
+    source "$HOME/.cargo/env" 2>/dev/null || true
+fi
+
+# =====================================================================
+# 6. Flutter  (flutter-skel)
+# =====================================================================
+info "=== [6/8] Flutter ==="
+if command -v flutter >/dev/null 2>&1; then
+    info "  Already installed."
+else
+    brew_install --cask flutter 2>/dev/null \
+        || warn "  Flutter cask unavailable — install manually from https://flutter.dev"
+fi
+
+# =====================================================================
+# 7. Ollama  (AI-augmented generation)
+# =====================================================================
+info "=== [7/8] Ollama ==="
+brew_install ollama
+
+# =====================================================================
+# 8. RAG agent  (venv + Python packages)
+# =====================================================================
+info "=== [8/8] RAG agent (venv) ==="
+"$SCRIPT_DIR/skel-install-rag"
+
+# ── summary ──────────────────────────────────────────────────────────
+info ""
+info "=== All done ==="
+info "Core:    make, git, rsync, python3          ✓"
+info "Build:   cmake, openblas, pkg-config        ✓"
+info "Node:    $(node --version 2>/dev/null || echo 'n/a')"
+info "Java:    $(java --version 2>&1 | head -1 || echo 'n/a')"
+info "Rust:    $(rustc --version 2>/dev/null || echo 'n/a')"
+info "Flutter: $(flutter --version 2>/dev/null | head -1 || echo 'n/a')"
+info "Ollama:  $(ollama --version 2>/dev/null || echo 'n/a')"
+info "RAG:     venv at ${SKEL_VENV:-$HOME/.local/share/dev-skel/venv}"

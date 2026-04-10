@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# skel-install-ubuntu — install all dev_skel dependencies on Ubuntu/Debian.
+#
+# Sections:
+#   1. Core tools         (make, git, rsync, python3)
+#   2. Build dependencies (gcc, cmake, openblas — native extensions)
+#   3. Node.js            (js-skel, ts-react-skel)
+#   4. Java + Maven       (java-spring-skel)
+#   5. Rust               (rust-actix-skel, rust-axum-skel)
+#   6. Flutter            (flutter-skel)
+#   7. Ollama             (AI-augmented generation)
+#   8. RAG agent venv     (langchain, faiss, tree-sitter — via skel-install-rag)
+#
+# Usage:
+#   _bin/skel-install-ubuntu              # install everything
+#   _bin/skel-install-ubuntu --core-only  # just sections 1-2
+
+GREEN='\033[0;32m'  YELLOW='\033[1;33m'
+RED='\033[0;31m'    NC='\033[0m'
+
+info()  { printf "${GREEN}%s${NC}\n" "$*"; }
+warn()  { printf "${YELLOW}%s${NC}\n" "$*"; }
+err()   { printf "${RED}%s${NC}\n" "$*" >&2; }
+
+CORE_ONLY=false
+for arg in "$@"; do [[ "$arg" == "--core-only" ]] && CORE_ONLY=true; done
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ── preflight ────────────────────────────────────────────────────────
+
+if ! command -v apt-get >/dev/null 2>&1; then
+    err "This script is for Ubuntu/Debian. Use the matching skel-install-* for your platform."
+    exit 1
+fi
+
+sudo apt-get update -qq
+
+# =====================================================================
+# 1. Core tools
+# =====================================================================
+info "=== [1/8] Core tools ==="
+sudo apt-get install -y --no-install-recommends \
+    make git rsync curl ca-certificates \
+    python3 python3-venv python3-pip
+
+# =====================================================================
+# 2. Build dependencies
+# =====================================================================
+info "=== [2/8] Build dependencies ==="
+sudo apt-get install -y --no-install-recommends \
+    build-essential python3-dev \
+    cmake pkg-config libopenblas-dev libssl-dev
+
+if [[ "$CORE_ONLY" == true ]]; then
+    info ""
+    info "=== --core-only: skipping skeleton toolchains, Ollama, and RAG ==="
+    exit 0
+fi
+
+# =====================================================================
+# 3. Node.js  (js-skel, ts-react-skel)
+# =====================================================================
+info "=== [3/8] Node.js ==="
+if command -v node >/dev/null 2>&1; then
+    info "  Already installed: $(node --version)"
+else
+    # NodeSource provides up-to-date Node 20 LTS.
+    if [[ ! -f /etc/apt/sources.list.d/nodesource.list ]] \
+    && [[ ! -f /etc/apt/keyrings/nodesource.gpg ]]; then
+        info "  Adding NodeSource repository (Node 20 LTS) …"
+        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+    fi
+    sudo apt-get install -y nodejs
+fi
+
+# =====================================================================
+# 4. Java + Maven  (java-spring-skel)
+# =====================================================================
+info "=== [4/8] Java + Maven ==="
+# openjdk-21 is available on Ubuntu 24.04+; fall back to 17 on older.
+if sudo apt-get install -y --no-install-recommends openjdk-21-jdk maven 2>/dev/null; then
+    info "  Installed OpenJDK 21 + Maven"
+else
+    warn "  OpenJDK 21 not available — trying OpenJDK 17"
+    sudo apt-get install -y --no-install-recommends openjdk-17-jdk maven
+fi
+
+# =====================================================================
+# 5. Rust  (rust-actix-skel, rust-axum-skel)
+# =====================================================================
+info "=== [5/8] Rust ==="
+if command -v rustup >/dev/null 2>&1; then
+    info "  rustup found — updating toolchain"
+    rustup update stable
+else
+    info "  Installing Rust via rustup"
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+    # shellcheck source=/dev/null
+    source "$HOME/.cargo/env" 2>/dev/null || true
+fi
+
+# =====================================================================
+# 6. Flutter  (flutter-skel)
+# =====================================================================
+info "=== [6/8] Flutter ==="
+if command -v flutter >/dev/null 2>&1; then
+    info "  Already installed."
+elif command -v snap >/dev/null 2>&1; then
+    info "  Installing Flutter via snap …"
+    sudo snap install flutter --classic
+else
+    warn "  snap not available — install Flutter manually from https://flutter.dev"
+fi
+
+# =====================================================================
+# 7. Ollama  (AI-augmented generation)
+# =====================================================================
+info "=== [7/8] Ollama ==="
+if command -v ollama >/dev/null 2>&1; then
+    info "  Already installed."
+else
+    info "  Installing Ollama …"
+    curl -fsSL https://ollama.com/install.sh | sh
+fi
+
+# =====================================================================
+# 8. RAG agent  (venv + Python packages)
+# =====================================================================
+info "=== [8/8] RAG agent (venv) ==="
+"$SCRIPT_DIR/skel-install-rag"
+
+# ── summary ──────────────────────────────────────────────────────────
+info ""
+info "=== All done ==="
+info "Core:    make, git, rsync, python3          ✓"
+info "Build:   gcc, cmake, openblas, pkg-config   ✓"
+info "Node:    $(node --version 2>/dev/null || echo 'n/a')"
+info "Java:    $(java --version 2>&1 | head -1 || echo 'n/a')"
+info "Rust:    $(rustc --version 2>/dev/null || echo 'n/a')"
+info "Flutter: $(flutter --version 2>/dev/null | head -1 || echo 'n/a')"
+info "Ollama:  $(ollama --version 2>/dev/null || echo 'n/a')"
+info "RAG:     venv at ${SKEL_VENV:-$HOME/.local/share/dev-skel/venv}"

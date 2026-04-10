@@ -233,13 +233,13 @@ Use the provided helper scripts in `_bin/`:
 
 ```bash
 # First-time install to your development directory (default: "$HOME/dev_skel")
-_bin/install-dev-skel
+_bin/skel-install
 
 # Later, to pull updates from this repo into your local installation
-_bin/update-dev-skel
+_bin/skel-update
 
 # If you keep this repo and your installed copy in sync manually
-_bin/sync-dev-skel
+_bin/skel-sync
 ```
 
 ## Generate Multi‑Service Projects
@@ -468,8 +468,9 @@ What the integration session does:
 3. **Runs a test-and-fix loop**: executes the manifest's `test_command`
    (defaults to `./test`) inside the new service. If the tests fail,
    asks Ollama to repair each integration file in turn (one round-trip
-   per file), then re-runs. The loop is bounded by `fix_iterations`
-   (default `2`).
+   per file), then re-runs. The loop runs until tests pass or
+   `fix_timeout_m` minutes elapse (default `60`, override with
+   `FIX_TIMEOUT_M` env var).
 
 ```bash
 # Default behavior: run both phases (per-target + integration + test loop)
@@ -491,7 +492,7 @@ to a new skeleton, copy the structure from
 `_skels/_common/manifests/python-django-bolt-skel.py` and edit the
 prompts to match your stack.
 
-**End-to-end AI testing**: `_bin/test-ai-generators` runs the entire AI
+**End-to-end AI testing**: `_bin/skel-test-ai-generators` runs the entire AI
 pipeline (base scaffold + Ollama overlay + per-skeleton sanity check —
 `manage.py check` for Django, module import for FastAPI, plus a syntax
 check on every generated file) for every skeleton that has a manifest
@@ -513,7 +514,7 @@ make test-gen-ai-fastapi
 make test-ai-generators-dry
 
 # Custom item / auth, keep the result for inspection
-_bin/test-ai-generators \
+_bin/skel-test-ai-generators \
     --skel python-django-bolt-skel \
     --service-name "Ticket Service" \
     --item-name ticket --auth-type jwt \
@@ -525,7 +526,7 @@ on success unless you pass `--keep`. If Ollama is not reachable the runner
 prints a friendly skip message and exits with status 2 instead of failing
 hard.
 
-### React + FastAPI cross-stack integration test (`_bin/test-react-fastapi-integration`)
+### React + FastAPI cross-stack integration test (`_bin/skel-test-react-fastapi`)
 
 Same shape as the django-bolt test below but exercises the
 `python-fastapi-skel` + `ts-react-skel` pair instead. Generates a
@@ -537,7 +538,7 @@ flow over real HTTP.
 ```bash
 make test-react-fastapi          # full run (~1 minute on a warm cache)
 make test-react-fastapi-keep     # leave _test_projects/test-react-fastapi on disk
-_bin/test-react-fastapi-integration --port 19877
+_bin/skel-test-react-fastapi --port 19877
 ```
 
 The fastapi skel ships a wrapper-shared API layer at
@@ -547,9 +548,9 @@ either FastAPI or django-bolt without code changes. The wrapper-shared
 layer auto-creates its tables (`wrapper_user`, `items`, `react_state`)
 on import, so no migrations step is required before the server boots.
 
-### React + django-bolt cross-stack integration test (`_bin/test-react-django-bolt-integration`)
+### React + django-bolt cross-stack integration test (`_bin/skel-test-react-django-bolt`)
 
-`_bin/test-react-django-bolt-integration` is the end-to-end proof
+`_bin/skel-test-react-django-bolt` is the end-to-end proof
 that the canonical full-stack pair (`python-django-bolt-skel` +
 `ts-react-skel`) works through real HTTP. It:
 
@@ -581,8 +582,8 @@ that the canonical full-stack pair (`python-django-bolt-skel` +
 ```bash
 make test-react-django-bolt          # full run (~3 minutes on a cold cache)
 make test-react-django-bolt-keep     # leave _test_projects/test-react-django-bolt on disk
-_bin/test-react-django-bolt-integration --port 19876   # custom port
-_bin/test-react-django-bolt-integration --no-skip       # fail on missing Node
+_bin/skel-test-react-django-bolt --port 19876   # custom port
+_bin/skel-test-react-django-bolt --no-skip       # fail on missing Node
 ```
 
 Skips gracefully (exit `2`) when Node/npm is not installed. Failing
@@ -590,9 +591,9 @@ runs leave the wrapper on disk under `_test_projects/test-react-django-bolt/`
 so you can poke at the React build artifacts (`web_ui/dist/assets/`)
 and the django-bolt server log (`items_api/test-server.log`).
 
-### Shared-DB integration test (`_bin/test-shared-db`)
+### Shared-DB integration test (`_bin/skel-test-shared-db`)
 
-`_bin/test-shared-db` is the cross-language proof that every backend
+`_bin/skel-test-shared-db` is the cross-language proof that every backend
 skeleton wired to the wrapper-shared environment actually reads from the
 same database. It:
 
@@ -624,9 +625,9 @@ make test-shared-db-python   # only the 4 Python backends (~25 s)
 make test-shared-db-keep     # leave _test_projects/test-shared-db on disk
 
 # Or invoke the runner directly for finer control
-_bin/test-shared-db --skel python-fastapi-skel --skel rust-actix-skel
-_bin/test-shared-db --no-cross-stack  # skip the write/read round-trip
-_bin/test-shared-db --no-skip          # fail (don't skip) on missing toolchains
+_bin/skel-test-shared-db --skel python-fastapi-skel --skel rust-actix-skel
+_bin/skel-test-shared-db --no-cross-stack  # skip the write/read round-trip
+_bin/skel-test-shared-db --no-skip          # fail (don't skip) on missing toolchains
 ```
 
 Sample output:
@@ -694,9 +695,9 @@ dev_skel/
 │   ├── skel-gen              #   canonical entrypoint — defaults to AI (new in 2026-04)
 │   ├── skel-gen-ai           #   explicit Ollama-augmented generator
 │   ├── skel-gen-static       #   explicit static fallback (no Ollama)
-│   ├── install-dev-skel      #   install dev_skel into $DEV_DIR
-│   ├── update-dev-skel       #   update $DEV_DIR from dev_skel
-│   ├── sync-dev-skel         #   rsync to a remote host
+│   ├── skel-install           #   install dev_skel into $DEV_DIR
+│   ├── skel-update            #   update $DEV_DIR from dev_skel
+│   ├── skel-sync              #   rsync to a remote host
 │   └── skel-list             #   list available skeletons
 ├── .editorconfig             # Editor configuration
 ├── .gitignore                # Git ignore patterns

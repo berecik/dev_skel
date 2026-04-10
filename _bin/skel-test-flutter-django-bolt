@@ -1,29 +1,27 @@
 #!/usr/bin/env python3
-"""End-to-end integration test: FastAPI backend + Flutter frontend.
+"""End-to-end integration test: django-bolt backend + Flutter frontend.
 
-Generates a wrapper containing both ``python-fastapi-skel`` and
+Generates a wrapper containing both ``python-django-bolt-skel`` and
 ``flutter-skel``, configures ``BACKEND_URL`` to a non-conflicting
 port, re-copies the wrapper-shared ``.env`` into the Flutter project's
 bundled asset, runs ``flutter pub get`` + ``flutter build web``
-(verifying the URL is bundled into the asset), starts the FastAPI
-server in the background via uvicorn, and exercises the canonical
-``register → login → CRUD → complete`` flow over real HTTP.
+(verifying the URL is bundled into the asset), starts the django-bolt
+server in the background, and exercises the canonical
+``register → login → CRUD → complete → reject`` flow over real HTTP.
 
-The HTTP exercise hits the BACKEND directly (not the Flutter app), so
-this script proves the same items API contract works for the Flutter
-frontend that the React frontend already consumes — both clients are
-calling the identical wrapper-shared `/api/items` and
-`/api/auth/login` endpoints. The Flutter-specific value-add is the
-asset-bundle inspection: it confirms `flutter_dotenv` will read the
-right ``BACKEND_URL`` at runtime, which is the equivalent of the
-React test's "BACKEND_URL is baked into the bundle" check.
+The HTTP exercise hits the BACKEND directly (not the Flutter app),
+proving that the same items API contract works for both frontends.
+The Flutter-specific value-add is the bundled-``.env`` inspection,
+which confirms ``flutter_dotenv`` will read the right ``BACKEND_URL``
+at runtime — the equivalent of the React test's "BACKEND_URL is baked
+into the bundle" check.
 
 Usage::
 
-    _bin/test-flutter-fastapi-integration              # full run
-    _bin/test-flutter-fastapi-integration --keep       # leave wrapper on disk
-    _bin/test-flutter-fastapi-integration --port 19987 # custom port
-    _bin/test-flutter-fastapi-integration --no-skip    # fail on missing Flutter
+    _bin/skel-test-flutter-django-bolt              # full run
+    _bin/skel-test-flutter-django-bolt --keep       # leave wrapper on disk
+    _bin/skel-test-flutter-django-bolt --port 19986 # custom port
+    _bin/skel-test-flutter-django-bolt --no-skip    # fail on missing Flutter
 
 Exit codes::
 
@@ -44,7 +42,6 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from dev_skel_lib import DevSkelConfig, detect_root, load_config  # noqa: E402
 
 from _frontend_backend_lib import (  # noqa: E402
-    DEFAULT_PORT,
     DEFAULT_STARTUP_TIMEOUT,
     FLUTTER_FRONTEND,
     BackendSpec,
@@ -52,23 +49,23 @@ from _frontend_backend_lib import (  # noqa: E402
 )
 
 
-PROJECT_NAME = "test-flutter-fastapi"
-BACKEND_SKEL = "python-fastapi-skel"
+PROJECT_NAME = "test-flutter-django-bolt"
+BACKEND_SKEL = "python-django-bolt-skel"
 BACKEND_SERVICE_NAME = "Items API"
 
 # Use a different default port from the React tests so the two
 # integration suites can run back-to-back without colliding on a stale
 # socket from a previous interrupted run.
-FLUTTER_DEFAULT_PORT = 18781
+FLUTTER_DEFAULT_PORT = 18782
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Integration test that generates a wrapper containing "
-            "python-fastapi-skel + flutter-skel, builds the Flutter web "
-            "bundle, starts the FastAPI backend, and verifies the items "
-            "API end-to-end via real HTTP."
+            "python-django-bolt-skel + flutter-skel, builds the Flutter "
+            "web bundle, starts the django-bolt backend, and verifies the "
+            "items API end-to-end via real HTTP."
         ),
     )
     parser.add_argument(
@@ -76,9 +73,9 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help=(
             "Leave the generated wrapper at "
-            "_test_projects/test-flutter-fastapi on disk after the test "
-            "finishes. Useful for poking at the build or running the "
-            "server manually."
+            "_test_projects/test-flutter-django-bolt on disk after the "
+            "test finishes. Useful for poking at the build or running "
+            "the server manually."
         ),
     )
     parser.add_argument(
@@ -86,7 +83,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=FLUTTER_DEFAULT_PORT,
         help=(
-            "TCP port the FastAPI backend should bind to. The wrapper "
+            "TCP port the django-bolt backend should bind to. The wrapper "
             f"BACKEND_URL is rewritten to http://127.0.0.1:<port> before "
             f"the Flutter web build runs. Default: {FLUTTER_DEFAULT_PORT}."
         ),
@@ -96,8 +93,8 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_STARTUP_TIMEOUT,
         help=(
-            "Seconds to wait for the FastAPI server to become reachable on "
-            f"the chosen port (default: {DEFAULT_STARTUP_TIMEOUT})."
+            "Seconds to wait for the django-bolt server to become "
+            f"reachable on the chosen port (default: {DEFAULT_STARTUP_TIMEOUT})."
         ),
     )
     parser.add_argument(
@@ -117,32 +114,46 @@ def main() -> int:
     cfg: DevSkelConfig = load_config()
     repo_root = detect_root(SCRIPT_DIR, cfg.skel_dir)
 
+    # Same django-bolt server + migration setup as the React variant.
     spec = BackendSpec(
         skeleton=BACKEND_SKEL,
         service_name=BACKEND_SERVICE_NAME,
         server_argv_template=[
             ".venv/bin/python",
-            "-m",
-            "uvicorn",
-            "app:get_app",
-            "--factory",
+            "manage.py",
+            "runbolt",
             "--host",
             "{host}",
             "--port",
             "{port}",
-            "--log-level",
-            "warning",
         ],
-        # SQLModel autogenerates the wrapper_user, items, and react_state
-        # tables when `app/wrapper_api/db.py` is imported, so no
-        # pre-server setup is needed.
-        pre_server_setup=[],
+        pre_server_setup=[
+            (
+                "makemigrations",
+                [
+                    ".venv/bin/python",
+                    "manage.py",
+                    "makemigrations",
+                    "app",
+                    "--noinput",
+                ],
+            ),
+            (
+                "migrate",
+                [
+                    ".venv/bin/python",
+                    "manage.py",
+                    "migrate",
+                    "--noinput",
+                ],
+            ),
+        ],
     )
 
     return run_frontend_backend_integration(
         frontend=FLUTTER_FRONTEND,
         project_name=PROJECT_NAME,
-        title="Flutter + FastAPI integration test",
+        title="Flutter + Django-Bolt integration test",
         spec=spec,
         repo_root=repo_root,
         port=args.port,

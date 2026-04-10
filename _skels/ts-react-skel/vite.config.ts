@@ -102,6 +102,10 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       open: true,
     },
+    preview: {
+      port: 4173,
+      host: '127.0.0.1',
+    },
     build: {
       outDir: 'dist',
       sourcemap: true,
@@ -110,6 +114,11 @@ export default defineConfig(({ mode }) => {
       globals: true,
       environment: 'jsdom',
       setupFiles: './src/setupTests.ts',
+      // Exclude the Playwright E2E directory so `npm test` (vitest)
+      // does not try to run .spec.ts files that import
+      // @playwright/test. Playwright has its own runner
+      // (`npx playwright test`).
+      exclude: ['e2e/**', 'node_modules/**'],
     },
   };
 });

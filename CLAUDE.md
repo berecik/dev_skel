@@ -52,8 +52,8 @@ make rule-affecting edits.
   - `<wrapper>/run|test|build|stop|install-deps` — multi-service dispatch
     wrappers; each accepts an optional first arg matching a service slug.
 - The relocatable CLI (`_bin/skel-gen`, `_bin/skel-gen-ai`,
-  `_bin/skel-gen-static`, `install-dev-skel`, `update-dev-skel`,
-  `sync-dev-skel`, `skel-list`) is **Python**, sharing logic via
+  `_bin/skel-gen-static`, `skel-install`, `skel-update`,
+  `skel-sync`, `skel-list`) is **Python**, sharing logic via
   `_bin/dev_skel_lib.py`. The legacy `_bin/common.sh` is kept only
   for backwards compatibility — do not extend it.
 - **`_bin/skel-gen` defaults to AI (as of 2026-04).** It is a thin
@@ -114,7 +114,7 @@ make rule-affecting edits.
      placeholder (or the new `{retrieved_siblings}` block when the
      manifest opts in), writes integration code + tests, then runs a
      bounded test-and-fix loop (`./test` → ask Ollama to patch failing
-     files → re-run, capped at `fix_iterations`). The integration
+     files → re-run, capped at `fix_timeout_m` minutes — default 60). The integration
      phase is currently shipped only for `python-django-bolt-skel`;
      other skels gracefully skip it. Disable with `--no-integrate` /
      `--no-test-fix` when iterating on prompts.
@@ -289,7 +289,7 @@ When the user asks Claude to "use Ollama" / "AI-generate a service" / etc:
    produced by the static `skel-gen` path. Keep that boundary clear when
    debugging — if a file is missing, check whether it should come from the
    skeleton's `merge` script or from the AI manifest.
-6. Use `_bin/test-ai-generators` (or `make test-ai-generators` /
+6. Use `_bin/skel-test-ai-generators` (or `make test-ai-generators` /
    `make test-gen-ai-<skel>`) to validate the AI pipeline end-to-end after
    editing a manifest. Always run `make test-ai-generators-dry` first
    to confirm dispatch + base scaffolding work before paying for the real

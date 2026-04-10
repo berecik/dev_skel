@@ -7,7 +7,7 @@
         test-ai-generators test-ai-generators-dry \
         test-gen-ai-fastapi test-gen-ai-django test-gen-ai-django-bolt test-gen-ai-flask \
         test-gen-ai-spring test-gen-ai-actix test-gen-ai-axum test-gen-ai-js test-gen-ai-react test-gen-ai-flutter \
-        install-rag-deps rag-index-skels rag-clean-skels \
+        install-rag-deps install-deps rag-index-skels rag-clean-skels \
         test-shared-db test-shared-db-keep test-shared-db-python \
         test-react-django-bolt test-react-django-bolt-keep \
         test-react-fastapi test-react-fastapi-keep \
@@ -186,46 +186,46 @@ test-gen-axum: ## Test Rust Axum generator
 # `test-generators` because they require a local Ollama daemon and can take
 # several minutes per file.
 #
-# See: _docs/LLM-MAINTENANCE.md and `_bin/test-ai-generators --help`.
+# See: _docs/LLM-MAINTENANCE.md and `_bin/skel-test-ai-generators --help`.
 #
 
 test-ai-generators: ## Run skel-gen-ai against every AI-supported skeleton (needs Ollama)
 	@echo "$(GREEN)=== Running AI generators (requires Ollama) ===$(NC)"
-	@_bin/test-ai-generators
+	@_bin/skel-test-ai-generators
 
 test-ai-generators-dry: ## Dry-run the AI test pipeline (no Ollama calls)
 	@echo "$(GREEN)=== Dry-run AI generators ===$(NC)"
-	@_bin/test-ai-generators --dry-run
+	@_bin/skel-test-ai-generators --dry-run
 
 test-gen-ai-fastapi: ## AI-generate a FastAPI service in _test_projects/
-	@_bin/test-ai-generators --skel python-fastapi-skel
+	@_bin/skel-test-ai-generators --skel python-fastapi-skel
 
 test-gen-ai-django: ## AI-generate a Django service in _test_projects/
-	@_bin/test-ai-generators --skel python-django-skel
+	@_bin/skel-test-ai-generators --skel python-django-skel
 
 test-gen-ai-django-bolt: ## AI-generate a Django-Bolt service in _test_projects/
-	@_bin/test-ai-generators --skel python-django-bolt-skel
+	@_bin/skel-test-ai-generators --skel python-django-bolt-skel
 
 test-gen-ai-flask: ## AI-generate a Flask service in _test_projects/
-	@_bin/test-ai-generators --skel python-flask-skel
+	@_bin/skel-test-ai-generators --skel python-flask-skel
 
 test-gen-ai-spring: ## AI-generate a Spring Boot service in _test_projects/
-	@_bin/test-ai-generators --skel java-spring-skel
+	@_bin/skel-test-ai-generators --skel java-spring-skel
 
 test-gen-ai-actix: ## AI-generate a Rust Actix-web service in _test_projects/
-	@_bin/test-ai-generators --skel rust-actix-skel
+	@_bin/skel-test-ai-generators --skel rust-actix-skel
 
 test-gen-ai-axum: ## AI-generate a Rust Axum service in _test_projects/
-	@_bin/test-ai-generators --skel rust-axum-skel
+	@_bin/skel-test-ai-generators --skel rust-axum-skel
 
 test-gen-ai-js: ## AI-generate a Node service in _test_projects/
-	@_bin/test-ai-generators --skel js-skel
+	@_bin/skel-test-ai-generators --skel js-skel
 
 test-gen-ai-react: ## AI-generate a React frontend in _test_projects/
-	@_bin/test-ai-generators --skel ts-react-skel
+	@_bin/skel-test-ai-generators --skel ts-react-skel
 
 test-gen-ai-flutter: ## AI-generate a Flutter frontend in _test_projects/
-	@_bin/test-ai-generators --skel flutter-skel
+	@_bin/skel-test-ai-generators --skel flutter-skel
 
 #
 # === RAG AGENT (`_bin/skel_rag/`) ===
@@ -237,27 +237,37 @@ test-gen-ai-flutter: ## AI-generate a Flutter frontend in _test_projects/
 # `_bin/skel-rag` (subcommands: index / search / info / clean).
 #
 # Dependencies are heavy (sentence-transformers, faiss-cpu,
-# tree-sitter, langchain-*). Install them once into the active venv
-# with `make install-rag-deps`. The legacy ``{template}`` /
-# ``{wrapper_snapshot}`` placeholders keep working without the deps;
-# only manifests using the new ``{retrieved_context}`` placeholder
-# require the install.
+# tree-sitter, langchain-*). Install them into a dedicated venv
+# with `make install-rag-deps` (or `_bin/skel-install-rag` directly).
+# The venv defaults to ~/.local/share/dev-skel/venv — override with
+# SKEL_VENV.  The legacy ``{template}`` / ``{wrapper_snapshot}``
+# placeholders keep working without the deps; only manifests using the
+# new ``{retrieved_context}`` placeholder require the install.
+#
+# For a full system install (core tools + all skeleton toolchains + RAG)
+# use `make install-deps` which auto-detects the platform and runs the
+# matching `_bin/skel-install-<platform>` script.
 #
 
-install-rag-deps: ## Install local RAG agent dependencies (LangChain + FAISS + tree-sitter)
-	@echo "$(GREEN)=== Installing RAG agent dependencies ===$(NC)"
-	@python3 -m pip install --upgrade \
-		'langchain-core>=0.3' \
-		'langchain-community>=0.3' \
-		'langchain-huggingface>=0.1' \
-		'langchain-ollama>=0.2' \
-		'langchain-text-splitters>=0.3' \
-		'sentence-transformers>=3.0' \
-		'faiss-cpu>=1.8' \
-		'tree-sitter>=0.23' \
-		'tree-sitter-languages>=1.10' \
-		|| { echo "$(RED)pip install failed — try `pip install tree-sitter-language-pack` if tree-sitter-languages has no wheel for your platform$(NC)"; exit 1; }
-	@echo "$(GREEN)Done. Try: _bin/skel-rag index $(SKEL_DIR)/python-fastapi-skel$(NC)"
+install-rag-deps: ## Install RAG agent dependencies into a venv (no global pip)
+	@_bin/skel-install-rag
+
+install-deps: ## Install ALL dev_skel dependencies (system packages + RAG venv)
+	@case "$$(uname -s)" in \
+		Darwin) _bin/skel-install-macos ;; \
+		Linux) \
+			if command -v pacman >/dev/null 2>&1; then \
+				_bin/skel-install-arch; \
+			elif command -v dnf >/dev/null 2>&1; then \
+				_bin/skel-install-fedora; \
+			elif command -v apt-get >/dev/null 2>&1; then \
+				_bin/skel-install-ubuntu; \
+			else \
+				echo "$(RED)Unsupported Linux distro — run one of _bin/skel-install-{arch,fedora,ubuntu} manually$(NC)"; \
+				exit 1; \
+			fi ;; \
+		*) echo "$(RED)Unsupported OS: $$(uname -s). Run one of _bin/skel-install-{macos,arch,fedora,ubuntu} manually$(NC)"; exit 1 ;; \
+	esac
 
 rag-index-skels: ## Build the FAISS index for every skeleton (CI warm-up)
 	@echo "$(GREEN)=== Indexing all skeletons with skel-rag ===$(NC)"
@@ -284,13 +294,13 @@ rag-clean-skels: ## Wipe the cached FAISS index from every skeleton
 #
 test-shared-db: ## Verify every backend skel sees the same shared items table
 	@echo "$(GREEN)=== Shared-DB integration test ===$(NC)"
-	@_bin/test-shared-db
+	@_bin/skel-test-shared-db
 
 test-shared-db-keep: ## Same as test-shared-db but leave _test_projects/test-shared-db on disk
-	@_bin/test-shared-db --keep
+	@_bin/skel-test-shared-db --keep
 
 test-shared-db-python: ## Run only the Python backends through the shared-DB test
-	@_bin/test-shared-db \
+	@_bin/skel-test-shared-db \
 		--skel python-django-skel \
 		--skel python-django-bolt-skel \
 		--skel python-fastapi-skel \
@@ -309,17 +319,17 @@ test-shared-db-python: ## Run only the Python backends through the shared-DB tes
 #
 test-react-django-bolt: ## Cross-stack integration test (django-bolt + ts-react)
 	@echo "$(GREEN)=== React + Django-Bolt integration test ===$(NC)"
-	@_bin/test-react-django-bolt-integration
+	@_bin/skel-test-react-django-bolt
 
 test-react-django-bolt-keep: ## Same, but leave _test_projects/test-react-django-bolt on disk
-	@_bin/test-react-django-bolt-integration --keep
+	@_bin/skel-test-react-django-bolt --keep
 
 test-react-fastapi: ## Cross-stack integration test (fastapi + ts-react)
 	@echo "$(GREEN)=== React + FastAPI integration test ===$(NC)"
-	@_bin/test-react-fastapi-integration
+	@_bin/skel-test-react-fastapi
 
 test-react-fastapi-keep: ## Same, but leave _test_projects/test-react-fastapi on disk
-	@_bin/test-react-fastapi-integration --keep
+	@_bin/skel-test-react-fastapi --keep
 
 #
 # === FLUTTER + BACKEND CROSS-STACK INTEGRATION TESTS ===
@@ -339,17 +349,17 @@ test-react-fastapi-keep: ## Same, but leave _test_projects/test-react-fastapi on
 
 test-flutter-django-bolt: ## Cross-stack integration test (django-bolt + flutter)
 	@echo "$(GREEN)=== Flutter + Django-Bolt integration test ===$(NC)"
-	@_bin/test-flutter-django-bolt-integration
+	@_bin/skel-test-flutter-django-bolt
 
 test-flutter-django-bolt-keep: ## Same, but leave _test_projects/test-flutter-django-bolt on disk
-	@_bin/test-flutter-django-bolt-integration --keep
+	@_bin/skel-test-flutter-django-bolt --keep
 
 test-flutter-fastapi: ## Cross-stack integration test (fastapi + flutter)
 	@echo "$(GREEN)=== Flutter + FastAPI integration test ===$(NC)"
-	@_bin/test-flutter-fastapi-integration
+	@_bin/skel-test-flutter-fastapi
 
 test-flutter-fastapi-keep: ## Same, but leave _test_projects/test-flutter-fastapi on disk
-	@_bin/test-flutter-fastapi-integration --keep
+	@_bin/skel-test-flutter-fastapi --keep
 
 #
 # === ALL CROSS-STACK TESTS (one shot) ===

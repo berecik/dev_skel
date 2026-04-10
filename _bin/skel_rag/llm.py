@@ -73,20 +73,70 @@ def verify(config: OllamaConfig) -> None:
 
 
 # --------------------------------------------------------------------------- #
+#  Stdlib fallback (no langchain required)
+# --------------------------------------------------------------------------- #
+
+_HAS_LANGCHAIN = True
+try:
+    from langchain_ollama import ChatOllama  # type: ignore
+    from langchain_core.messages import HumanMessage, SystemMessage  # type: ignore
+except ImportError:
+    _HAS_LANGCHAIN = False
+
+if not _HAS_LANGCHAIN:
+    logger.info(
+        "langchain-ollama not installed — using stdlib Ollama client. "
+        "Run `make install-rag-deps` for the full RAG pipeline."
+    )
+
+
+def _chat_stdlib(config: OllamaConfig, system: str, user: str) -> str:
+    """Direct HTTP fallback via Ollama's OpenAI-compatible endpoint."""
+
+    url = f"{config.base_url}/v1/chat/completions"
+    body = {
+        "model": config.model,
+        "temperature": config.temperature,
+        "stream": False,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    }
+    data = json.dumps(body).encode("utf-8")
+    request = urllib.request.Request(
+        url, data=data, headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(  # noqa: S310
+            request, timeout=config.timeout
+        ) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise OllamaError(
+            f"Ollama returned HTTP {exc.code}: {detail}"
+        ) from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise OllamaError(
+            f"Ollama request failed: {exc}. Is `ollama serve` running?"
+        ) from exc
+
+    try:
+        return payload["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise OllamaError(f"Unexpected Ollama response: {payload!r}") from exc
+
+
+# --------------------------------------------------------------------------- #
 #  Chat client
 # --------------------------------------------------------------------------- #
 
 
 @lru_cache(maxsize=4)
 def _make_chat_model(model: str, base_url: str, temperature: float, timeout: int) -> Any:
-    try:
-        from langchain_ollama import ChatOllama  # type: ignore
-    except ImportError as exc:
-        raise OllamaError(
-            "langchain-ollama is not installed. Run "
-            "`make install-rag-deps` to enable the RAG agent."
-        ) from exc
-
+    if not _HAS_LANGCHAIN:
+        return None
     return ChatOllama(
         model=model,
         base_url=base_url,
@@ -97,7 +147,10 @@ def _make_chat_model(model: str, base_url: str, temperature: float, timeout: int
 
 
 def make_chat_model(config: OllamaConfig) -> Any:
-    """Return a (cached) ``ChatOllama`` instance for *config*."""
+    """Return a (cached) ``ChatOllama`` instance for *config*.
+
+    Returns ``None`` when langchain is not installed.
+    """
 
     return _make_chat_model(
         config.model, config.base_url, config.temperature, config.timeout
@@ -111,15 +164,14 @@ def chat(config: OllamaConfig, system: str, user: str) -> str:
     sites in the shim do not need to change. Errors are wrapped in
     :class:`OllamaError` so the test-and-fix loop can recover the
     same way it did before.
+
+    Falls back to a direct HTTP call via Ollama's OpenAI-compatible
+    endpoint when ``langchain-ollama`` / ``langchain-core`` are not
+    installed.
     """
 
-    try:
-        from langchain_core.messages import HumanMessage, SystemMessage  # type: ignore
-    except ImportError as exc:
-        raise OllamaError(
-            "langchain-core is not installed. Run "
-            "`make install-rag-deps` to enable the RAG agent."
-        ) from exc
+    if not _HAS_LANGCHAIN:
+        return _chat_stdlib(config, system, user)
 
     model = make_chat_model(config)
     try:

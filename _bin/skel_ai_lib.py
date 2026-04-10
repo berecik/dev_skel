@@ -8,7 +8,7 @@ lives in :mod:`skel_rag` and this file's job is to keep every public
 symbol (data classes, manifest loaders, dialogs, prompt helpers, the
 ``OllamaClient`` shim) importable under its original name so:
 
-* ``_bin/skel-gen-ai`` and ``_bin/test-ai-generators`` keep working
+* ``_bin/skel-gen-ai`` and ``_bin/skel-test-ai-generators`` keep working
   without touching their import statements;
 * manifests using the legacy ``{template}`` / ``{wrapper_snapshot}``
   placeholders keep generating identical prompts;
@@ -518,9 +518,9 @@ class IntegrationManifest:
       integration. Defaults to ``./test`` so the wrapper-shared
       dispatch script picks the right runner. May reference the same
       placeholders as :func:`format_prompt`.
-    * ``fix_iterations`` — how many times the test-and-fix loop should
-      ask Ollama to patch failing files before giving up. Defaults to
-      ``2`` so a single round-trip is the typical case.
+    * ``fix_timeout_m`` — maximum wall-clock minutes the test-and-fix
+      loop is allowed to run before giving up. Defaults to ``60``
+      (one hour). Override via ``FIX_TIMEOUT_M`` env var or per-manifest.
     """
 
     skeleton_name: str
@@ -528,7 +528,7 @@ class IntegrationManifest:
     system_prompt: str = ""
     notes: str = ""
     test_command: str = "./test"
-    fix_iterations: int = 2
+    fix_timeout_m: int = int(os.environ.get("FIX_TIMEOUT_M", "60"))
 
 
 # --------------------------------------------------------------------------- #
@@ -622,7 +622,7 @@ def discover_manifests(repo_root: Path) -> List[str]:
     """Return the names of every skeleton with an AI manifest on disk.
 
     Used by the interactive picker in ``_bin/skel-gen-ai`` and by
-    ``_bin/test-ai-generators`` to keep its set of validators in sync
+    ``_bin/skel-test-ai-generators`` to keep its set of validators in sync
     with what is actually shipped.
     """
 
@@ -1297,7 +1297,7 @@ def load_integration_manifest(
             "system_prompt": "...",
             "targets": [...],
             "test_command": "./test",   # default
-            "fix_iterations": 2,        # default
+            "fix_timeout_m": 60,        # default (minutes)
             "notes": "...",
         }
     """
@@ -1349,7 +1349,7 @@ def load_integration_manifest(
         system_prompt=str(raw.get("system_prompt", "")),
         notes=str(raw.get("notes", "")),
         test_command=str(raw.get("test_command", "./test")),
-        fix_iterations=int(raw.get("fix_iterations", 2)),
+        fix_timeout_m=int(raw.get("fix_timeout_m", 60)),
     )
 
 
@@ -1596,6 +1596,48 @@ def _ask_ollama_to_fix(
     )
 
 
+_FIXABLE_EXTENSIONS = {
+    ".py", ".ts", ".tsx", ".js", ".jsx",
+    ".java", ".rs", ".dart", ".toml", ".cfg",
+}
+_SKIP_DIRS = {
+    ".venv", "venv", "__pycache__", "node_modules", ".git",
+    "target", "dist", "build", ".tox", ".mypy_cache", ".ruff_cache",
+}
+
+
+def _discover_project_files(project_dir: Path) -> List[TargetResult]:
+    """Scan the service directory for all fixable source files.
+
+    Returns a :class:`TargetResult` for every file whose extension is in
+    ``_FIXABLE_EXTENSIONS``, skipping virtualenvs, caches, and build
+    artifacts. The returned list is sorted so deterministic ordering is
+    guaranteed across runs.
+    """
+    results: List[TargetResult] = []
+    for f in sorted(project_dir.rglob("*")):
+        if not f.is_file():
+            continue
+        if f.suffix not in _FIXABLE_EXTENSIONS:
+            continue
+        # Skip dirs we never want to touch.
+        parts = set(f.relative_to(project_dir).parts)
+        if parts & _SKIP_DIRS:
+            continue
+        results.append(
+            TargetResult(
+                target=AiTarget(
+                    path=str(f.relative_to(project_dir)),
+                    template=None,
+                    prompt="",
+                ),
+                written_to=f,
+                bytes_written=f.stat().st_size,
+            )
+        )
+    return results
+
+
 def run_test_and_fix_loop(
     *,
     client: OllamaClient,
@@ -1606,35 +1648,35 @@ def run_test_and_fix_loop(
 ) -> TestRunResult:
     """Run the new service's tests and ask Ollama to repair failures.
 
-    The loop is bounded by ``manifest.fix_iterations``. On each
+    The loop runs until the tests pass or ``manifest.fix_timeout_m``
+    minutes of wall-clock time have elapsed (default: 60 min). On each
     iteration we run the test command, and if it fails we ask Ollama
-    to repair every file the integration phase wrote (one round-trip
-    per file), then re-run. Returns the **last** :class:`TestRunResult`
-    so the caller can surface a final pass/fail.
+    to repair **every source file in the service directory** (not just
+    integration files), then re-run. Returns the **last**
+    :class:`TestRunResult` so the caller can surface a final pass/fail.
 
     The function never raises on a failing test — instead it surfaces
     the failure through the returned ``TestRunResult`` so the CLI can
     print an actionable summary and let the user decide what to do.
     """
 
+    import time as _time
+
+    deadline = _time.monotonic() + manifest.fix_timeout_m * 60
     last: Optional[TestRunResult] = None
     iteration = 0
     while True:
         iteration += 1
+        elapsed_m = (manifest.fix_timeout_m * 60 - (deadline - _time.monotonic())) / 60
         if progress is not None:
             progress.write(
                 f"\n  [test {iteration}] running `{manifest.test_command}` "
-                f"in {ctx.project_dir}\n"
+                f"in {ctx.project_dir}  ({elapsed_m:.0f}m elapsed)\n"
             )
 
-        # `run_service_tests` already catches every subprocess error
-        # class and surfaces it through the returned `TestRunResult`,
-        # but we still wrap it defensively in case something throws
-        # higher up (e.g. the test command rendering itself raised).
         try:
             last = run_service_tests(manifest.test_command, ctx)
         except Exception as exc:  # noqa: BLE001 — bypass ALL errors to Ollama
-            import time as _time
             last = TestRunResult(
                 command=[manifest.test_command],
                 cwd=ctx.project_dir,
@@ -1657,35 +1699,40 @@ def run_test_and_fix_loop(
         if last.passed:
             return last
 
-        if iteration > manifest.fix_iterations:
+        if _time.monotonic() >= deadline:
             if progress is not None:
                 progress.write(
-                    f"  [test] giving up after {manifest.fix_iterations} "
-                    f"fix attempts — leaving the failing files in place\n"
+                    f"  [test] giving up after {manifest.fix_timeout_m}m "
+                    f"({iteration} iterations) — leaving the failing files in place\n"
                 )
             return last
 
-        if not integration_results:
+        # Discover ALL source files in the service, not just integration
+        # outputs. A bug in models.py or api.py (written by Phase 1) can
+        # cause integration tests to fail — Ollama needs to see and fix
+        # those too.
+        all_files = _discover_project_files(ctx.project_dir)
+        if not all_files:
             if progress is not None:
                 progress.write(
-                    "  [test] no integration files to repair — bailing out\n"
+                    "  [test] no source files found to repair — bailing out\n"
                 )
             return last
 
         if progress is not None:
             progress.write(
                 f"  [fix {iteration}] asking Ollama to repair "
-                f"{len(integration_results)} file(s)\n"
+                f"{len(all_files)} project file(s)\n"
             )
 
-        for sub_index, result in enumerate(integration_results, start=1):
+        for sub_index, result in enumerate(all_files, start=1):
             try:
                 rel = result.written_to.relative_to(ctx.project_dir)
             except ValueError:
                 rel = result.written_to
             if progress is not None:
                 progress.write(
-                    f"    - patching ({sub_index}/{len(integration_results)}) {rel}\n"
+                    f"    - patching ({sub_index}/{len(all_files)}) {rel}\n"
                 )
             try:
                 fixed = _ask_ollama_to_fix(
@@ -1699,13 +1746,7 @@ def run_test_and_fix_loop(
                 if progress is not None:
                     progress.write(f"      (Ollama error: {exc})\n")
                 continue
-            except Exception as exc:  # noqa: BLE001 — bypass ALL errors to Ollama
-                # Anything else (KeyError from a malformed prompt
-                # template, OSError on the file read, etc.) gets
-                # surfaced as a warning so the loop can move on to
-                # the next file. Without this catch a single bad
-                # file would crash the whole pipeline before the
-                # other files get a chance to be repaired.
+            except Exception as exc:  # noqa: BLE001
                 if progress is not None:
                     progress.write(
                         f"      (skipping — _ask_ollama_to_fix raised: {exc!r})\n"
@@ -1722,6 +1763,329 @@ def run_test_and_fix_loop(
                         f"      (could not write fixed file: {exc})\n"
                     )
                 continue
+
+
+# --------------------------------------------------------------------------- #
+#  Phase 5 — Project documentation generation
+# --------------------------------------------------------------------------- #
+
+_DOCS_SYSTEM_PROMPT = """\
+You are a senior full-stack engineer writing comprehensive project documentation
+for a freshly generated multi-service wrapper project.
+
+The project is called "{project_name}". It was generated by **dev_skel**, a
+Makefile-driven project generator. Each service lives in its own subdirectory
+and shares a common environment (database, JWT secret) via `.env` and `_shared/`.
+
+Services in this project:
+{services_summary}
+
+The wrapper directory has these dispatch scripts that auto-discover services:
+  ./run, ./test, ./build, ./stop, ./install-deps, ./services
+
+Write documentation that is:
+- Detailed, specific to THIS project (not generic templates)
+- Includes real file paths, real service names, real tech stacks
+- Actionable — a new developer can onboard in minutes
+- Covers architecture, setup, development workflow, testing, deployment
+"""
+
+_DOCS_TARGETS: List[Dict[str, Any]] = [
+    {
+        "path": "README.md",
+        "description": "Wrapper-level project README",
+        "prompt": """\
+Write a comprehensive README.md for the "{project_name}" project wrapper.
+
+Include these sections:
+1. **Project Overview** — what this project does, its services, their roles
+2. **Architecture** — how the services interact, shared DB, JWT auth flow
+3. **Prerequisites** — required toolchains with version requirements
+4. **Quick Start** — step-by-step from clone to running (install-deps, run, test)
+5. **Project Structure** — annotated directory tree with every service and key file
+6. **Services** — for each service: purpose, tech stack, key endpoints/routes, config
+7. **Shared Environment** — .env variables, DATABASE_URL, JWT_SECRET, how to switch to Postgres
+8. **Development Workflow** — how to add features, run tests, lint, format
+9. **Wrapper Scripts** — ./run, ./test, ./build, ./services — with examples
+10. **Adding Services** — how to add another service to this wrapper
+11. **Deployment** — Docker, environment variables, production considerations
+12. **Troubleshooting** — common issues and solutions
+
+{services_detail}
+""",
+    },
+    {
+        "path": "AGENTS.md",
+        "description": "Cross-agent LLM instructions",
+        "prompt": """\
+Write a comprehensive AGENTS.md for the "{project_name}" project wrapper.
+This file is loaded by ALL LLM coding agents (Claude, Junie, Copilot, Cursor, etc.)
+as their primary instruction set for working on this project.
+
+Include these sections:
+1. **Read These Files First** — ordered list of files to read for context
+2. **Project Architecture** — services, their roles, how they interact, shared DB/JWT
+3. **Service Details** — for EACH service: tech stack, directory layout, key files,
+   entry points, test commands, dependencies, important patterns
+4. **Shared Environment Contract** — .env variables, DATABASE_URL, JWT_SECRET,
+   SERVICE_URL_* auto-discovery, how tokens are shared across services
+5. **Development Workflow** — standard commands (./run, ./test, ./build, etc.)
+6. **Code Conventions** — per-service coding patterns, naming, error handling
+7. **Testing Strategy** — unit tests, integration tests, cross-service tests,
+   how to run each type, what test frameworks each service uses
+8. **Dependency Management** — per-service package managers, lock files, version policies
+9. **Safety Rules** — what NOT to do (don't hand-edit generated files, don't hardcode
+   secrets, don't break the shared env contract, etc.)
+10. **Verification Checklist** — what to check before declaring a task done
+11. **File Index** — every important file with a one-line description
+
+Be extremely detailed. Include real file paths, real endpoints, real class/function names.
+This is the primary reference an AI agent will use to understand and modify this project.
+
+{services_detail}
+""",
+    },
+    {
+        "path": "CLAUDE.md",
+        "description": "Claude Code specific instructions",
+        "prompt": """\
+Write a comprehensive CLAUDE.md for the "{project_name}" project wrapper.
+This file is loaded by Claude Code as its instruction set. It complements AGENTS.md
+with Claude-specific operational notes.
+
+Include these sections:
+1. **Read These Files First** — CLAUDE.md, AGENTS.md, per-service CLAUDE.md files
+2. **Project Snapshot** — concise summary of all services, their tech stacks, how they
+   connect, the shared env contract
+3. **Default Maintenance Workflow** — step-by-step for "do maintenance" / "verify the project"
+4. **Claude Operational Notes** — Plan before non-trivial edits, use Task tools,
+   prefer dedicated tools, confirm risky actions, memory hygiene
+5. **Per-Service Quick Reference** — for each service: key files, test commands,
+   important classes/functions, gotchas
+6. **Editing Conventions** — Read before edit, minimal diffs, don't modify
+   generator-owned files, never weaken tests
+7. **Verification Checklist** — service tests green, docs updated, no stale artifacts
+
+Include real paths, real commands, real service details. Be thorough.
+
+{services_detail}
+""",
+    },
+    {
+        "path": "JUNIE-RULES.md",
+        "description": "JetBrains Junie agent instructions",
+        "prompt": """\
+Write a JUNIE-RULES.md for the "{project_name}" project wrapper.
+This file is loaded by JetBrains Junie as its instruction set.
+
+Include these sections:
+1. **Project Overview** — services, tech stacks, shared environment
+2. **File Layout** — directory tree with annotations
+3. **Per-Service Details** — tech stack, key files, test commands, important patterns
+4. **Shared Environment** — .env variables and their purpose
+5. **Development Commands** — ./run, ./test, ./build, etc.
+6. **Rules** — don't hand-edit generated files, don't hardcode secrets,
+   follow existing patterns, run tests before declaring done
+7. **Testing** — what tests exist, how to run them, what frameworks
+
+{services_detail}
+""",
+    },
+]
+
+
+def _build_services_summary(
+    project_root: Path,
+    service_contexts: List[GenerationContext],
+) -> str:
+    """One-line-per-service summary for the system prompt."""
+    lines = []
+    for ctx in service_contexts:
+        svc_dir = project_root / ctx.service_subdir
+        tech = ctx.skeleton_name.replace("-skel", "")
+        lines.append(
+            f"  - {ctx.service_subdir}/ ({ctx.service_label}) — "
+            f"skeleton: {ctx.skeleton_name}, tech: {tech}, "
+            f"item entity: {ctx.item_name}, auth: {ctx.auth_type}"
+        )
+    return "\n".join(lines) or "  (no services)"
+
+
+def _build_services_detail(
+    project_root: Path,
+    service_contexts: List[GenerationContext],
+) -> str:
+    """Detailed per-service block including key files for context."""
+    blocks = []
+    for ctx in service_contexts:
+        svc_dir = project_root / ctx.service_subdir
+        tech = ctx.skeleton_name.replace("-skel", "")
+        files_block = ""
+        # List key source files in the service
+        key_dirs = ["app", "src", "lib", "core", "tests", "test"]
+        key_files = []
+        for d in key_dirs:
+            dpath = svc_dir / d
+            if dpath.is_dir():
+                for f in sorted(dpath.rglob("*")):
+                    if f.is_file() and f.suffix in (
+                        ".py", ".ts", ".tsx", ".js", ".java", ".rs", ".dart",
+                        ".toml", ".json", ".yaml", ".yml",
+                    ):
+                        try:
+                            rel = f.relative_to(project_root)
+                        except ValueError:
+                            rel = f
+                        key_files.append(str(rel))
+        # Also include top-level config files
+        for name in [
+            "pyproject.toml", "requirements.txt", "package.json",
+            "Cargo.toml", "pom.xml", "pubspec.yaml",
+            ".env.example", "Dockerfile", "Makefile",
+        ]:
+            if (svc_dir / name).is_file():
+                key_files.append(f"{ctx.service_subdir}/{name}")
+        if key_files:
+            files_block = "Key files:\n" + "\n".join(
+                f"    {f}" for f in key_files[:50]  # cap to avoid huge prompts
+            )
+
+        blocks.append(
+            f"### Service: {ctx.service_label} ({ctx.service_subdir}/)\n"
+            f"- Skeleton: {ctx.skeleton_name}\n"
+            f"- Tech: {tech}\n"
+            f"- Item entity: {ctx.item_name} (class: {ctx.item_class})\n"
+            f"- Auth: {ctx.auth_type}\n"
+            f"{files_block}"
+        )
+    return "\n\n".join(blocks) or "(no services)"
+
+
+def run_docs_generation(
+    *,
+    client: OllamaClient,
+    project_root: Path,
+    project_name: str,
+    service_contexts: List[GenerationContext],
+    dry_run: bool = False,
+    progress: Optional[Any] = None,
+) -> List[Path]:
+    """Generate project-level documentation and LLM instruction files.
+
+    Uses Ollama to write detailed, project-specific documentation based
+    on the actual services, file structure, and configuration present
+    in the generated wrapper.
+
+    Returns list of written file paths.
+    """
+
+    services_summary = _build_services_summary(project_root, service_contexts)
+    services_detail = _build_services_detail(project_root, service_contexts)
+
+    system = _DOCS_SYSTEM_PROMPT.format(
+        project_name=project_name,
+        services_summary=services_summary,
+    )
+
+    written: List[Path] = []
+    for i, target in enumerate(_DOCS_TARGETS, start=1):
+        out_path = project_root / target["path"]
+        desc = target["description"]
+        if progress is not None:
+            progress.write(
+                f"  [{i}/{len(_DOCS_TARGETS)}] {target['path']} — {desc}\n"
+            )
+        if dry_run:
+            continue
+
+        user_prompt = target["prompt"].format(
+            project_name=project_name,
+            services_summary=services_summary,
+            services_detail=services_detail,
+        )
+
+        try:
+            raw = client.chat(system, user_prompt)
+        except OllamaError as exc:
+            if progress is not None:
+                progress.write(f"    (Ollama error: {exc})\n")
+            continue
+        except Exception as exc:  # noqa: BLE001
+            if progress is not None:
+                progress.write(f"    (unexpected error: {exc!r})\n")
+            continue
+
+        # Strip markdown fences if the model wrapped the output.
+        content = raw.strip()
+        if content.startswith("```"):
+            first_nl = content.index("\n") if "\n" in content else len(content)
+            content = content[first_nl + 1:]
+        if content.endswith("```"):
+            content = content[:-3].rstrip()
+
+        try:
+            out_path.write_text(content + "\n", encoding="utf-8")
+            written.append(out_path)
+            if progress is not None:
+                progress.write(
+                    f"    wrote {len(content)} chars\n"
+                )
+        except OSError as exc:
+            if progress is not None:
+                progress.write(f"    (write error: {exc})\n")
+
+    # Also generate per-service AGENTS.md / CLAUDE.md with real content
+    for ctx in service_contexts:
+        svc_dir = project_root / ctx.service_subdir
+        for doc_name in ("AGENTS.md", "CLAUDE.md"):
+            doc_path = svc_dir / doc_name
+            desc = f"{ctx.service_subdir}/{doc_name}"
+            if progress is not None:
+                progress.write(f"  [svc] {desc}\n")
+            if dry_run:
+                continue
+
+            svc_prompt = (
+                f"Write a comprehensive {doc_name} for the "
+                f"\"{ctx.service_label}\" service ({ctx.service_subdir}/).\n"
+                f"Skeleton: {ctx.skeleton_name}\n"
+                f"Tech: {ctx.skeleton_name.replace('-skel', '')}\n"
+                f"Item entity: {ctx.item_name} (class: {ctx.item_class})\n"
+                f"Auth style: {ctx.auth_type}\n"
+                f"Project: {project_name}\n\n"
+                f"Include: service purpose, architecture, key files with "
+                f"descriptions, important classes/functions, API endpoints, "
+                f"test commands, dependency management, coding conventions, "
+                f"safety rules, verification checklist.\n\n"
+                f"Be extremely detailed with real file paths and real code "
+                f"references. This is what an AI agent reads to understand "
+                f"this service.\n\n"
+                f"{services_detail}"
+            )
+            try:
+                raw = client.chat(system, svc_prompt)
+            except (OllamaError, Exception) as exc:  # noqa: BLE001
+                if progress is not None:
+                    progress.write(f"    (error: {exc})\n")
+                continue
+
+            content = raw.strip()
+            if content.startswith("```"):
+                first_nl = content.index("\n") if "\n" in content else len(content)
+                content = content[first_nl + 1:]
+            if content.endswith("```"):
+                content = content[:-3].rstrip()
+
+            try:
+                doc_path.write_text(content + "\n", encoding="utf-8")
+                written.append(doc_path)
+                if progress is not None:
+                    progress.write(f"    wrote {len(content)} chars\n")
+            except OSError as exc:
+                if progress is not None:
+                    progress.write(f"    (write error: {exc})\n")
+
+    return written
 
 
 def generate_targets(

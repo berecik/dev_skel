@@ -26,10 +26,10 @@ This proves that:
 
 Usage::
 
-    _bin/test-react-fastapi-integration              # full run
-    _bin/test-react-fastapi-integration --keep       # leave wrapper on disk
-    _bin/test-react-fastapi-integration --port 19877 # custom port
-    _bin/test-react-fastapi-integration --no-skip    # fail on missing Node
+    _bin/skel-test-react-fastapi              # full run
+    _bin/skel-test-react-fastapi --keep       # leave wrapper on disk
+    _bin/skel-test-react-fastapi --port 19877 # custom port
+    _bin/skel-test-react-fastapi --no-skip    # fail on missing Node
 
 Exit codes::
 

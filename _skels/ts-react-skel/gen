@@ -130,6 +130,8 @@ pkg.scripts.test = pkg.scripts.test || 'vitest run';
 pkg.scripts["test:watch"] = pkg.scripts["test:watch"] || 'vitest';
 pkg.scripts.lint = pkg.scripts.lint || 'eslint .';
 pkg.scripts.format = pkg.scripts.format || 'prettier -w .';
+pkg.scripts.preview = pkg.scripts.preview || 'vite preview';
+pkg.scripts["test:e2e"] = pkg.scripts["test:e2e"] || 'playwright test';
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
 NODE
 
@@ -208,7 +210,12 @@ fi
     # devDependencies install below).
     $RUNTIME_INSTALL react@^19 react-dom@^19 >/dev/null 2>&1 || true
 
-    $INSTALL @vitejs/plugin-react-swc eslint @types/node @types/react@^19 @types/react-dom@^19 vitest jsdom @testing-library/react @testing-library/jest-dom >/dev/null 2>&1 || true
+    $INSTALL @vitejs/plugin-react-swc eslint @types/node @types/react@^19 @types/react-dom@^19 vitest jsdom @testing-library/react @testing-library/jest-dom @playwright/test >/dev/null 2>&1 || true
+
+    # Download the Chromium browser binary for Playwright E2E tests.
+    # This is ~80 MB on first install and cached globally in
+    # ~/.cache/ms-playwright. Subsequent project generations are fast.
+    npx playwright install chromium >/dev/null 2>&1 || true
   fi
 )
 

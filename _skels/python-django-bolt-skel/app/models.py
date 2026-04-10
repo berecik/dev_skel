@@ -81,7 +81,7 @@ class Item(models.Model):
 
     This model maps to the canonical `items` table that every dev_skel
     backend can serve (see ``_docs/SHARED-DATABASE-CONVENTIONS.md`` and
-    ``_bin/test-shared-db``). It is intentionally NOT scoped to a user
+    ``_bin/skel-test-shared-db``). It is intentionally NOT scoped to a user
     so the integration test can pre-seed rows via raw SQL and every
     backend in the wrapper sees the same data.
 
@@ -119,7 +119,7 @@ class ReactState(models.Model):
         related_name="react_state",
     )
     key = models.CharField(max_length=255)
-    value = models.TextField()  # JSON-serialised payload
+    value = models.JSONField(default=dict)  # arbitrary JSON payload
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# skel-install-rag — create a dedicated venv and install RAG agent deps.
+#
+# Never installs globally — all Python packages go into a venv at
+# SKEL_VENV (default: ~/.local/share/dev-skel/venv).
+#
+# System-level build deps (cmake, openblas, C compiler) must already be
+# present — run the matching skel-install-<platform> first, or install
+# them manually.
+#
+# Usage:
+#   _bin/skel-install-rag                            # default venv path
+#   SKEL_VENV=/path/to/venv _bin/skel-install-rag    # custom venv path
+#   _bin/skel-install-rag --reinstall                 # wipe & recreate
+
+GREEN='\033[0;32m'  YELLOW='\033[1;33m'
+RED='\033[0;31m'    NC='\033[0m'
+
+info()  { printf "${GREEN}%s${NC}\n" "$*"; }
+warn()  { printf "${YELLOW}%s${NC}\n" "$*"; }
+err()   { printf "${RED}%s${NC}\n" "$*" >&2; }
+
+PYTHON="${PYTHON:-python3}"
+SKEL_VENV="${SKEL_VENV:-$HOME/.local/share/dev-skel/venv}"
+REINSTALL=false
+for arg in "$@"; do [[ "$arg" == "--reinstall" ]] && REINSTALL=true; done
+
+# ── preflight ────────────────────────────────────────────────────────
+
+if ! command -v "$PYTHON" >/dev/null 2>&1; then
+    err "$PYTHON not found. Install Python 3.9+ first."
+    exit 1
+fi
+
+PY_MAJOR=$("$PYTHON" -c 'import sys; print(sys.version_info.major)')
+PY_MINOR=$("$PYTHON" -c 'import sys; print(sys.version_info.minor)')
+if (( PY_MAJOR < 3 || (PY_MAJOR == 3 && PY_MINOR < 9) )); then
+    err "Python 3.9+ required (found $PY_MAJOR.$PY_MINOR)."
+    exit 1
+fi
+
+# ── create / recreate venv ───────────────────────────────────────────
+
+if [[ "$REINSTALL" == true && -d "$SKEL_VENV" ]]; then
+    warn "Removing existing venv at $SKEL_VENV"
+    rm -rf "$SKEL_VENV"
+fi
+
+if [[ ! -d "$SKEL_VENV" ]]; then
+    info "Creating venv at $SKEL_VENV"
+    mkdir -p "$(dirname "$SKEL_VENV")"
+    "$PYTHON" -m venv "$SKEL_VENV"
+fi
+
+PIP="$SKEL_VENV/bin/pip"
+VPYTHON="$SKEL_VENV/bin/python"
+
+# ── install packages ─────────────────────────────────────────────────
+
+info "=== Upgrading pip ==="
+"$VPYTHON" -m pip install --upgrade pip
+
+info "=== Installing RAG agent dependencies ==="
+"$PIP" install --upgrade \
+    'langchain-core>=0.3' \
+    'langchain-community>=0.3' \
+    'langchain-huggingface>=0.1' \
+    'langchain-ollama>=0.2' \
+    'langchain-text-splitters>=0.3' \
+    'sentence-transformers>=3.0' \
+    'faiss-cpu>=1.8' \
+    'tree-sitter>=0.23'
+
+info "=== Installing tree-sitter language grammars ==="
+if ! "$PIP" install --upgrade 'tree-sitter-languages>=1.10' 2>/dev/null; then
+    warn "tree-sitter-languages failed — trying tree-sitter-language-pack"
+    "$PIP" install --upgrade 'tree-sitter-language-pack' \
+        || { err "Neither tree-sitter-languages nor tree-sitter-language-pack could be installed."; exit 1; }
+fi
+
+# ── verify ───────────────────────────────────────────────────────────
+
+info "=== Verifying installation ==="
+"$VPYTHON" -c "
+from langchain_core.messages import HumanMessage
+from langchain_ollama import ChatOllama
+from langchain_community.vectorstores import FAISS
+from sentence_transformers import SentenceTransformer
+import tree_sitter
+print('All RAG dependencies OK.')
+"
+
+# ── activation helper ────────────────────────────────────────────────
+
+info ""
+info "=== Done ==="
+info "Venv location: $SKEL_VENV"
+info ""
+info "To use the RAG agent, either:"
+info "  1. Activate the venv:  source $SKEL_VENV/bin/activate"
+info "  2. Or set:             export SKEL_VENV=$SKEL_VENV"
+info ""
+info "Then run:  _bin/skel-rag index _skels/python-fastapi-skel"

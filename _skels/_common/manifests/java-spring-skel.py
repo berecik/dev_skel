@@ -75,7 +75,7 @@ Required transformations:
 - `@Table(name = "{items_plural}")`.
 - Keep the `id`, `name`, `description`, `createdAt`, `updatedAt` fields
   exactly as the REFERENCE has them (this matches the canonical
-  `<items_plural>` schema used by `_bin/test-shared-db`).
+  `<items_plural>` schema used by `_bin/skel-test-shared-db`).
 - Add an `is_completed` boolean column (`@Column(name =
   "is_completed", nullable = false) private boolean isCompleted =
   false;`) and the matching getter/setter.

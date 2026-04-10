@@ -152,7 +152,7 @@ def run_rsync(args: List[str]) -> None:
 def update_dev_dir(cfg: DevSkelConfig, require_existing: bool = True) -> None:
     if require_existing and not cfg.dev_dir.is_dir():
         raise SystemExit(
-            f"Error: {cfg.dev_dir} does not exist.\nRun install-dev-skel first to set up the dev directory."
+            f"Error: {cfg.dev_dir} does not exist.\nRun skel-install first to set up the dev directory."
         )
 
     rsync_cmd = [

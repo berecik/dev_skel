@@ -61,8 +61,8 @@ rule-affecting edits.
 - The root `Makefile` orchestrates `gen-*` and `test-*` targets; `_bin/skel-gen`
   is a relocatable Python entrypoint that delegates to skeleton-level `gen`
   scripts.
-- All `_bin/` CLI tools (`install-dev-skel`, `update-dev-skel`,
-  `sync-dev-skel`, `skel-list`, `skel-gen`, `skel-gen-ai`) are Python and
+- All `_bin/` CLI tools (`skel-install`, `skel-update`,
+  `skel-sync`, `skel-list`, `skel-gen`, `skel-gen-ai`) are Python and
   share helpers through `_bin/dev_skel_lib.py`. Treat that module as the
   single source of truth for config loading, project generation, slug
   computation, and rsync wrappers.

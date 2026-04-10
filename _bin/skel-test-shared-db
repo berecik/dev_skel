@@ -31,10 +31,10 @@ completion on minimal CI.
 
 Use the ``make test-shared-db`` target or invoke this script directly:
 
-    _bin/test-shared-db                  # full run
-    _bin/test-shared-db --keep           # leave _test_projects/test-shared-db on disk
-    _bin/test-shared-db --skel python-fastapi-skel python-django-skel
-    _bin/test-shared-db --no-cross-stack # skip the write/read round-trip
+    _bin/skel-test-shared-db                  # full run
+    _bin/skel-test-shared-db --keep           # leave _test_projects/test-shared-db on disk
+    _bin/skel-test-shared-db --skel python-fastapi-skel python-django-skel
+    _bin/skel-test-shared-db --no-cross-stack # skip the write/read round-trip
 
 Exit codes:
     0 — every selected backend passed (or was skipped gracefully)
@@ -225,7 +225,7 @@ def seed_items_table(db_path: Path) -> None:
         )
         conn.execute(
             "INSERT INTO items (name, description) VALUES (?, ?)",
-            (SEED_NAME, "seeded by _bin/test-shared-db"),
+            (SEED_NAME, "seeded by _bin/skel-test-shared-db"),
         )
         conn.commit()
 

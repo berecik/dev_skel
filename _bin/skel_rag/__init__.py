@@ -32,6 +32,44 @@ must stay stdlib-only).
 
 from __future__ import annotations
 
+import os as _os
+import sys as _sys
+
+
+def _activate_skel_venv() -> None:
+    """Add the SKEL_VENV site-packages to sys.path if not already active.
+
+    This lets ``skel_rag`` find langchain / faiss / sentence-transformers
+    that were installed via ``skel-install-rag`` into a dedicated venv,
+    without requiring the user to ``source activate`` first.
+
+    Priority: $SKEL_VENV  >  $VIRTUAL_ENV (already active)  >  default path.
+    """
+    if "VIRTUAL_ENV" in _os.environ:
+        return  # a venv is already active — trust it
+
+    venv = _os.environ.get(
+        "SKEL_VENV",
+        _os.path.expanduser("~/.local/share/dev-skel/venv"),
+    )
+    if not _os.path.isdir(venv):
+        return  # no venv installed — RAG deps will degrade gracefully
+
+    # Find the site-packages directory inside the venv.
+    import glob as _glob
+
+    candidates = _glob.glob(
+        _os.path.join(venv, "lib", "python*", "site-packages")
+    )
+    if not candidates:
+        return
+    sp = sorted(candidates)[-1]  # highest Python version if multiple
+    if sp not in _sys.path:
+        _sys.path.insert(0, sp)
+
+
+_activate_skel_venv()
+
 from skel_rag.config import OllamaConfig, RagConfig
 
 __all__ = [

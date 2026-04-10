@@ -170,7 +170,7 @@ class ItemSchema(msgspec.Struct):
 
     Mirrors the canonical schema documented in
     `_docs/SHARED-DATABASE-CONVENTIONS.md` so the React frontend, the
-    `_bin/test-shared-db` integration runner, and every other backend
+    `_bin/skel-test-shared-db` integration runner, and every other backend
     speak the same payload.
     """
 
@@ -209,9 +209,9 @@ class ItemCreateSchema(msgspec.Struct):
 class ReactStateUpsertSchema(msgspec.Struct):
     """Body shape for `PUT /api/state/<key>`.
 
-    `value` is a JSON-serialised payload — the React layer is the
-    only consumer that knows the shape, so we keep the wire format
-    opaque on the backend.
+    `value` is an arbitrary JSON payload — the React layer is the
+    only consumer that knows the shape. The backend stores it in a
+    ``JSONField`` so round-trips preserve types (dicts, lists, etc.).
     """
 
-    value: str
+    value: object  # any JSON-serializable value

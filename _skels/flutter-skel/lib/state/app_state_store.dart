@@ -31,10 +31,13 @@ class AppStateStore extends ChangeNotifier {
   /// (the Flutter Web compiler) does not promote `Object?` through a
   /// generic type test the way the analyzer does — without the cast
   /// the build fails with "A value of type 'Object' can't be returned
-  /// from a function with return type 'T?'".
+  /// from a function with return type 'T?'". The analyzer flags the
+  /// cast as `unnecessary_cast`, but it is required for web builds,
+  /// so we suppress that single rule on this line.
   T? getSlice<T>(String key) {
     final value = _data[key];
     if (value is T) {
+      // ignore: unnecessary_cast
       return value as T;
     }
     return null;

@@ -76,6 +76,7 @@ Dry run (no files written, no Ollama calls validated)::
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -109,6 +110,7 @@ from skel_ai_lib import (
     load_manifest,
     prompt_fullstack_dialog,
     prompt_user_dialog,
+    run_docs_generation,
     run_integration_phase,
     run_test_and_fix_loop,
     split_skels_by_kind,
@@ -268,6 +270,17 @@ def parse_args() -> argparse.Namespace:
             "executes the new service's test command and asks Ollama to "
             "patch failing files. Use this in CI or when you want to inspect "
             "the generated tests before running them."
+        ),
+    )
+
+    parser.add_argument(
+        "--no-docs",
+        action="store_true",
+        help=(
+            "Skip the documentation generation phase (Phase 5). The project "
+            "will still be fully functional but README.md, AGENTS.md, "
+            "CLAUDE.md, and JUNIE-RULES.md will contain the generic "
+            "templates instead of project-specific content."
         ),
     )
 
@@ -604,7 +617,7 @@ def _run_single_skel_flow(
             print(
                 f"  (dry-run) integration test command: "
                 f"{integration_manifest.test_command} "
-                f"(fix iterations: {integration_manifest.fix_iterations})"
+                f"(fix timeout: {integration_manifest.fix_timeout_m}m)"
             )
         elif not args.no_integrate:
             print()
@@ -732,9 +745,28 @@ def _run_single_skel_flow(
                 print(
                     f"  Test-and-fix loop: FAIL "
                     f"(exit {final.returncode} after "
-                    f"{integration_manifest.fix_iterations} repair attempts). "
+                    f"{integration_manifest.fix_timeout_m}m timeout). "
                     f"Inspect the generated files and re-run manually."
                 )
+
+    # ----- 8. Documentation generation ------------------------------------- #
+    if client is not None and not args.no_docs:
+        print()
+        print("  ===== Documentation & LLM instructions =====")
+        try:
+            docs_written = run_docs_generation(
+                client=client,
+                project_root=target,
+                project_name=display_proj_name,
+                service_contexts=[ctx],
+                dry_run=False,
+                progress=sys.stdout,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"  Documentation generation error: {exc!r}")
+            docs_written = []
+        if docs_written:
+            print(f"  Generated {len(docs_written)} documentation files.")
 
     print()
     print("  Done. Review the generated files and run the project's tests.")
@@ -1036,6 +1068,23 @@ def _run_fullstack_flow(
             )
         )
 
+    # ----- Refresh wrapper dispatch scripts (all services now on disk) -- #
+    #
+    # Each skel's ``gen`` script already calls ``common-wrapper.sh``, but
+    # only with the services it knew about at that point. Now that every
+    # service (backend + frontend) is generated, re-run the wrapper
+    # scaffolder so the dispatch scripts (``run``, ``test``, ``build``,
+    # ``install-deps``, …) are fully aware of all siblings.
+    if not args.dry_run:
+        common_wrapper = repo_root / "_skels" / "_common" / "common-wrapper.sh"
+        if common_wrapper.is_file():
+            print()
+            print("  Refreshing wrapper dispatch scripts (all services visible)...")
+            subprocess.run(
+                ["bash", str(common_wrapper), str(target), backend_subdir],
+                check=False,
+            )
+
     # ----- Phase 3: backend integration (now sees frontend as sibling) - #
     integration_results: list = []
     if backend_integration and backend_integration.targets and not args.no_integrate:
@@ -1053,7 +1102,7 @@ def _run_fullstack_flow(
                 print(f"    + {expanded.path}  (template: {tmpl})")
             print(
                 f"  test_command: {backend_integration.test_command}  "
-                f"(fix_iterations: {backend_integration.fix_iterations})"
+                f"(fix_timeout: {backend_integration.fix_timeout_m}m)"
             )
         else:
             backend_ctx.siblings = discover_siblings(target, exclude_slug=backend_subdir)
@@ -1138,9 +1187,38 @@ def _run_fullstack_flow(
                 print(
                     f"  Test-and-fix loop: FAIL "
                     f"(exit {final.returncode} after "
-                    f"{backend_integration.fix_iterations} repair attempts). "
+                    f"{backend_integration.fix_timeout_m}m timeout). "
                     f"Inspect the generated files and re-run manually."
                 )
+
+    # ----- Phase 5: documentation generation ----------------------------- #
+    if not args.dry_run and client is not None and not args.no_docs:
+        print()
+        print("  ===== Phase 5: Documentation & LLM instructions =====")
+        service_contexts = [backend_ctx]
+        if frontend_ctx is not None:
+            service_contexts.append(frontend_ctx)
+        try:
+            docs_written = run_docs_generation(
+                client=client,
+                project_root=target,
+                project_name=display_proj_name,
+                service_contexts=service_contexts,
+                dry_run=False,
+                progress=sys.stdout,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"  Documentation generation error: {exc!r}")
+            print("  (project is fully functional — docs can be regenerated later)")
+            docs_written = []
+        if docs_written:
+            print(f"  Generated {len(docs_written)} documentation files.")
+    elif args.dry_run:
+        print()
+        print(
+            "  (dry-run) Phase 5: would generate README.md, AGENTS.md, "
+            "CLAUDE.md, JUNIE-RULES.md + per-service docs"
+        )
 
     print()
     print("  Done. Review the generated files and run the project's tests.")

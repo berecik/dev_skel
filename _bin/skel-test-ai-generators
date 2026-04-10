@@ -24,8 +24,8 @@ part of a manual maintenance pass:
 
     make test-ai-generators              # all AI-supported skeletons
     make test-gen-ai-django-bolt         # one skeleton
-    _bin/test-ai-generators --dry-run    # no Ollama calls, just dispatch
-    _bin/test-ai-generators --skel python-django-bolt-skel --keep
+    _bin/skel-test-ai-generators --dry-run    # no Ollama calls, just dispatch
+    _bin/skel-test-ai-generators --skel python-django-bolt-skel --keep
 """
 
 from __future__ import annotations

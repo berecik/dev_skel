@@ -6,8 +6,8 @@ Instructions for AI assistants (Claude, GPT, Gemini, etc.) maintaining this proj
 
 This is a **Makefile-based project generator system**. It creates new projects from skeleton templates. The architecture follows a delegation pattern where the main Makefile calls skeleton-specific Makefiles. Each skeleton also provides `gen` and `test` helper scripts, and an executable `merge` script used during generation.
 
-The relocatable CLI (`_bin/skel-gen`, `_bin/install-dev-skel`,
-`_bin/update-dev-skel`, `_bin/sync-dev-skel`, `_bin/skel-list`) is now a set
+The relocatable CLI (`_bin/skel-gen`, `_bin/skel-install`,
+`_bin/skel-update`, `_bin/skel-sync`, `_bin/skel-list`) is now a set
 of small Python entrypoints sharing logic in `_bin/dev_skel_lib.py`. Treat
 that module as the single source of truth for config loading, project
 generation, rsync wrappers, and AGENTS template rendering. The legacy
@@ -109,7 +109,7 @@ Before making changes, read these files:
     `dev_skel_lib.generate_project()`. Use this in CI / when Ollama
     is unavailable / when you want a deterministic AI-free baseline.
     Same `[proj_name] [skel_name] [service_name]` positional order.
-10. **`_bin/test-ai-generators`** - End-to-end test runner for the AI
+10. **`_bin/skel-test-ai-generators`** - End-to-end test runner for the AI
     generator. Auto-discovers manifests under
     `_skels/_common/manifests/`, runs base scaffold + Ollama overlay for
     each, then validates the result with a per-skeleton sanity check.
@@ -127,7 +127,7 @@ Before making changes, read these files:
     full per-stack check. Backs the `make test-ai-generators` target.
     Opt-in (separate from `make test-generators`) because it needs
     Ollama and is slow.
-11. **`_bin/test-shared-db`** - Cross-language integration test runner.
+11. **`_bin/skel-test-shared-db`** - Cross-language integration test runner.
     Generates a wrapper containing every backend skeleton, seeds the
     shared SQLite `items` table, and runs a per-stack verifier that
     confirms each backend reads the seed row through `DATABASE_URL`.
@@ -141,44 +141,75 @@ Before making changes, read these files:
     - `BackendSpec` (declarative description of a backend: skel name,
       service display name, server argv, optional pre-server setup).
     - `Frontend` (declarative description of a frontend: skel name,
-      toolchain probe, build callable, build-output inspector).
+      toolchain probe, build callable, build-output inspector,
+      optional `frontend_smoke` callable).
     - `REACT_FRONTEND` and `FLUTTER_FRONTEND` instances ready to plug
-      into the generic driver.
+      into the generic driver. Both ship a `frontend_smoke` that
+      invokes the frontend's own test runner against the live
+      backend (see step 9 below).
     - `run_frontend_backend_integration(frontend, spec, ...)` —
       generic 9-step driver: generate wrapper → set BACKEND_URL →
       build frontend → inspect bundle → run backend setup → start
-      server → exercise items API → stop server → clean up. The HTTP
-      exercise hits the BACKEND, so the same `BackendSpec` works for
-      every frontend.
+      server → exercise items API via Python → run the FRONTEND
+      smoke (vitest / flutter test against the real client code) →
+      stop server → clean up. The HTTP pre-flight catches backend
+      regressions fast; the frontend smoke catches client-side
+      regressions in `src/api/items.ts` / `lib/api/items_client.dart`
+      that a Python-only smoke would miss.
+    - `_react_smoke(frontend_dir, backend_url)` — runs `npx vitest
+      run src/cross-stack.smoke.test.ts` with `RUN_CROSS_STACK_SMOKE=1`
+      and `BACKEND_URL=...`. The smoke file imports the real
+      `loginWithPassword`, `listItems`, `createItem`, `getItem`,
+      `completeItem`, and `AuthError` and runs the 9-step flow.
+    - `_flutter_smoke(frontend_dir, backend_url)` — runs `flutter
+      test test/cross_stack_smoke_test.dart` with the same env vars.
+      The smoke file imports the real `ItemsClient`, `Item.fromJson`,
+      `NewItem`, and `AuthError` and runs the 9-step flow.
+      Bypasses `flutter_secure_storage` by setting
+      `TokenStore.instance.value` directly (platform channels are
+      unavailable under `flutter test`).
     - `run_react_backend_integration(...)` — backwards-compat shim
       that forwards to the generic driver with `REACT_FRONTEND`.
-13. **`_bin/test-react-django-bolt-integration`,
-    `_bin/test-react-fastapi-integration`,
-    `_bin/test-flutter-django-bolt-integration`,
-    `_bin/test-flutter-fastapi-integration`** - Per-(frontend, backend)
+13. **`_bin/skel-test-react-django-bolt`,
+    `_bin/skel-test-react-fastapi`,
+    `_bin/skel-test-flutter-django-bolt`,
+    `_bin/skel-test-flutter-fastapi`** - Per-(frontend, backend)
     cross-stack integration tests. Each is a ~150-line driver that
     builds a `BackendSpec` and forwards to
     `run_frontend_backend_integration`. The React tests verify the
     Vite-baked bundle (`dist/assets/*.js`); the Flutter tests verify
     the bundled `.env` asset (`build/web/assets/.env`) and the
     compiled `main.dart.js`. All four hit the canonical 9-step
-    `register → login → CRUD → complete → reject` items API flow.
-    Backs `make test-react-django-bolt`, `make test-react-fastapi`,
+    `register → login → CRUD → complete → reject` items API flow
+    TWICE: once via Python pre-flight (cheap, fast feedback when the
+    backend is broken) and once via the frontend's own client code
+    (proves the frontend ↔ backend contract end-to-end). Backs
+    `make test-react-django-bolt`, `make test-react-fastapi`,
     `make test-flutter-django-bolt`, `make test-flutter-fastapi`,
     and `make test-cross-stack` (the umbrella that runs every
     cross-stack test back-to-back).
-15. **`_bin/install-dev-skel` / `update-dev-skel` / `sync-dev-skel` /
+14. **`_skels/ts-react-skel/src/cross-stack.smoke.test.ts` and
+    `_skels/flutter-skel/test/cross_stack_smoke_test.dart`** -
+    Frontend smoke tests shipped with each frontend skeleton. Both
+    are gated on the `RUN_CROSS_STACK_SMOKE=1` environment variable,
+    so a developer running `npm test` / `flutter test` against a
+    fresh wrapper sees them skip cleanly. The cross-stack runner
+    enables them by exporting the env var before invoking the
+    frontend's test runner. Both files own a distinct test user
+    (`react-smoke-user` / `flutter-smoke-user`) so they never
+    collide with the Python pre-flight's `react-integration-user`.
+16. **`_bin/skel-install` / `skel-update` / `skel-sync` /
     `skel-list`** - Other relocatable Python CLIs that share `dev_skel_lib.py`
-16. **`_skels/_common/common-wrapper.sh`** - Wrapper-directory scaffolder used
+17. **`_skels/_common/common-wrapper.sh`** - Wrapper-directory scaffolder used
     by all skeletons
-17. **`_skels/_common/AGENTS.md`** - Templated agents file rendered into
+18. **`_skels/_common/AGENTS.md`** - Templated agents file rendered into
     every generated project
-18. **`_skels/_common/manifests/<skel>.py`** - Per-skeleton AI generation
+19. **`_skels/_common/manifests/<skel>.py`** - Per-skeleton AI generation
     manifests consumed by `skel-gen-ai`. Each manifest exports a top-level
     `MANIFEST` dict listing the files to (re)generate, the template files
     they should reference, and the prompt for each.
-19. **`skel-deps`** - Main dependency installer
-20. **`_skels/*/deps`** - Per-skeleton dependency installers
+20. **`skel-deps`** - Main dependency installer
+21. **`_skels/*/deps`** - Per-skeleton dependency installers
 
 ## Common Tasks
 
@@ -949,12 +980,12 @@ The Ollama side keeps its existing env vars (`OLLAMA_MODEL`,
   bounded loop that runs the test command, asks the RAG agent to
   repair each failing integration file via `RagAgent.fix_target` (the
   agent enriches the prompt with retrieved sibling chunks scoped to
-  the failing file), then re-runs. Bounded by `manifest.fix_iterations`
-  (default `2`).
+  the failing file), then re-runs. Bounded by `manifest.fix_timeout_m`
+  minutes (default `60`; override with `FIX_TIMEOUT_M` env var).
 
-### `_bin/test-ai-generators` (AI end-to-end runner)
+### `_bin/skel-test-ai-generators` (AI end-to-end runner)
 
-`_bin/test-ai-generators` is the AI counterpart of `make test-generators`.
+`_bin/skel-test-ai-generators` is the AI counterpart of `make test-generators`.
 For every manifest under `_skels/_common/manifests/`, it:
 
 1. Wipes any previous `_test_projects/test-ai-<skel>/` directory.
@@ -1004,7 +1035,7 @@ model, or as part of a manual maintenance pass.
 To add a new AI-supported skeleton, drop a manifest under
 `_skels/_common/manifests/` (the runner will auto-discover it) and, if
 the validation step needs more than the baseline syntax check, add an
-entry to `VALIDATORS` in `_bin/test-ai-generators`.
+entry to `VALIDATORS` in `_bin/skel-test-ai-generators`.
 
 ### `_skels/_common/manifests/` (AI generation manifests)
 
@@ -1051,7 +1082,7 @@ INTEGRATION_MANIFEST = {
     "system_prompt": "...",       # rendered with {wrapper_snapshot} etc.
     "targets": [...],             # additive — never overwrite first-pass files
     "test_command": "./test app/tests/test_integration.py -q",  # default: "./test"
-    "fix_iterations": 2,          # default: 2
+    "fix_timeout_m": 60,          # default: 60 (minutes)
     "notes": "...",
 }
 ```
@@ -1068,7 +1099,7 @@ are written, `skel-gen-ai` runs a bounded test-and-fix loop:
 2. If exit ≠ 0, ask Ollama to repair each integration file (one
    round-trip per file) using a "fix" system prompt that includes
    the current file contents + truncated test output.
-3. Re-run, capped at `fix_iterations`.
+3. Re-run until pass or `fix_timeout_m` minutes elapse (default 60).
 
 CLI knobs: `--no-integrate` skips the integration phase entirely;
 `--no-test-fix` runs the integration phase but skips the loop. Both
@@ -1172,7 +1203,7 @@ Flask generator test passed
 | Shared CLI library | `_bin/dev_skel_lib.py` |
 | AI generator library (Ollama) | `_bin/skel_ai_lib.py` |
 | AI generator CLI | `_bin/skel-gen-ai` |
-| AI end-to-end test runner | `_bin/test-ai-generators` |
+| AI end-to-end test runner | `_bin/skel-test-ai-generators` |
 | Per-skeleton AI manifests | `_skels/_common/manifests/<skel>.py` |
 | Common skeleton assets | `_skels/_common/` |
 | Common AGENTS template | `_skels/_common/AGENTS.md` |

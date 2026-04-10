@@ -94,11 +94,15 @@ class ItemsController extends ChangeNotifier {
       refresh();
     } else {
       // Logout — drop the cache so the next login does not flash
-      // stale data while the new fetch lands.
+      // stale data while the new fetch lands. We deliberately do NOT
+      // reset `_unauthorized` here because the token may have been
+      // cleared by the 401 handler inside refresh(), which needs the
+      // flag to stay true so the UI can show the LoginScreen. The
+      // flag is reset at the top of every subsequent refresh() call,
+      // so a real re-login clears it automatically.
       _items = const <Item>[];
       _loading = false;
       _error = null;
-      _unauthorized = false;
       notifyListeners();
     }
   }

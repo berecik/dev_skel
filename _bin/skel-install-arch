@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# skel-install-arch — install all dev_skel dependencies on Arch Linux.
+#
+# Sections:
+#   1. Core tools         (make, git, rsync, python3)
+#   2. Build dependencies (base-devel, cmake, openblas — native extensions)
+#   3. Node.js            (js-skel, ts-react-skel)
+#   4. Java + Maven       (java-spring-skel)
+#   5. Rust               (rust-actix-skel, rust-axum-skel)
+#   6. Flutter            (flutter-skel)
+#   7. Ollama             (AI-augmented generation)
+#   8. RAG agent venv     (langchain, faiss, tree-sitter — via skel-install-rag)
+#
+# Usage:
+#   _bin/skel-install-arch              # install everything
+#   _bin/skel-install-arch --core-only  # just sections 1-2
+
+GREEN='\033[0;32m'  YELLOW='\033[1;33m'
+RED='\033[0;31m'    NC='\033[0m'
+
+info()  { printf "${GREEN}%s${NC}\n" "$*"; }
+warn()  { printf "${YELLOW}%s${NC}\n" "$*"; }
+err()   { printf "${RED}%s${NC}\n" "$*" >&2; }
+
+CORE_ONLY=false
+for arg in "$@"; do [[ "$arg" == "--core-only" ]] && CORE_ONLY=true; done
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ── preflight ────────────────────────────────────────────────────────
+
+if ! command -v pacman >/dev/null 2>&1; then
+    err "This script is for Arch Linux. Use the matching skel-install-* for your platform."
+    exit 1
+fi
+
+# =====================================================================
+# 1. Core tools
+# =====================================================================
+info "=== [1/8] Core tools ==="
+sudo pacman -Syu --noconfirm --needed \
+    make git rsync curl python
+
+# =====================================================================
+# 2. Build dependencies
+# =====================================================================
+info "=== [2/8] Build dependencies ==="
+sudo pacman -S --noconfirm --needed \
+    base-devel cmake pkgconf openblas openssl
+
+if [[ "$CORE_ONLY" == true ]]; then
+    info ""
+    info "=== --core-only: skipping skeleton toolchains, Ollama, and RAG ==="
+    exit 0
+fi
+
+# =====================================================================
+# 3. Node.js  (js-skel, ts-react-skel)
+# =====================================================================
+info "=== [3/8] Node.js ==="
+sudo pacman -S --noconfirm --needed nodejs npm
+
+# =====================================================================
+# 4. Java + Maven  (java-spring-skel)
+# =====================================================================
+info "=== [4/8] Java + Maven ==="
+sudo pacman -S --noconfirm --needed jdk21-openjdk maven
+
+# =====================================================================
+# 5. Rust  (rust-actix-skel, rust-axum-skel)
+# =====================================================================
+info "=== [5/8] Rust ==="
+if command -v rustup >/dev/null 2>&1; then
+    info "  rustup found — updating toolchain"
+    rustup update stable
+else
+    sudo pacman -S --noconfirm --needed rustup
+    rustup default stable
+fi
+
+# =====================================================================
+# 6. Flutter  (flutter-skel)
+# =====================================================================
+info "=== [6/8] Flutter ==="
+if command -v flutter >/dev/null 2>&1; then
+    info "  Already installed."
+elif command -v yay >/dev/null 2>&1; then
+    info "  Installing flutter from AUR via yay …"
+    yay -S --noconfirm flutter
+elif command -v paru >/dev/null 2>&1; then
+    info "  Installing flutter from AUR via paru …"
+    paru -S --noconfirm flutter
+else
+    warn "  No AUR helper found — install flutter manually:"
+    warn "    yay -S flutter   OR   https://flutter.dev/docs/get-started/install"
+fi
+
+# =====================================================================
+# 7. Ollama  (AI-augmented generation)
+# =====================================================================
+info "=== [7/8] Ollama ==="
+if command -v ollama >/dev/null 2>&1; then
+    info "  Already installed."
+else
+    # ollama is in the community repo on Arch.
+    sudo pacman -S --noconfirm --needed ollama 2>/dev/null \
+        || {
+            info "  Falling back to official installer …"
+            curl -fsSL https://ollama.com/install.sh | sh
+        }
+fi
+
+# =====================================================================
+# 8. RAG agent  (venv + Python packages)
+# =====================================================================
+info "=== [8/8] RAG agent (venv) ==="
+"$SCRIPT_DIR/skel-install-rag"
+
+# ── summary ──────────────────────────────────────────────────────────
+info ""
+info "=== All done ==="
+info "Core:    make, git, rsync, python3          ✓"
+info "Build:   base-devel, cmake, openblas        ✓"
+info "Node:    $(node --version 2>/dev/null || echo 'n/a')"
+info "Java:    $(java --version 2>&1 | head -1 || echo 'n/a')"
+info "Rust:    $(rustc --version 2>/dev/null || echo 'n/a')"
+info "Flutter: $(flutter --version 2>/dev/null | head -1 || echo 'n/a')"
+info "Ollama:  $(ollama --version 2>/dev/null || echo 'n/a')"
+info "RAG:     venv at ${SKEL_VENV:-$HOME/.local/share/dev-skel/venv}"

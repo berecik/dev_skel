@@ -40,18 +40,18 @@ syntax errors. The Django app starts cleanly via `manage.py check`.
 
 ---
 
-### 1.2 Auto-retry on `py_compile` failure inside `_bin/test-ai-generators`
+### 1.2 Auto-retry on `py_compile` failure inside `_bin/skel-test-ai-generators`
 
 **Why.** Ollama output is non-deterministic. A single dropped paren shouldn't
 fail the whole pipeline — retrying the same target once is cheap and
 hides ~80% of one-off model hiccups.
 
-**Files.** `_bin/test-ai-generators` (the `_validate_django` /
+**Files.** `_bin/skel-test-ai-generators` (the `_validate_django` /
 `_validate_django_bolt` / `_validate_fastapi` / `_validate_flask`
 helpers and `generate_targets` callsite).
 
 **Scenario.**
-1. Add a `--max-retries N` flag to `_bin/test-ai-generators` (default `1`).
+1. Add a `--max-retries N` flag to `_bin/skel-test-ai-generators` (default `1`).
 2. After `generate_targets` returns, run the syntax check (`py_compile`)
    on every written file.
 3. For each file that fails: re-run `client.chat()` for that single
@@ -99,17 +99,17 @@ template; it currently passes with a 192 KB bundle containing
 
 ## Section 2 · Recently deferred items (called out as "out of scope")
 
-### 2.1 Postgres support in `_bin/test-shared-db`
+### 2.1 Postgres support in `_bin/skel-test-shared-db`
 
 **Why.** The shared-DB integration test currently only handles
 `sqlite:///` URLs. To exercise the Docker Compose Postgres path that
 ships in every wrapper, the runner needs a `postgresql://` mode.
 
-**Files.** `_bin/test-shared-db` (`seed_items_table`, `verify_python_backend`,
+**Files.** `_bin/skel-test-shared-db` (`seed_items_table`, `verify_python_backend`,
 `verify_runtime_smoke`, `VERIFY_SCRIPT`, `WRITE_SCRIPT`).
 
 **Scenario.**
-1. Add a `--db <sqlite|postgres|auto>` flag to `_bin/test-shared-db`
+1. Add a `--db <sqlite|postgres|auto>` flag to `_bin/skel-test-shared-db`
    (default `auto`: pick `postgres` when `DATABASE_URL` in the wrapper
    `.env` starts with `postgres`).
 2. When `postgres` is selected:
@@ -144,7 +144,7 @@ visible. That proves the file paths are aligned but does NOT exercise
 each runtime's actual DB driver. A more authentic test compiles a tiny
 verify binary per stack.
 
-**Files.** `_bin/test-shared-db` (`verify_runtime_smoke`),
+**Files.** `_bin/skel-test-shared-db` (`verify_runtime_smoke`),
 `_skels/java-spring-skel/`, `_skels/rust-actix-skel/`,
 `_skels/rust-axum-skel/`, `_skels/js-skel/`.
 
@@ -166,7 +166,7 @@ verify binary per stack.
    dependency). Ship `src/verify-shared-db.js` and a wrapper
    `verify-shared-db` script that calls `node src/verify-shared-db.js
    "${SEED_NAME}"`.
-4. Update `_bin/test-shared-db` to call each backend's
+4. Update `_bin/skel-test-shared-db` to call each backend's
    `verify-shared-db` script via `subprocess.run` and report the result.
 5. Add a `--smoke-only` flag that keeps the current behaviour (skip the
    per-runtime exercise) for fast CI runs.
@@ -268,7 +268,7 @@ in the wrapper `.env`), tells Ollama to keep the
 referencing `config.jwt.secret`.
 
 **Remaining nice-to-have.** A `_validate_react` helper inside
-`_bin/test-ai-generators` that runs `npm run build` against the
+`_bin/skel-test-ai-generators` that runs `npm run build` against the
 generated frontend and asserts the bundle contains the new
 component names via `strings dist/assets/*.js | grep
 <item_class>`. Today the AI dry-run validates the manifest renders
@@ -340,7 +340,7 @@ make test-ai-generators
 `rust-axum-skel`, `js-skel`, and `ts-react-skel` shipped — **all 9
 skeletons are now AI-supported**. Validators (`mvn package`,
 `cargo check`, `node --check`, `tsc --noEmit`) are wired into
-`_bin/test-ai-generators` and gracefully skip toolchains that aren't
+`_bin/skel-test-ai-generators` and gracefully skip toolchains that aren't
 installed. Live runs reveal that the new manifests need a
 concrete-example pass to harden the prompts (Ollama produces
 syntactically valid code that doesn't always match the framework
@@ -807,14 +807,14 @@ into `./project`.
 
 ## Section 8 · Skel-side polish
 
-### 8.1 Per-skel `verify-shared-db` scripts (de-duplicates `_bin/test-shared-db`)
+### 8.1 Per-skel `verify-shared-db` scripts (de-duplicates `_bin/skel-test-shared-db`)
 
-**Why.** Today `_bin/test-shared-db` ships an inline `VERIFY_SCRIPT`
+**Why.** Today `_bin/skel-test-shared-db` ships an inline `VERIFY_SCRIPT`
 Python snippet. Moving the verifier into each skel makes it
 discoverable for users who want to manually exercise the env contract.
 
 **Files.** New `verify-shared-db` script in each backend skel root.
-Update `_bin/test-shared-db` to call them.
+Update `_bin/skel-test-shared-db` to call them.
 
 **Scenario.**
 1. Each backend skel ships a `verify-shared-db` bash script that:
@@ -822,7 +822,7 @@ Update `_bin/test-shared-db` to call them.
    - Activates the local virtualenv (Python) / sets up `cargo run`
      args (Rust) / etc.
    - Runs the stack-native verifier with the seed name as $1.
-2. `_bin/test-shared-db` calls `<service>/verify-shared-db
+2. `_bin/skel-test-shared-db` calls `<service>/verify-shared-db
    "<seed-name>"` instead of inlining `VERIFY_SCRIPT`.
 3. Each skel's `verify-shared-db` is also a great manual smoke test —
    add it to the per-skel CLAUDE.md and README.
@@ -856,13 +856,13 @@ implicit. Make it a documented convention.
    "When generating models for the `{item_class}` entity, ALWAYS use
    table name `{items_plural}` and include the canonical columns from
    `_docs/SHARED-DATABASE-CONVENTIONS.md`. This is what
-   `_bin/test-shared-db` and downstream consumers rely on."
+   `_bin/skel-test-shared-db` and downstream consumers rely on."
 3. Update the Django prompts to use
    `db_table='{items_plural}'` in `class Meta`.
 4. Update the Spring manifest (when 3.2 lands) to use
    `@Table(name = "{items_plural}")`.
 
-**Acceptance.** `_bin/test-shared-db` works against an AI-generated
+**Acceptance.** `_bin/skel-test-shared-db` works against an AI-generated
 service from any skeleton with no manual schema patching.
 
 ---
@@ -913,7 +913,7 @@ the wrapper without touching React code.
    (per-user JSON key/value, table name `react_state`, unique on
    `(user, key)`). Cross-link to
    `_docs/SHARED-DATABASE-CONVENTIONS.md` so the schema is genuinely
-   the same SQL on disk — `_bin/test-shared-db` will then verify
+   the same SQL on disk — `_bin/skel-test-shared-db` will then verify
    the new backends can read django-bolt's seed rows.
 2. **Endpoint parity.** Mount the routes at exactly
    `/api/items` (CRUD + a `complete` action) and `/api/state` /
@@ -925,7 +925,7 @@ the wrapper without touching React code.
    the django-bolt manifest does for `Item` / `ReactState`. Also
    update the per-target prompts so the user-chosen `{item_class}`
    never collides with the canonical `Item` model.
-4. **Cross-stack proof.** Extend `_bin/test-shared-db` with a new
+4. **Cross-stack proof.** Extend `_bin/skel-test-shared-db` with a new
    `cross-backend round-trip` step: spin up the React frontend
    pointed at django-bolt, write an item, then re-point
    `BACKEND_URL` at fastapi (or flask, or django) and confirm the

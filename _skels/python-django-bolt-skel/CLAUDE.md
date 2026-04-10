@@ -128,6 +128,6 @@ Operational notes:
       `react_state_*` handlers are still present in `app/models.py`,
       `app/schemas.py`, and `app/api.py` (regenerate with the AI
       manifest if a refactor accidentally drops them).
-- [ ] `_bin/test-shared-db --skel python-django-bolt-skel` is green.
+- [ ] `_bin/skel-test-shared-db --skel python-django-bolt-skel` is green.
 - [ ] AGENTS.md / CLAUDE.md / JUNIE-RULES.md still agree with the
       implementation.

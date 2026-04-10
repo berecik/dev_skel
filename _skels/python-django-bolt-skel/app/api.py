@@ -298,8 +298,8 @@ class ItemViewSet(ModelViewSet):
 # Per-user JSON key/value store. The React skeleton's
 # `src/state/state-api.ts` calls these to persist UI state (filters,
 # sort order, preferences) across sessions. The shape is intentionally
-# opaque — the backend never parses `value`, it just round-trips the
-# string.
+# opaque — the backend stores `value` as a JSONField so dicts, lists,
+# and scalars round-trip without manual serialisation.
 
 
 @api.get(
@@ -311,7 +311,7 @@ async def react_state_load(request: Request) -> dict:
     """Return every state slice for the current user as a single dict."""
 
     user = await get_current_user(request)
-    payload: dict[str, str] = {}
+    payload: dict[str, object] = {}
     async for entry in ReactState.objects.filter(user=user):
         payload[entry.key] = entry.value
     return payload

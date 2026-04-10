@@ -72,7 +72,7 @@ else:
 if not target.is_file():
     sys.exit(
         f"skel-gen: target dispatcher not found at {target}.\n"
-        "Re-run `_bin/install-dev-skel` to refresh the local copy."
+        "Re-run `_bin/skel-install` to refresh the local copy."
     )
 
 # Replace the current process with the chosen target. argv[0] becomes

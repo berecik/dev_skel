@@ -99,8 +99,8 @@ Your responsibilities:
 ## 3. Directory Responsibilities (quick map)
 
 - `Makefile` (root): entrypoint for generator/test targets.
-- `_bin/`: Python CLI tools (`install-dev-skel`, `update-dev-skel`,
-  `sync-dev-skel`, `skel-list`, `skel-gen`, `skel-gen-ai`, `skel-rag`)
+- `_bin/`: Python CLI tools (`skel-install`, `skel-update`,
+  `skel-sync`, `skel-list`, `skel-gen`, `skel-gen-ai`, `skel-rag`)
   plus `dev_skel_lib.py`, `skel_ai_lib.py` (legacy AI shim), the
   `skel_rag/` package (RAG agent: chunker, corpus, embedder,
   vectorstore, retriever, llm, prompts, agent, cli), and the rsync

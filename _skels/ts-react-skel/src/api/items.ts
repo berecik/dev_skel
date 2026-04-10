@@ -20,6 +20,10 @@
 
 import { config } from '../config';
 import { getToken } from '../auth/token-store';
+import { AuthError } from './auth';
+
+export { AuthError } from './auth';
+export { loginWithPassword } from './auth';
 
 export interface Item {
   id: number;
@@ -45,17 +49,6 @@ export interface RequestOptions {
   token?: string | null;
   /** Abort signal forwarded to `fetch`. */
   signal?: AbortSignal;
-}
-
-/**
- * 401 / 403 responses get their own error class so the UI can render
- * a login form instead of an error banner.
- */
-export class AuthError extends Error {
-  constructor(message = 'Authentication required') {
-    super(message);
-    this.name = 'AuthError';
-  }
 }
 
 const ITEMS_BASE = `${config.backendUrl}/api/items`;
@@ -129,36 +122,3 @@ export async function completeItem(
   return unwrap<Item>(response);
 }
 
-/**
- * Login helper — POSTs username/password to the wrapper-shared
- * `/api/auth/login` endpoint and returns the access token.
- *
- * The endpoint shape matches the canonical dev_skel backend response
- * (`{ access, refresh, user_id, username }`); we ignore the refresh
- * token for now to keep the example minimal.
- */
-export async function loginWithPassword(
-  username: string,
-  password: string,
-  options: RequestOptions = {}
-): Promise<string> {
-  const response = await fetch(`${config.backendUrl}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
-    signal: options.signal,
-  });
-  if (response.status === 401) {
-    throw new AuthError('Invalid credentials');
-  }
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`HTTP ${response.status}: ${text || response.statusText}`);
-  }
-  const body = (await response.json()) as { access?: string; token?: string };
-  const token = body.access ?? body.token;
-  if (!token) {
-    throw new Error('Login response did not include an access token');
-  }
-  return token;
-}

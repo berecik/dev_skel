@@ -1,9 +1,9 @@
 """Shared helpers for the <frontend> + <backend> cross-stack integration tests.
 
-`_bin/test-react-django-bolt-integration`,
-`_bin/test-react-fastapi-integration`,
-`_bin/test-flutter-django-bolt-integration`, and
-`_bin/test-flutter-fastapi-integration` all do the same thing:
+`_bin/skel-test-react-django-bolt`,
+`_bin/skel-test-react-fastapi`,
+`_bin/skel-test-flutter-django-bolt`, and
+`_bin/skel-test-flutter-fastapi` all do the same thing:
 
 1. Generate a wrapper containing the backend skeleton + a frontend
    skeleton (React or Flutter).
@@ -353,6 +353,22 @@ class Frontend:
     # `(label, value)` pairs that the runner asserts are present in the
     # bundle / asset. Raises AssertionError on missing strings.
     inspect_bundle: Callable[[Path, str, Optional[Dict[str, str]]], None]
+    # Optional: invoked AFTER the backend is up + the Python pre-flight
+    # has confirmed the items API works. Runs the frontend's OWN test
+    # runner (vitest for React, `flutter test` for Flutter) against a
+    # smoke file that imports the real client code and exercises the
+    # full 9-step flow over real HTTP. Receives `(frontend_dir,
+    # backend_url)` and raises on any failure. ``None`` means "skip
+    # the frontend smoke step" (used by tests that only care about
+    # the bundle inspection).
+    frontend_smoke: Optional[Callable[[Path, str], None]] = None
+    # Optional: invoked AFTER the frontend_smoke succeeds. Runs
+    # Playwright (or an equivalent browser-level E2E runner) against
+    # the production-built frontend served by `vite preview` (React)
+    # or an equivalent. Receives `(frontend_dir, backend_url, port)`
+    # so the runner can compute a unique preview port. Raises on
+    # failure. ``None`` means "no E2E step".
+    e2e: Optional[Callable[[Path, str, int], None]] = None
 
 
 def _react_build(wrapper: Path, frontend_dir: Path, backend_url: str) -> None:
@@ -405,19 +421,15 @@ def _react_inspect_bundle(
 def _flutter_build(wrapper: Path, frontend_dir: Path, backend_url: str) -> None:
     """`flutter pub get` + `flutter build web` against ``frontend_dir``.
 
-    Before invoking the build we re-copy the wrapper-level ``.env`` into
-    the project directory so the bundled asset reflects the freshly
-    rewritten ``BACKEND_URL``. The skeleton's gen script copies the env
-    on initial generation, but at that point the wrapper still has the
-    default ``BACKEND_URL=http://localhost:8000`` — we need to refresh
-    it AFTER the test driver rewrites the wrapper env.
+    No env patching here — the test driver exports
+    ``SKEL_BACKEND_URL`` BEFORE invoking ``gen``, ``common-wrapper.sh``
+    propagates it into ``<wrapper>/.env`` at scaffold time, and the
+    Flutter ``gen`` script's "copy ``<wrapper>/.env`` into
+    ``<frontend>/.env``" step picks up the correct value. By the time
+    we get here, the bundled ``.env`` asset is already wired with the
+    test backend URL — exactly what an end user would see by setting
+    ``SKEL_BACKEND_URL`` themselves before generating a wrapper.
     """
-
-    wrapper_env = wrapper / ".env"
-    project_env = frontend_dir / ".env"
-    if wrapper_env.is_file():
-        shutil.copyfile(wrapper_env, project_env)
-        print(f"  ✓ refreshed {project_env.name} from <wrapper>/.env")
 
     started = time.monotonic()
     pub_get = subprocess.run(
@@ -523,6 +535,227 @@ def have_flutter() -> bool:
     return bool(shutil.which("flutter"))
 
 
+# --------------------------------------------------------------------------- #
+#  Frontend smoke runners — exercise the REAL client code against the live
+#  backend, not Python's stdlib http. The Python `exercise_items_api` runs
+#  first as a pre-flight (cheap, fast feedback when the backend is broken);
+#  these run AFTER it succeeds and prove the *frontend's* code path works.
+# --------------------------------------------------------------------------- #
+
+
+def _react_smoke(frontend_dir: Path, backend_url: str) -> None:
+    """Run the React vitest smoke test that imports the real items.ts.
+
+    Invokes ``npx vitest run src/cross-stack.smoke.test.ts`` with
+    ``RUN_CROSS_STACK_SMOKE=1`` and ``BACKEND_URL=...`` so the test
+    file's gate fires. The file uses the ``.test.ts`` infix so vitest's
+    default glob picks it up; the ``describe.skipIf(!RUN_SMOKE)`` gate
+    inside the file makes ``npm test`` no-op when no backend is running.
+    """
+
+    smoke_file = frontend_dir / "src" / "cross-stack.smoke.test.ts"
+    if not smoke_file.is_file():
+        raise RuntimeError(
+            f"React smoke file missing at {smoke_file} — the merge "
+            "script needs an OVERWRITE_PATTERN entry for it."
+        )
+
+    env = os.environ.copy()
+    env["RUN_CROSS_STACK_SMOKE"] = "1"
+    env["BACKEND_URL"] = backend_url
+    # Avoid triggering CI heuristics inside vitest that might dim
+    # output or rotate the reporter — we want plain stdout for the
+    # parent runner to capture.
+    env["CI"] = "1"
+
+    started = time.monotonic()
+    result = subprocess.run(
+        [
+            "npx",
+            "--no-install",
+            "vitest",
+            "run",
+            "src/cross-stack.smoke.test.ts",
+        ],
+        cwd=frontend_dir,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    if result.returncode != 0:
+        tail = (result.stdout + result.stderr).strip()[-3000:]
+        raise AssertionError(
+            f"React smoke (vitest) failed (exit {result.returncode}):\n{tail}"
+        )
+    print(
+        f"  ✓ React vitest smoke passed in {time.monotonic() - started:.1f}s"
+    )
+    # Surface the test summary line so the parent CI log shows
+    # what actually ran (useful for debugging "skipped" runs that
+    # silently produce 0 assertions).
+    last_lines = [
+        line
+        for line in result.stdout.splitlines()
+        if line.strip() and not line.startswith("stderr")
+    ][-6:]
+    for line in last_lines:
+        print(f"     {line}")
+
+
+def _flutter_smoke(frontend_dir: Path, backend_url: str) -> None:
+    """Run the Flutter smoke test that imports the real ItemsClient.
+
+    Invokes ``flutter test test/cross_stack_smoke_test.dart`` with
+    ``RUN_CROSS_STACK_SMOKE=1`` and ``BACKEND_URL=...`` so the test
+    file's gate fires. We point ``flutter test`` at the file
+    explicitly so widget_test.dart (which pumps the LoginScreen with
+    a mock client) does NOT also run — the smoke wants the live
+    backend, not the mock.
+    """
+
+    smoke_file = frontend_dir / "test" / "cross_stack_smoke_test.dart"
+    if not smoke_file.is_file():
+        raise RuntimeError(
+            f"Flutter smoke file missing at {smoke_file} — the merge "
+            "script needs an OVERWRITE_PATTERN entry for it."
+        )
+
+    env = os.environ.copy()
+    env["RUN_CROSS_STACK_SMOKE"] = "1"
+    env["BACKEND_URL"] = backend_url
+
+    started = time.monotonic()
+    result = subprocess.run(
+        [
+            "flutter",
+            "test",
+            "test/cross_stack_smoke_test.dart",
+            "--reporter",
+            "compact",
+        ],
+        cwd=frontend_dir,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    if result.returncode != 0:
+        tail = (result.stdout + result.stderr).strip()[-3000:]
+        raise AssertionError(
+            f"Flutter smoke (flutter test) failed (exit {result.returncode}):\n{tail}"
+        )
+    print(
+        f"  ✓ Flutter test smoke passed in {time.monotonic() - started:.1f}s"
+    )
+    # Surface the trailing test summary so the parent CI log shows
+    # the actual count (the compact reporter ends with `+N: All tests
+    # passed!`).
+    summary_lines = [
+        line for line in result.stdout.splitlines() if line.strip()
+    ][-4:]
+    for line in summary_lines:
+        print(f"     {line}")
+
+
+def _react_e2e(frontend_dir: Path, backend_url: str, port: int) -> None:
+    """Launch ``vite preview`` + Playwright against the production build.
+
+    1. Starts ``npx vite preview`` in the background on ``preview_port``
+       (= ``port + 1000`` so the preview server doesn't collide with
+       the backend or the dev server).
+    2. Waits for the preview server to become reachable.
+    3. Runs ``npx playwright test`` with ``PLAYWRIGHT_BASE_URL`` pointing
+       at the preview server and ``BACKEND_URL`` pointing at the live
+       backend (needed by the register helper inside the spec).
+    4. Kills the preview server.
+
+    Requires ``@playwright/test`` and Chromium to be installed in the
+    generated project (the ``gen`` script handles both).
+    """
+
+    preview_port = port + 1000
+    preview_url = f"http://127.0.0.1:{preview_port}"
+
+    # Check Playwright is installed.
+    pw_config = frontend_dir / "playwright.config.ts"
+    if not pw_config.is_file():
+        raise RuntimeError(
+            f"playwright.config.ts missing at {pw_config} — the merge "
+            "script needs an OVERWRITE_PATTERN entry for it."
+        )
+
+    # Start vite preview in the background.
+    preview_env = os.environ.copy()
+    preview_log_path = frontend_dir / "e2e-preview-server.log"
+    preview_log = open(preview_log_path, "wb")
+    preview_proc = subprocess.Popen(
+        ["npx", "vite", "preview", "--port", str(preview_port), "--host", "127.0.0.1"],
+        cwd=frontend_dir,
+        stdout=preview_log,
+        stderr=subprocess.STDOUT,
+        env=preview_env,
+    )
+
+    try:
+        # Wait for the preview server to become reachable.
+        if not wait_for_server(preview_url, timeout_s=30):
+            raise AssertionError(
+                f"vite preview did not start on {preview_url} within 30s. "
+                f"Log: {preview_log_path}"
+            )
+        print(f"  ✓ vite preview server is up on {preview_url}")
+
+        # Run Playwright.
+        pw_env = os.environ.copy()
+        pw_env["PLAYWRIGHT_BASE_URL"] = preview_url
+        pw_env["BACKEND_URL"] = backend_url
+        pw_env["CI"] = "1"
+
+        started = time.monotonic()
+        result = subprocess.run(
+            ["npx", "playwright", "test", "--reporter=list"],
+            cwd=frontend_dir,
+            env=pw_env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            tail = (result.stdout + result.stderr).strip()[-3000:]
+            raise AssertionError(
+                f"Playwright E2E failed (exit {result.returncode}):\n{tail}"
+            )
+        print(
+            f"  ✓ Playwright E2E passed in {time.monotonic() - started:.1f}s"
+        )
+        summary = [
+            line for line in result.stdout.splitlines() if line.strip()
+        ][-4:]
+        for line in summary:
+            print(f"     {line}")
+
+    finally:
+        # Kill the preview server.
+        if preview_proc.poll() is None:
+            preview_proc.terminate()
+            try:
+                preview_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                preview_proc.kill()
+                try:
+                    preview_proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    pass
+        try:
+            preview_log.close()
+        except OSError:
+            pass
+
+
 REACT_FRONTEND = Frontend(
     name="React",
     skel=FRONTEND_SKEL,
@@ -531,6 +764,8 @@ REACT_FRONTEND = Frontend(
     toolchain_probe=have_node,
     build=_react_build,
     inspect_bundle=_react_inspect_bundle,
+    frontend_smoke=_react_smoke,
+    e2e=_react_e2e,
 )
 
 FLUTTER_FRONTEND = Frontend(
@@ -541,6 +776,7 @@ FLUTTER_FRONTEND = Frontend(
     toolchain_probe=have_flutter,
     build=_flutter_build,
     inspect_bundle=_flutter_inspect_bundle,
+    frontend_smoke=_flutter_smoke,
 )
 
 
@@ -732,18 +968,32 @@ def run_frontend_backend_integration(
 
     Returns the exit code (0 = pass, 1 = fail, 2 = setup skip).
 
-    The orchestration is the same for every (frontend, backend) pair:
+    The orchestration mirrors the **out-of-the-box** workflow a real
+    user follows: nothing is patched after gen. The driver only
+    exports a ``SKEL_BACKEND_URL`` env var BEFORE invoking the gen
+    scripts; ``_skels/_common/common-wrapper.sh`` writes that value
+    into ``<wrapper>/.env`` while it scaffolds the wrapper, and every
+    downstream artifact (React vite bundle, Flutter ``.env`` asset,
+    Python backend env loader) reads the right URL from the start.
+
+    Steps:
 
     1. Toolchain probe (skipped via ``EXIT_SETUP`` when missing).
-    2. Generate ``backend`` and ``frontend.skel`` into the wrapper.
-    3. Rewrite ``BACKEND_URL`` in the wrapper ``.env``.
-    4. Call ``frontend.build(...)`` to (re)produce the bundle.
+    2. Pre-export ``SKEL_BACKEND_URL`` so the wrapper scaffolder bakes
+       the test port into ``<wrapper>/.env`` at gen time.
+    3. Generate ``backend`` and ``frontend.skel`` into the wrapper.
+       (Both call ``common-wrapper.sh``, which honours
+       ``SKEL_BACKEND_URL``.)
+    4. Call ``frontend.build(...)`` to produce the bundle. The build
+       reads the gen-time ``.env`` so the URL is correct on the first
+       build — no rebuilds needed.
     5. Call ``frontend.inspect_bundle(...)`` to assert the bundle
        contains the expected strings.
     6. Run ``spec.pre_server_setup`` (Django migrations, ...).
     7. Start the backend in the background and wait for it.
-    8. Exercise the canonical 9-step items API flow.
-    9. Stop the server and clean up the wrapper (unless ``keep``).
+    8. Exercise the canonical 9-step items API flow via Python.
+    9. Run the frontend smoke (real client code → live backend).
+    10. Stop the server and clean up the wrapper (unless ``keep``).
     """
 
     wrapper = repo_root / "_test_projects" / project_name
@@ -773,6 +1023,13 @@ def run_frontend_backend_integration(
     log_fp = None
     server_log: Optional[Path] = None
 
+    # Pre-export SKEL_BACKEND_URL so common-wrapper.sh propagates it
+    # into <wrapper>/.env at gen time. We restore the previous value
+    # in the finally block so concurrent test runs (or interactive
+    # debugging in the same shell) don't inherit a stale URL.
+    previous_skel_backend_url = os.environ.get("SKEL_BACKEND_URL")
+    os.environ["SKEL_BACKEND_URL"] = backend_url
+
     try:
         # 1. Clean wrapper
         if wrapper.exists():
@@ -780,9 +1037,13 @@ def run_frontend_backend_integration(
             shutil.rmtree(wrapper)
         wrapper.parent.mkdir(parents=True, exist_ok=True)
 
-        # 2. Generate backend + frontend
+        # 2. Generate backend + frontend. common-wrapper.sh inside each
+        #    gen invocation honours SKEL_BACKEND_URL and writes it into
+        #    <wrapper>/.env, so by the time the loop exits the wrapper
+        #    is already wired with the test port — zero post-gen
+        #    patching needed.
         print()
-        print("Generating services...")
+        print(f"Generating services (SKEL_BACKEND_URL={backend_url})...")
         backend_slug = generate_one_service(
             repo_root=repo_root,
             wrapper_dir=wrapper,
@@ -799,18 +1060,20 @@ def run_frontend_backend_integration(
         )
         print(f"  + {frontend_slug}/  ({frontend.skel})")
 
-        # 3. Update BACKEND_URL in wrapper .env
-        print()
-        print(f"Setting BACKEND_URL={backend_url} in <wrapper>/.env")
-        update_wrapper_env(wrapper / ".env", "BACKEND_URL", backend_url)
+        # 3. Sanity check that common-wrapper.sh actually wrote the
+        #    URL we asked for. If this fires, common-wrapper.sh has
+        #    regressed and out-of-the-box wiring is broken.
         env_text = (wrapper / ".env").read_text(encoding="utf-8")
         assert f"BACKEND_URL={backend_url}" in env_text, (
-            f"BACKEND_URL update did not stick in {wrapper / '.env'}"
+            f"common-wrapper.sh did not propagate SKEL_BACKEND_URL "
+            f"into {wrapper / '.env'} — look for the SKEL_BACKEND_URL "
+            f"hook in _skels/_common/common-wrapper.sh"
         )
 
-        # 4. Re-build the frontend with the updated BACKEND_URL
+        # 4. Build the frontend. The build reads the gen-time .env
+        #    which already has the right BACKEND_URL — no rebuilds.
         print()
-        print(f"Re-building the {frontend.name} frontend with the updated BACKEND_URL...")
+        print(f"Building the {frontend.name} frontend (gen-time .env wiring)...")
         frontend_dir = wrapper / frontend_slug
         frontend.build(wrapper, frontend_dir, backend_url)
 
@@ -863,8 +1126,36 @@ def run_frontend_backend_integration(
             return EXIT_FAIL
         print("  ✓ server is up")
 
-        # 8. Run the canonical 9-step HTTP exercise
+        # 8. Run the canonical 9-step HTTP exercise via Python (cheap
+        #    pre-flight that catches backend regressions immediately).
         exercise_items_api(backend_url)
+
+        # 9. Run the FRONTEND smoke — the same 9-step flow but
+        #    executed by the frontend's own client code (vitest +
+        #    src/api/items.ts for React, flutter test +
+        #    lib/api/items_client.dart for Flutter). This is the only
+        #    step that proves the *frontend* side of the contract is
+        #    correct end-to-end.
+        if frontend.frontend_smoke is not None:
+            print()
+            print(f"Running {frontend.name} frontend smoke (real client code)...")
+            frontend.frontend_smoke(frontend_dir, backend_url)
+        else:
+            print()
+            print(f"  · {frontend.name} has no frontend_smoke configured")
+
+        # 10. Run E2E browser tests (Playwright for React, none for
+        #     Flutter yet). These drive the real built app in a
+        #     headless browser, exercising form binding, DOM structure,
+        #     localStorage persistence, and the wrapper-shared /api/state
+        #     contract as a real user would experience it.
+        if frontend.e2e is not None:
+            print()
+            print(f"Running {frontend.name} E2E tests (browser → vite preview → live backend)...")
+            frontend.e2e(frontend_dir, backend_url, port)
+        else:
+            print()
+            print(f"  · {frontend.name} has no E2E step configured")
 
         print()
         print("=== ALL CHECKS PASSED ===")
@@ -928,6 +1219,14 @@ def run_frontend_backend_integration(
             print(f"Cleaning up {wrapper}...")
             shutil.rmtree(wrapper, ignore_errors=True)
 
+        # Restore SKEL_BACKEND_URL so a subsequent call (e.g. inside
+        # the same Python process from `make test-cross-stack`) does
+        # not inherit the previous test's port.
+        if previous_skel_backend_url is None:
+            os.environ.pop("SKEL_BACKEND_URL", None)
+        else:
+            os.environ["SKEL_BACKEND_URL"] = previous_skel_backend_url
+
     return final_exit
 
 
@@ -936,8 +1235,8 @@ def run_frontend_backend_integration(
 # --------------------------------------------------------------------------- #
 #
 # `run_react_backend_integration` is the historical entrypoint used by
-# `_bin/test-react-fastapi-integration` and (after the consolidation
-# refactor) `_bin/test-react-django-bolt-integration`. It is now a thin
+# `_bin/skel-test-react-fastapi` and (after the consolidation
+# refactor) `_bin/skel-test-react-django-bolt`. It is now a thin
 # shim around :func:`run_frontend_backend_integration` so existing
 # scripts keep working without import changes.
 

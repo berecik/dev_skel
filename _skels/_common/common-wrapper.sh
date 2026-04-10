@@ -134,6 +134,30 @@ if [[ ! -f "$MAIN_DIR/.env" ]]; then
   echo "  + .env (seeded from .env.example)"
 fi
 
+# When the caller (cross-stack integration runner, CI script, manual
+# `SKEL_BACKEND_URL=... make gen-...` invocation) exports a custom
+# `SKEL_BACKEND_URL`, propagate it into the wrapper-shared `.env` so
+# every frontend in the wrapper picks it up at gen time. This is the
+# "out of the box" wiring guarantee — without this hook, callers had
+# to either accept the default `http://localhost:8000` or hand-edit
+# `.env` AFTER generation (which broke pre-built artifacts).
+#
+# Idempotent: a re-run of common-wrapper.sh from the next service
+# generated into the same wrapper sees the existing `.env` and rewrites
+# only the BACKEND_URL line (or appends one if missing).
+if [[ -n "${SKEL_BACKEND_URL:-}" ]]; then
+  if grep -q '^BACKEND_URL=' "$MAIN_DIR/.env"; then
+    # GNU sed wants `-i ''`-less syntax, BSD sed wants `-i ''`. Using
+    # the `.bak` form works on both because we delete the backup right
+    # after.
+    sed -i.bak -E "s|^BACKEND_URL=.*|BACKEND_URL=${SKEL_BACKEND_URL}|" "$MAIN_DIR/.env"
+    rm -f "$MAIN_DIR/.env.bak"
+  else
+    printf '\nBACKEND_URL=%s\n' "${SKEL_BACKEND_URL}" >> "$MAIN_DIR/.env"
+  fi
+  echo "  ↻ BACKEND_URL=${SKEL_BACKEND_URL} (from SKEL_BACKEND_URL)"
+fi
+
 # Touch the shared SQLite file so services do not need to create it on
 # first run (still works for postgres because backends ignore the file when
 # DATABASE_URL points elsewhere).

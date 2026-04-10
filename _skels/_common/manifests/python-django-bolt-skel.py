@@ -344,7 +344,7 @@ REFERENCE (current `app/tests/test_api.py`):
 # After the integration files are written, the test-and-fix loop runs
 # the ``test_command`` (defaults to ``./test`` so the wrapper-shared
 # dispatch script picks pytest). On failure, it asks Ollama to repair
-# each integration file in turn, capped at ``fix_iterations``.
+# each integration file in turn, capped at ``fix_timeout_m`` minutes.
 
 
 INTEGRATION_SYSTEM_PROMPT = """\
@@ -422,7 +422,7 @@ INTEGRATION_MANIFEST = {
     # file keeps the loop tight (~3 s per iteration) instead of running
     # the entire suite on every fix attempt.
     "test_command": "./test app/tests/test_integration.py -q --maxfail=3",
-    "fix_iterations": 2,
+    "fix_timeout_m": 60,
     "targets": [
         {
             "path": "app/integrations/__init__.py",
@@ -492,48 +492,62 @@ Wrapper snapshot:
 {wrapper_snapshot}
 ---
 
-Required tests (every test must use Django's `TestCase` or
-`pytest.mark.django_db` so the test DB is set up correctly):
+CRITICAL RULES:
+- All tests MUST be **synchronous** (plain `def`, NOT `async def`).
+  Django's `@pytest.mark.django_db` does NOT support async tests.
+  Do NOT use `@pytest.mark.asyncio`. Do NOT use async ORM methods
+  like `acreate`, `aupdate_or_create`, `aget`, etc.
+  Use the synchronous ORM: `objects.create()`, `objects.get()`,
+  `objects.update_or_create()`, `objects.filter()`, `objects.all()`.
+- `ReactState.value` is a `JSONField` — it stores native Python
+  objects (dicts, lists, strings, numbers). You can assign a dict
+  directly and read it back as a dict. Do NOT use `json.dumps()`
+  or `json.loads()`.
+- When testing sibling clients, the `SERVICE_URL_<SLUG>` env var
+  may not be set (e.g. in CI or when the sibling isn't running).
+  Always guard client instantiation with `try/except` and call
+  `pytest.skip()` when the env var is missing or the service is
+  unreachable.
+
+Required tests (every test must use `@pytest.mark.django_db`):
 
 1. `test_items_endpoint_round_trip` — create an `Item` via
-   `Item.objects.acreate(...)`, then assert the same row appears in
-   `Item.objects.all()`. Sanity check that the wrapper-shared
-   `items` table is reachable.
+   `Item.objects.create(name=..., description=...)`, then assert
+   the same row appears in `Item.objects.all()`.
 
-2. `test_react_state_round_trip` — create a `ReactState` row for a
-   test user via `ReactState.objects.aupdate_or_create(...)`, then
-   read it back and assert the value round-trips.
+2. `test_react_state_round_trip` — create a test user, then use
+   `ReactState.objects.update_or_create(user=user, key="test_key",
+   defaults={{"value": {{"some": "data"}}}})`, read it back with
+   `ReactState.objects.get(user=user, key="test_key")`, and assert
+   `state.value == {{"some": "data"}}`.
 
 3. `test_{items_plural}_endpoint_uses_jwt` — register a user via
-   `app.services.auth_service.AuthService.register_user(...)`, mint
-   a JWT via `app.services.auth_service.AuthService.authenticate_user(...)`,
-   then issue a `BoltAPI` test request to `/api/{items_plural}`
-   with the bearer token and assert the response status is 200
-   (or 401 when `{auth_type}` is `none`).
+   `AuthService.register_user(...)`, mint a JWT via
+   `AuthService.authenticate_user(...)`, then assert the result
+   contains an `"access"` key with a non-empty string value.
 
 4. `test_jwt_secret_is_wrapper_shared` — assert that
-   `settings.JWT_SECRET` is read from the env var, not from
-   `settings.SECRET_KEY`. Use `os.environ["JWT_SECRET"]` and
-   `assert settings.JWT_SECRET == os.environ["JWT_SECRET"]`.
+   `settings.JWT_SECRET == os.environ.get("JWT_SECRET", settings.JWT_SECRET)`.
 
 5. **When `{sibling_count}` > 0**: add one extra test per sibling
-   backend named `test_sibling_<slug>_items_visible_via_shared_db`
-   that imports the corresponding `<PascalSlug>Client` from
-   `app.integrations.sibling_clients`, instantiates it without a
-   token, calls `list_items()`, and asserts the response is a list
-   (or a dict containing a `results` key for paginated responses).
-   Wrap the call in `try/except IntegrationError` and `pytest.skip`
-   when the sibling service is not reachable so the test passes
-   cleanly when the sibling has not been started.
+   named `test_sibling_<slug>_items_visible_via_shared_db`.
+   Guard instantiation like this:
+   ```python
+   try:
+       client = SomeClient()
+   except (RuntimeError, IntegrationError):
+       pytest.skip("SERVICE_URL_<SLUG> not set")
+   ```
+   Then call `client.list_items()` inside `try/except` and
+   `pytest.skip` if unreachable.
 
-6. When `{sibling_count}` is 0, **do NOT add a sibling-specific
-   test**. The four tests above are sufficient on their own.
+6. When `{sibling_count}` is 0, **do NOT add any sibling test**.
 
 Imports:
 - `import os, pytest`
 - `from django.conf import settings`
 - `from django.contrib.auth.models import User`
-- `from app.models import Item, ReactState, {item_class}`
+- `from app.models import Item, ReactState`
 - `from app.services.auth_service import AuthService`
 - (when {sibling_count} > 0) `from app.integrations.sibling_clients import IntegrationError, ...`
 
