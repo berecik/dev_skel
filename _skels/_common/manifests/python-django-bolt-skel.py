@@ -422,7 +422,7 @@ INTEGRATION_MANIFEST = {
     # file keeps the loop tight (~3 s per iteration) instead of running
     # the entire suite on every fix attempt.
     "test_command": "./test app/tests/test_integration.py -q --maxfail=3",
-    "fix_timeout_m": 60,
+    "fix_timeout_m": 120,
     "targets": [
         {
             "path": "app/integrations/__init__.py",

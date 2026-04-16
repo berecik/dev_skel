@@ -1082,7 +1082,7 @@ INTEGRATION_MANIFEST = {
     "system_prompt": "...",       # rendered with {wrapper_snapshot} etc.
     "targets": [...],             # additive — never overwrite first-pass files
     "test_command": "./test app/tests/test_integration.py -q",  # default: "./test"
-    "fix_timeout_m": 60,          # default: 60 (minutes)
+    "fix_timeout_m": 120,         # default: 120 (minutes)
     "notes": "...",
 }
 ```
@@ -1099,7 +1099,7 @@ are written, `skel-gen-ai` runs a bounded test-and-fix loop:
 2. If exit ≠ 0, ask Ollama to repair each integration file (one
    round-trip per file) using a "fix" system prompt that includes
    the current file contents + truncated test output.
-3. Re-run until pass or `fix_timeout_m` minutes elapse (default 60).
+3. Re-run until pass or `fix_timeout_m` minutes elapse (default 120).
 
 CLI knobs: `--no-integrate` skips the integration phase entirely;
 `--no-test-fix` runs the integration phase but skips the loop. Both

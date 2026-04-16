@@ -114,7 +114,7 @@ make rule-affecting edits.
      placeholder (or the new `{retrieved_siblings}` block when the
      manifest opts in), writes integration code + tests, then runs a
      bounded test-and-fix loop (`./test` → ask Ollama to patch failing
-     files → re-run, capped at `fix_timeout_m` minutes — default 60). The integration
+     files → re-run, capped at `fix_timeout_m` minutes — default 120). The integration
      phase is currently shipped only for `python-django-bolt-skel`;
      other skels gracefully skip it. Disable with `--no-integrate` /
      `--no-test-fix` when iterating on prompts.
@@ -270,9 +270,11 @@ When the user asks Claude to "use Ollama" / "AI-generate a service" / etc:
 
 1. Verify Ollama is running (`curl -sf http://localhost:11434/api/tags`)
    and the requested model is pulled (`ollama list`). The default model
-   is `gemma4:31b` and the default `OLLAMA_TIMEOUT` is `600`
-   seconds — drop to a smaller model (e.g. `qwen3-coder:30b` or
-   `qwen2.5-coder:7b`) on slower hardware via `OLLAMA_MODEL=...`.
+   is `gemma4:31b` and the default `OLLAMA_TIMEOUT` is `1800`
+   seconds (30 min — covers the 30-40 s cold-load + multi-minute
+   completions a 31B-class model can take on a long file). Drop to a
+   smaller model (e.g. `qwen3-coder:30b` or `qwen2.5-coder:7b`) on
+   slower hardware via `OLLAMA_MODEL=...`.
 2. Prefer running `_bin/skel-gen-ai --dry-run --no-input` first to confirm
    the manifest target list, then run the real generation. Real generation
    against a 30B-class instruction model can take **2–10 minutes per

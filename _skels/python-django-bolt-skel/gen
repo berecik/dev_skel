@@ -40,14 +40,26 @@ mkdir -p "$PROJECT_DIR"
 # Merge skeleton files into the inner project directory
 bash "$SKEL_DIR/merge" "$SKEL_DIR" "$PROJECT_DIR"
 
-# Create Python virtualenv and install dependencies
+# Create Python virtualenv and install dependencies.
+#
+# We prefer `requirements-dev.txt` (which itself `-r requirements.txt`s)
+# so the generated project ships with pytest + pytest-django + pytest-
+# asyncio installed. Otherwise `./test` would fail with exit 127
+# ("pytest: command not found") immediately after generation — both for
+# end users running `cd <project>/<service> && ./test` and for the
+# `skel-gen-ai` test-and-fix loop which has no way to recover from a
+# missing test runner by patching source files.
 (
   cd "$PROJECT_DIR"
   python3 -m venv .venv
   # shellcheck disable=SC1091
   . .venv/bin/activate
   pip install -q --upgrade pip
-  pip install -q -r requirements.txt
+  if [[ -f requirements-dev.txt ]]; then
+    pip install -q -r requirements-dev.txt
+  else
+    pip install -q -r requirements.txt
+  fi
 )
 
 # Create wrapper-level README, Makefile, and thin scripts

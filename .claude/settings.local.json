@@ -230,7 +230,21 @@
       "Bash(/Users/beret/dev_skel/_bin/skel-gen-static test-react-fastapi:*)",
       "Bash(tee /tmp/react-fastapi.log)",
       "Bash(tee /tmp/fastapi-skel.log)",
-      "Bash(tee /tmp/shared-db-2.log)"
+      "Bash(tee /tmp/shared-db-2.log)",
+      "Bash(rm -rf test-ai-fullstack)",
+      "Bash(/Users/beret/dev_skel/_bin/skel-gen-ai test-ai-fullstack:*)",
+      "Bash(tee /tmp/ai-fullstack-run1.log)",
+      "Read(//private/tmp/**)",
+      "Bash(xargs -I{} ps -o pid,stat,etime,pcpu,rss,command -p {})",
+      "Bash(xargs -I{} ps -o pid,etime,pcpu -p {})",
+      "Bash(./install-deps)",
+      "Bash(npx --no-install eslint .)",
+      "Bash(npx --no-install vitest run --run)",
+      "Bash(.venv/bin/python manage.py makemigrations app --noinput)",
+      "Bash(.venv/bin/python manage.py migrate --noinput)",
+      "Bash(rm -rf gen-fix-verify)",
+      "Bash(/Users/beret/dev_skel/_bin/skel-gen-static gen-fix-verify:*)",
+      "Bash(tee /tmp/ai-fullstack-run2.log)"
     ],
     "deny": [],
     "ask": []

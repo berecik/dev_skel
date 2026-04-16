@@ -50,12 +50,13 @@ from dev_skel_lib import slugify_service_name
 
 
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
-DEFAULT_OLLAMA_MODEL = "qwen2.5-coder:32b"
+DEFAULT_OLLAMA_MODEL = "gemma4:31b"
 # seconds — local Ollama can be slow on big models. The default is sized
-# for ~30B-class instruction models like gemma4:31b; override with
-# OLLAMA_TIMEOUT in the environment when running on faster hardware or
-# against a smaller model.
-DEFAULT_TIMEOUT = 600
+# for ~30B-class instruction models like gemma4:31b (a single completion
+# can include a 30-40 s cold-load on the first call plus several minutes
+# of generation on long files). Override with OLLAMA_TIMEOUT in the
+# environment when running on faster hardware or against a smaller model.
+DEFAULT_TIMEOUT = 1800
 
 
 @dataclass
@@ -520,8 +521,10 @@ class IntegrationManifest:
       dispatch script picks the right runner. May reference the same
       placeholders as :func:`format_prompt`.
     * ``fix_timeout_m`` — maximum wall-clock minutes the test-and-fix
-      loop is allowed to run before giving up. Defaults to ``60``
-      (one hour). Override via ``FIX_TIMEOUT_M`` env var or per-manifest.
+      loop is allowed to run before giving up. Defaults to ``120``
+      (two hours) so a ~30B-class model like ``gemma4:31b`` has enough
+      headroom for several iterations of file rewrites + test reruns.
+      Override via ``FIX_TIMEOUT_M`` env var or per-manifest.
     """
 
     skeleton_name: str
@@ -529,7 +532,7 @@ class IntegrationManifest:
     system_prompt: str = ""
     notes: str = ""
     test_command: str = "./test"
-    fix_timeout_m: int = int(os.environ.get("FIX_TIMEOUT_M", "60"))
+    fix_timeout_m: int = int(os.environ.get("FIX_TIMEOUT_M", "120"))
 
 
 # --------------------------------------------------------------------------- #
@@ -1298,7 +1301,7 @@ def load_integration_manifest(
             "system_prompt": "...",
             "targets": [...],
             "test_command": "./test",   # default
-            "fix_timeout_m": 60,        # default (minutes)
+            "fix_timeout_m": 120,       # default (minutes)
             "notes": "...",
         }
     """
@@ -1350,7 +1353,7 @@ def load_integration_manifest(
         system_prompt=str(raw.get("system_prompt", "")),
         notes=str(raw.get("notes", "")),
         test_command=str(raw.get("test_command", "./test")),
-        fix_timeout_m=int(raw.get("fix_timeout_m", 60)),
+        fix_timeout_m=int(raw.get("fix_timeout_m", 120)),
     )
 
 
@@ -1435,7 +1438,7 @@ def _resolve_test_command(
 
 
 def run_service_tests(
-    test_command: str, ctx: GenerationContext, *, timeout_s: int = 600
+    test_command: str, ctx: GenerationContext, *, timeout_s: int = 1800
 ) -> TestRunResult:
     """Run the integration manifest's ``test_command`` inside the new service.
 
@@ -1639,6 +1642,94 @@ def _discover_project_files(project_dir: Path) -> List[TargetResult]:
     return results
 
 
+def _looks_like_missing_runner(result: TestRunResult) -> bool:
+    """Return True when the test command itself could not start.
+
+    Exit 127 is the canonical "command not found" status (e.g.
+    ``./test: line 43: pytest: command not found``). Exit 126 means
+    the command was found but could not execute (typically missing
+    exec bit, or the shim shell exits with that code from our own
+    render-failure branch in :func:`run_service_tests`). In both
+    cases there is no point asking Ollama to patch source files —
+    the test runner itself is missing, and the right fix is to
+    install dependencies or repair the dispatch script.
+    """
+
+    if result.returncode not in (126, 127):
+        return False
+    haystack = f"{result.stdout}\n{result.stderr}".lower()
+    return (
+        "command not found" in haystack
+        or "no such file" in haystack
+        or "test runner not found" in haystack
+        or "executable" in haystack
+        # render-failure shim in run_service_tests; 126 exit + the
+        # synthetic stderr text tells us we never spawned the runner.
+        or "could not render test command" in haystack
+    )
+
+
+def _try_auto_install_deps(
+    *, project_dir: Path, progress: Optional[Any] = None
+) -> bool:
+    """Try to auto-install the service's deps via its ``./install-deps``.
+
+    Returns True when the script existed AND exited 0. Never raises —
+    failures are surfaced via ``progress`` and the caller decides how
+    to handle them.
+    """
+
+    candidate = project_dir / "install-deps"
+    if not candidate.is_file():
+        if progress is not None:
+            progress.write(
+                "  [deps] no ./install-deps in service dir — "
+                "cannot auto-repair missing runner\n"
+            )
+        return False
+
+    import time as _time
+
+    if progress is not None:
+        progress.write(
+            f"  [deps] running `./install-deps` in {project_dir} "
+            "(auto-recover from missing test runner)\n"
+        )
+    started = _time.monotonic()
+    try:
+        completed = subprocess.run(
+            [str(candidate.resolve())],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=1800,  # dev-dep installs can be slow on cold caches
+        )
+    except subprocess.TimeoutExpired:
+        if progress is not None:
+            progress.write("  [deps] install-deps timed out (30m)\n")
+        return False
+    except Exception as exc:  # noqa: BLE001
+        if progress is not None:
+            progress.write(f"  [deps] install-deps failed to launch: {exc!r}\n")
+        return False
+
+    elapsed = _time.monotonic() - started
+    if completed.returncode == 0:
+        if progress is not None:
+            progress.write(
+                f"  [deps] install-deps OK in {elapsed:.1f}s\n"
+            )
+        return True
+
+    if progress is not None:
+        tail = (completed.stdout + completed.stderr).strip()[-1000:]
+        progress.write(
+            f"  [deps] install-deps FAILED (exit {completed.returncode}, "
+            f"{elapsed:.1f}s):\n{tail}\n"
+        )
+    return False
+
+
 def run_test_and_fix_loop(
     *,
     client: OllamaClient,
@@ -1650,11 +1741,19 @@ def run_test_and_fix_loop(
     """Run the new service's tests and ask Ollama to repair failures.
 
     The loop runs until the tests pass or ``manifest.fix_timeout_m``
-    minutes of wall-clock time have elapsed (default: 60 min). On each
+    minutes of wall-clock time have elapsed (default: 120 min). On each
     iteration we run the test command, and if it fails we ask Ollama
     to repair **every source file in the service directory** (not just
     integration files), then re-run. Returns the **last**
     :class:`TestRunResult` so the caller can surface a final pass/fail.
+
+    Special handling for "missing test runner" failures (exit 126/127
+    with a clear "command not found" / "no such file" signature): the
+    loop will try to auto-run ``./install-deps`` ONCE and retry before
+    handing the failure over to Ollama. Asking a language model to
+    patch 19 source files because ``pytest`` isn't on ``PATH`` is both
+    slow and pointless — the generated code is almost never the bug in
+    that scenario.
 
     The function never raises on a failing test — instead it surfaces
     the failure through the returned ``TestRunResult`` so the CLI can
@@ -1666,6 +1765,7 @@ def run_test_and_fix_loop(
     deadline = _time.monotonic() + manifest.fix_timeout_m * 60
     last: Optional[TestRunResult] = None
     iteration = 0
+    auto_install_attempted = False
     while True:
         iteration += 1
         elapsed_m = (manifest.fix_timeout_m * 60 - (deadline - _time.monotonic())) / 60
@@ -1698,6 +1798,38 @@ def run_test_and_fix_loop(
                 )
 
         if last.passed:
+            return last
+
+        # Before burning an Ollama iteration, check whether the failure
+        # is actually "test runner not on PATH" (exit 126/127 with a
+        # matching signature). If so, run the service's ./install-deps
+        # once and retry — if the deps install succeeds, the next
+        # iteration usually passes without any source patches. If
+        # install-deps is missing or itself fails, bail immediately
+        # with the infrastructure error instead of pointlessly asking
+        # a language model to rewrite 19 files.
+        if not auto_install_attempted and _looks_like_missing_runner(last):
+            auto_install_attempted = True
+            if progress is not None:
+                progress.write(
+                    "  [test] test runner missing — attempting auto-recover "
+                    "via ./install-deps (this is usually a deps issue, not a "
+                    "code issue; skipping Ollama fix pass)\n"
+                )
+            installed = _try_auto_install_deps(
+                project_dir=ctx.project_dir, progress=progress
+            )
+            if installed:
+                # Loop straight back to the test step without burning a
+                # fix iteration — we haven't touched any source files.
+                continue
+            if progress is not None:
+                progress.write(
+                    "  [test] auto-recover failed — bailing out without "
+                    "asking Ollama to patch files (infrastructure error, "
+                    "not a code error; re-run `./install-deps` manually "
+                    "and then `./test` to diagnose)\n"
+                )
             return last
 
         if _time.monotonic() >= deadline:

@@ -27,12 +27,13 @@ from pathlib import Path
 
 
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
-DEFAULT_OLLAMA_MODEL = "qwen2.5-coder:32b"
+DEFAULT_OLLAMA_MODEL = "gemma4:31b"
 # Seconds. Local Ollama can be slow on big models. The default is sized for
-# ~30B-class instruction models like ``gemma4:31b``; override with
-# ``OLLAMA_TIMEOUT`` in the environment when running on faster hardware or
-# against a smaller model.
-DEFAULT_TIMEOUT = 600
+# ~30B-class instruction models like ``gemma4:31b`` — a single completion
+# can include a 30-40 s cold-load on the first call plus several minutes
+# of generation on long files. Override with ``OLLAMA_TIMEOUT`` in the
+# environment when running on faster hardware or against a smaller model.
+DEFAULT_TIMEOUT = 1800
 DEFAULT_TEMPERATURE = 0.2
 
 

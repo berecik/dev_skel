@@ -417,9 +417,11 @@ _bin/skel-gen-ai myproj python-django-skel
 Defaults: `OLLAMA_BASE_URL=http://localhost:11434`,
 `OLLAMA_MODEL=gemma4:31b`. Override with environment variables or
 the `--ollama-url` / `--ollama-model` flags. The default `OLLAMA_TIMEOUT`
-is `600` seconds — sized for a ~30B-class instruction model running
-locally. Drop to a smaller model (e.g. `qwen3-coder:30b` or
-`qwen2.5-coder:7b`) on slower hardware:
+is `1800` seconds (30 min) — sized for a ~30B-class instruction model
+running locally, large enough for the 30-40 s cold-load plus the
+multi-minute completions on a long file. Drop to a smaller model
+(e.g. `qwen3-coder:30b` or `qwen2.5-coder:7b`) and a tighter timeout
+on slower hardware:
 
 ```bash
 OLLAMA_MODEL=qwen3-coder:30b OLLAMA_TIMEOUT=300 make test-ai-generators
@@ -469,7 +471,7 @@ What the integration session does:
    (defaults to `./test`) inside the new service. If the tests fail,
    asks Ollama to repair each integration file in turn (one round-trip
    per file), then re-runs. The loop runs until tests pass or
-   `fix_timeout_m` minutes elapse (default `60`, override with
+   `fix_timeout_m` minutes elapse (default `120`, override with
    `FIX_TIMEOUT_M` env var).
 
 ```bash
