@@ -1,6 +1,15 @@
 //! Rust/Axum Skeleton Project
+//!
+//! Wires the wrapper-shared backend stack so the React frontend's
+//! `/api/auth/*`, `/api/items`, and `/api/state` calls work
+//! out-of-the-box. The schema mirrors the django-bolt skel so a
+//! single `_shared/db.sqlite3` is interchangeable between backends.
 
+mod auth;
 mod config;
+mod db;
+mod error;
+mod handlers;
 
 use axum::{
     extract::State,
@@ -8,23 +17,25 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use sqlx::sqlite::SqlitePool;
 use std::{net::SocketAddr, sync::Arc};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::config::{load_dotenv, Config};
 
-/// Application state — holds the wrapper-shared `Config` so handlers can
-/// pull it out of the router state instead of re-reading the environment.
+/// Shared application state. Handlers pull this out of the router
+/// state via `State(Arc<AppState>)` so they never have to re-read
+/// `std::env` or re-open the database pool.
 #[derive(Clone)]
-struct AppState {
-    project_name: String,
-    version: String,
-    #[allow(dead_code)]
-    config: Config,
+pub struct AppState {
+    pub project_name: String,
+    pub version: String,
+    pub config: Config,
+    pub pool: SqlitePool,
 }
 
-/// Project info response
+/// Project info response — served at `/`.
 #[derive(Serialize, Deserialize)]
 struct ProjectInfo {
     project: String,
@@ -33,23 +44,21 @@ struct ProjectInfo {
     status: String,
 }
 
-/// Health check response
+/// Health check response — served at `/health`.
 #[derive(Serialize, Deserialize)]
 struct HealthResponse {
     status: String,
 }
 
-/// Root endpoint returning project info
 async fn index(State(state): State<Arc<AppState>>) -> Json<ProjectInfo> {
     Json(ProjectInfo {
         project: state.project_name.clone(),
         version: state.version.clone(),
         framework: "Axum".to_string(),
-        status: "running".to_string(),
+        status: format!("running (issuer={})", state.config.jwt_issuer),
     })
 }
 
-/// Health check endpoint
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "healthy".to_string(),
@@ -65,7 +74,6 @@ async fn main() {
 
     let config = Config::from_env();
 
-    // Initialize tracing
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -87,21 +95,36 @@ async fn main() {
         "starting Axum server with wrapper-shared config",
     );
 
+    // Connect + bootstrap schema before binding the listener so a bad
+    // DB URL fails fast instead of returning 500s on every request.
+    let pool = match db::connect_and_init(&config.database_url).await {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!(error = ?e, "failed to connect / init database");
+            std::process::exit(1);
+        }
+    };
+
     let state = Arc::new(AppState {
         project_name: "rust-axum-skel".to_string(),
-        version: "1.0.0".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
         config,
+        pool,
     });
 
-    // Build router
     let app = Router::new()
         .route("/", get(index))
         .route("/health", get(health))
+        .merge(handlers::wrapper_router())
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .expect("failed to bind TCP listener");
+    axum::serve(listener, app)
+        .await
+        .expect("axum server error");
 }
 
 #[cfg(test)]
@@ -110,13 +133,21 @@ mod tests {
     use axum::http::StatusCode;
     use axum_test::TestServer;
 
-    fn create_test_app() -> Router {
+    async fn project_info_app() -> Router {
+        let config = Config::from_env();
+        // In-memory SQLite pool so the project-info tests do not
+        // depend on a wrapper `.env`.
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory sqlite");
         let state = Arc::new(AppState {
             project_name: "rust-axum-skel".to_string(),
             version: "1.0.0".to_string(),
-            config: Config::from_env(),
+            config,
+            pool,
         });
-
         Router::new()
             .route("/", get(index))
             .route("/health", get(health))
@@ -125,7 +156,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_index_returns_project_info() {
-        let app = create_test_app();
+        let app = project_info_app().await;
         let server = TestServer::new(app).unwrap();
 
         let response = server.get("/").await;
@@ -138,7 +169,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_health_endpoint() {
-        let app = create_test_app();
+        let app = project_info_app().await;
         let server = TestServer::new(app).unwrap();
 
         let response = server.get("/health").await;

@@ -26,15 +26,26 @@ PROJECT_DIR="$MAIN_DIR/$PROJECT_SUBDIR"
 echo "[flask] Generating into: $MAIN_DIR (project dir: $PROJECT_SUBDIR)"
 mkdir -p "$PROJECT_DIR"
 
+# Merge overlays into inner project directory FIRST so pyproject.toml
+# (which lists every runtime + dev dep including PyJWT, bcrypt, and
+# pytest) lands on disk before we install. Otherwise the venv would
+# only get the inline runtime deps and the generated `./test` would
+# fail with "pytest: command not found".
+bash "$SKEL_DIR/merge" "$SKEL_DIR" "$PROJECT_DIR"
+
 (
   cd "$PROJECT_DIR"
   python3 -m venv .venv
+  # shellcheck disable=SC1091
   . .venv/bin/activate
-  pip install -q flask flask-sqlalchemy flask-migrate python-dotenv gunicorn
+  pip install -q --upgrade pip
+  # `pip install -e .[dev]` installs every runtime dep declared in
+  # pyproject.toml AND the [project.optional-dependencies] dev extras
+  # (pytest, ruff, mypy). The generated project is dev-ready out of
+  # the box — `./test` and the JWT-protected `/api/items` endpoints
+  # work without a follow-up `./install-deps`.
+  pip install -q -e ".[dev]"
 )
-
-# Merge overlays into inner project directory
-bash "$SKEL_DIR/merge" "$SKEL_DIR" "$PROJECT_DIR"
 
 # Create wrapper-level README, Makefile, and thin scripts
 bash "$COMMON_DIR/common-wrapper.sh" "$MAIN_DIR" "$PROJECT_SUBDIR" "Flask Backend"

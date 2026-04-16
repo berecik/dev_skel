@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run script for the Go service.
+# Usage: ./run [mode]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Source the wrapper-shared `.env` first then the local `.env` so the
+# Go child process inherits DATABASE_URL, JWT_SECRET, SERVICE_HOST,
+# SERVICE_PORT, etc. The application's own godotenv loader also picks
+# them up; reading them here keeps the banner accurate.
+if [[ -f "$SCRIPT_DIR/../.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/../.env"
+  set +a
+fi
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/.env"
+  set +a
+fi
+
+MODE="${1:-dev}"
+HOST="${SERVICE_HOST:-${HOST:-0.0.0.0}}"
+PORT="${SERVICE_PORT:-${PORT:-8080}}"
+
+case $MODE in
+    dev)
+        echo "Starting development server..."
+        echo "  URL: http://localhost:$PORT"
+        echo ""
+        go run .
+        ;;
+
+    prod)
+        echo "Starting production server..."
+        if [[ ! -f "bin/app" ]]; then
+            echo "Building release binary first..."
+            ./build --release
+        fi
+        ./bin/app
+        ;;
+
+    docker)
+        echo "Running in Docker..."
+        if ! docker images go-app:latest --format "{{.Repository}}" | grep -q "go-app"; then
+            echo "Image not found. Building..."
+            ./build
+        fi
+        docker run --rm -p "${PORT}:8080" --name go-app go-app:latest
+        ;;
+
+    -h|--help)
+        echo "Usage: ./run [mode]"
+        echo ""
+        echo "Modes:"
+        echo "  dev     Development server with go run (default)"
+        echo "  prod    Production server from compiled binary"
+        echo "  docker  Run in Docker container"
+        exit 0
+        ;;
+
+    *)
+        echo "Unknown mode: $MODE"
+        exit 1
+        ;;
+esac

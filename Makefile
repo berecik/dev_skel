@@ -2,8 +2,8 @@
 # Generate, test, and run projects across all skeleton templates
 
 .PHONY: help list test test-all run info info-all clean clean-all status \
-        gen-fastapi gen-fastapi-rag gen-flask gen-django gen-django-bolt gen-react gen-flutter gen-js gen-spring gen-actix gen-axum \
-        test-fastapi test-fastapi-rag test-flask test-django test-django-bolt test-react test-flutter test-js test-spring test-actix test-axum \
+        gen-fastapi gen-fastapi-rag gen-flask gen-django gen-django-bolt gen-react gen-flutter gen-js gen-spring gen-actix gen-axum gen-go \
+        test-fastapi test-fastapi-rag test-flask test-django test-django-bolt test-react test-flutter test-js test-spring test-actix test-axum test-go \
         test-ai-generators test-ai-generators-dry \
         test-gen-ai-fastapi test-gen-ai-django test-gen-ai-django-bolt test-gen-ai-flask \
         test-gen-ai-spring test-gen-ai-actix test-gen-ai-axum test-gen-ai-js test-gen-ai-react test-gen-ai-flutter \
@@ -11,6 +11,12 @@
         test-shared-db test-shared-db-keep test-shared-db-python \
         test-react-django-bolt test-react-django-bolt-keep \
         test-react-fastapi test-react-fastapi-keep \
+        test-react-actix test-react-actix-keep \
+        test-react-axum test-react-axum-keep \
+        test-react-spring test-react-spring-keep \
+        test-react-flask test-react-flask-keep \
+        test-react-go test-react-go-keep \
+        test-react-django test-react-django-keep \
         test-flutter-django-bolt test-flutter-django-bolt-keep \
         test-flutter-fastapi test-flutter-fastapi-keep \
         test-cross-stack
@@ -28,9 +34,10 @@ SPRING_SKEL := $(SKEL_DIR)/java-spring-skel
 ACTIX_SKEL := $(SKEL_DIR)/rust-actix-skel
 AXUM_SKEL := $(SKEL_DIR)/rust-axum-skel
 FASTAPI_RAG_SKEL := $(SKEL_DIR)/python-fastapi-rag-skel
+GO_SKEL := $(SKEL_DIR)/go-skel
 
 # All skeletons
-SKELETONS := $(FASTAPI_SKEL) $(FLASK_SKEL) $(DJANGO_SKEL) $(DJANGO_BOLT_SKEL) $(REACT_SKEL) $(FLUTTER_SKEL) $(JS_SKEL) $(SPRING_SKEL) $(ACTIX_SKEL) $(AXUM_SKEL) $(FASTAPI_RAG_SKEL)
+SKELETONS := $(FASTAPI_SKEL) $(FLASK_SKEL) $(DJANGO_SKEL) $(DJANGO_BOLT_SKEL) $(REACT_SKEL) $(FLUTTER_SKEL) $(JS_SKEL) $(SPRING_SKEL) $(ACTIX_SKEL) $(AXUM_SKEL) $(FASTAPI_RAG_SKEL) $(GO_SKEL)
 
 # Test output directory
 TEST_OUTPUT := _test_projects
@@ -100,6 +107,9 @@ gen-actix: ## Generate Rust Actix-web project (NAME=myapp [SERVICE="display name
 gen-axum: ## Generate Rust Axum project (NAME=myapp [SERVICE="display name"])
 	@$(MAKE) -C $(AXUM_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
 
+gen-go: ## Generate Go (net/http) project (NAME=myapp [SERVICE="display name"])
+	@$(MAKE) -C $(GO_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
+
 #
 # === TEST ALL GENERATORS ===
 #
@@ -116,6 +126,7 @@ test-generators: ## Test all generators by creating test projects
 	$(MAKE) test-gen-spring
 	$(MAKE) test-gen-actix
 	$(MAKE) test-gen-axum
+	$(MAKE) test-gen-go
 	@echo ""
 	@echo "$(GREEN)=== All generators tested successfully! ===$(NC)"
 
@@ -181,6 +192,12 @@ test-gen-axum: ## Test Rust Axum generator
 	@$(MAKE) gen-axum NAME=$(TEST_OUTPUT)/test-axum-app
 	@cd $(TEST_OUTPUT)/test-axum-app/service && cargo build --release 2>/dev/null
 	@echo "$(GREEN)Rust Axum generator test passed$(NC)"
+
+test-gen-go: ## Test Go generator
+	@echo "$(YELLOW)>>> Testing Go generator$(NC)"
+	@$(MAKE) gen-go NAME=$(TEST_OUTPUT)/test-go-app
+	@cd $(TEST_OUTPUT)/test-go-app/service && go build ./...
+	@echo "$(GREEN)Go generator test passed$(NC)"
 
 #
 # === AI-AUGMENTED GENERATORS (Ollama) ===
@@ -335,6 +352,48 @@ test-react-fastapi: ## Cross-stack integration test (fastapi + ts-react)
 test-react-fastapi-keep: ## Same, but leave _test_projects/test-react-fastapi on disk
 	@_bin/skel-test-react-fastapi --keep
 
+test-react-actix: ## Cross-stack integration test (rust-actix + ts-react)
+	@echo "$(GREEN)=== React + Actix integration test ===$(NC)"
+	@_bin/skel-test-react-actix
+
+test-react-actix-keep: ## Same, but leave _test_projects/test-react-actix on disk
+	@_bin/skel-test-react-actix --keep
+
+test-react-axum: ## Cross-stack integration test (rust-axum + ts-react)
+	@echo "$(GREEN)=== React + Axum integration test ===$(NC)"
+	@_bin/skel-test-react-axum
+
+test-react-axum-keep: ## Same, but leave _test_projects/test-react-axum on disk
+	@_bin/skel-test-react-axum --keep
+
+test-react-spring: ## Cross-stack integration test (java-spring + ts-react)
+	@echo "$(GREEN)=== React + Spring Boot integration test ===$(NC)"
+	@_bin/skel-test-react-spring
+
+test-react-spring-keep: ## Same, but leave _test_projects/test-react-spring on disk
+	@_bin/skel-test-react-spring --keep
+
+test-react-flask: ## Cross-stack integration test (python-flask + ts-react)
+	@echo "$(GREEN)=== React + Flask integration test ===$(NC)"
+	@_bin/skel-test-react-flask
+
+test-react-flask-keep: ## Same, but leave _test_projects/test-react-flask on disk
+	@_bin/skel-test-react-flask --keep
+
+test-react-go: ## Cross-stack integration test (go-skel + ts-react)
+	@echo "$(GREEN)=== React + Go integration test ===$(NC)"
+	@_bin/skel-test-react-go
+
+test-react-go-keep: ## Same, but leave _test_projects/test-react-go on disk
+	@_bin/skel-test-react-go --keep
+
+test-react-django: ## Cross-stack integration test (python-django + ts-react)
+	@echo "$(GREEN)=== React + Django integration test ===$(NC)"
+	@_bin/skel-test-react-django
+
+test-react-django-keep: ## Same, but leave _test_projects/test-react-django on disk
+	@_bin/skel-test-react-django --keep
+
 #
 # === FLUTTER + BACKEND CROSS-STACK INTEGRATION TESTS ===
 #
@@ -429,6 +488,10 @@ test-actix: ## Run Rust Actix skeleton tests
 test-axum: ## Run Rust Axum skeleton tests
 	@echo "$(GREEN)Running Rust Axum tests...$(NC)"
 	$(MAKE) -C $(AXUM_SKEL) test
+
+test-go: ## Run Go skeleton tests
+	@echo "$(GREEN)Running Go tests...$(NC)"
+	$(MAKE) -C $(GO_SKEL) test
 
 #
 # === INFO TARGETS ===

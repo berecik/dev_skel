@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""End-to-end integration test: Django (DRF + simplejwt) backend + React frontend.
+
+Generates a wrapper containing both ``python-django-skel`` and
+``ts-react-skel``, configures ``BACKEND_URL`` to a non-conflicting
+port, builds the React frontend (verifying the URL is baked into
+the bundle), runs `migrate` against an isolated per-test SQLite
+file, starts Django's ``runserver --noreload`` in the background,
+and exercises the canonical ``register → login → CRUD → complete →
+reject anonymous → reject invalid token`` flow over real HTTP using
+the same shape the React ``src/api/items.ts`` client uses.
+
+Usage::
+
+    _bin/skel-test-react-django              # full run
+    _bin/skel-test-react-django --keep       # leave wrapper on disk
+    _bin/skel-test-react-django --port 19883 # custom port
+
+Exit codes::
+
+    0 — every check passed
+    1 — at least one check failed
+    2 — toolchain (Node / npm / Python) missing or setup error
+"""
+
+from __future__ import annotations
+
+import argparse
+import shutil
+import sys
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from dev_skel_lib import DevSkelConfig, detect_root, load_config  # noqa: E402
+
+from _frontend_backend_lib import (  # noqa: E402
+    DEFAULT_PORT,
+    DEFAULT_STARTUP_TIMEOUT,
+    EXIT_FAIL,
+    EXIT_SETUP,
+    BackendSpec,
+    run_react_backend_integration,
+)
+
+
+PROJECT_NAME = "test-react-django"
+BACKEND_SKEL = "python-django-skel"
+BACKEND_SERVICE_NAME = "Items API"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Integration test that generates a wrapper containing "
+            "python-django-skel + ts-react-skel, builds the React "
+            "frontend, starts Django's runserver, and verifies the "
+            "items API end-to-end via real HTTP."
+        ),
+    )
+    parser.add_argument("--keep", action="store_true",
+        help="Leave _test_projects/test-react-django on disk after the test.")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT,
+        help=f"TCP port the Django backend should bind to. Default: {DEFAULT_PORT}.")
+    parser.add_argument("--server-startup-timeout", type=int,
+        default=max(DEFAULT_STARTUP_TIMEOUT, 60),
+        help=f"Seconds to wait for the Django server to become reachable "
+             f"(default: {max(DEFAULT_STARTUP_TIMEOUT, 60)}).")
+    parser.add_argument("--no-skip", action="store_true",
+        help="Treat missing Node/npm/Python as a hard failure.")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+
+    if not shutil.which("python3"):
+        msg = "python3 not on PATH (required to run the Django backend)"
+        if args.no_skip:
+            print(f"  ✗ {msg}")
+            return EXIT_FAIL
+        print(f"  · skipping ({msg})")
+        return EXIT_SETUP
+
+    cfg: DevSkelConfig = load_config()
+    repo_root = detect_root(SCRIPT_DIR, cfg.skel_dir)
+
+    # Run `migrate` against the per-test SQLite file BEFORE the
+    # server starts so the schema exists. The skeleton's `gen` step
+    # already ran `makemigrations app` against an unrelated DB to
+    # emit `app/migrations/0001_initial.py`; this `migrate` applies
+    # those migrations to the per-test file we point DATABASE_URL at.
+    pre_setup = [
+        (
+            "migrate",
+            [".venv/bin/python", "manage.py", "migrate", "--noinput", "-v", "0"],
+        ),
+    ]
+
+    spec = BackendSpec(
+        skeleton=BACKEND_SKEL,
+        service_name=BACKEND_SERVICE_NAME,
+        # `runserver --noreload` is the cleanest way to spawn a
+        # single-process Django dev server we can SIGTERM later. We
+        # set ALLOWED_HOSTS=* so 127.0.0.1 is accepted regardless of
+        # the wrapper's configured host list.
+        server_argv_template=[
+            ".venv/bin/python",
+            "manage.py",
+            "runserver",
+            "--noreload",
+            "--insecure",
+            "{host}:{port}",
+        ],
+        pre_server_setup=pre_setup,
+        # Per-test SQLite file inside the service dir so multiple
+        # test runs (and the `_shared/` folder) don't collide.
+        extra_env={
+            "SERVICE_HOST": "127.0.0.1",
+            "SERVICE_PORT": str(args.port),
+            "DATABASE_URL": "sqlite:///react_django_test.db",
+            # DEBUG=True is intentional for the harness — it surfaces
+            # Django tracebacks in the response body so the test
+            # output is actionable when something breaks. Production
+            # runs would set DJANGO_DEBUG=False via the wrapper .env.
+            "DJANGO_DEBUG": "True",
+            "DJANGO_ALLOWED_HOSTS": "*",
+        },
+    )
+
+    return run_react_backend_integration(
+        project_name=PROJECT_NAME,
+        title="React + Django integration test",
+        spec=spec,
+        repo_root=repo_root,
+        port=args.port,
+        server_startup_timeout=args.server_startup_timeout,
+        keep=args.keep,
+        no_skip=args.no_skip,
+    )
+
+
+if __name__ == "__main__":
+    sys.exit(main())

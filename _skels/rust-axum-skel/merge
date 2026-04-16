@@ -14,7 +14,7 @@ echo "Merging additional files from $SKEL_DIR to $TARGET_DIR (Rust Axum)..."
 # compile against any handlers. The dev_skel-side helper scripts
 # (Makefile, merge, test_skel, deps, install-deps, AGENTS.md, ...)
 # are excluded so they do not leak into the generated project.
-OVERWRITE_REGEX='^/(Cargo\.toml|src/main\.rs)$'
+OVERWRITE_REGEX='^/(Cargo\.toml|src/.*\.rs)$'
 EXCLUDE_REGEX='^/(Makefile|merge|gen|test_skel|deps|install-deps|AGENTS\.md|CLAUDE\.md|JUNIE-RULES\.md)$'
 
 while IFS= read -r -d '' src; do

@@ -17,7 +17,7 @@ strings that get passed in via the ``extra`` dict.
 
 from __future__ import annotations
 
-from typing import Iterable, List, Optional
+from typing import Any, Iterable, List, Optional
 
 from skel_rag.retriever import RetrievedChunk
 
@@ -70,6 +70,37 @@ def render_retrieved_block(
 _QUERY_PROMPT_PREFIX_CHARS = 600
 
 
+REFACTOR_SYSTEM_PROMPT = """\
+You are a senior software engineer performing a service-local refactor.
+
+You MUST obey these rules:
+- Only edit files inside the current service directory.
+- Never propose paths containing `..`, absolute paths, or writes to `.git`, `.refactor`, `refactor`, or `.refactor_runtime.py`.
+- Return one or more full-file replacements using this exact format:
+
+FILE: relative/path.py
+RATIONALE: short explanation
+```language
+<full file contents>
+```
+
+- Do not include prose before the first `FILE:` block or after the final code fence.
+- Keep changes minimal and directly related to the request.
+"""
+
+
+REFACTOR_USER_PROMPT = """\
+Request:
+{request}
+
+Service directory: {service_dir}
+Max files: {max_files}
+
+Retrieved context:
+{retrieved_context}
+"""
+
+
 def build_query_for_target(
     *,
     target_path: str,
@@ -110,3 +141,16 @@ def build_query_for_target(
         prefix,
     ]
     return "\n".join(p for p in parts if p)
+
+
+def build_query_for_refactor(request: str, ctx: Any) -> str:
+    """Build the retriever query for service-local refactors."""
+
+    bits = [
+        request.strip(),
+        f"service_dir {getattr(ctx, 'service_dir', '')}",
+        f"mode {getattr(ctx, 'mode', '')}",
+        f"include_siblings {getattr(ctx, 'include_siblings', False)}",
+        f"include_skeleton {getattr(ctx, 'include_skeleton', False)}",
+    ]
+    return "\n".join(str(bit) for bit in bits if bit)

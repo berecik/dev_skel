@@ -23,13 +23,19 @@ require the install.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from skel_rag.config import OllamaConfig, RagConfig
 from skel_rag.corpus import Corpus, corpus_for_skeleton, corpus_for_wrapper
 from skel_rag.llm import OllamaError, chat as llm_chat
-from skel_rag.prompts import build_query_for_target, render_retrieved_block
+from skel_rag.prompts import (
+    REFACTOR_SYSTEM_PROMPT,
+    REFACTOR_USER_PROMPT,
+    build_query_for_target,
+    render_retrieved_block,
+)
 from skel_rag.retriever import RetrievedChunk, Retriever
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -46,6 +52,15 @@ logger = logging.getLogger("skel_rag.agent")
 
 
 _NO_RETRIEVAL_PLACEHOLDER = "_(retrieval disabled — install dependencies via `make install-rag-deps`)_"
+
+
+@dataclass
+class FileEdit:
+    rel_path: str
+    language: str
+    new_contents: str
+    rationale: str
+    is_new_file: bool = False
 
 
 class RagAgent:
@@ -448,6 +463,25 @@ class RagAgent:
         raw = self.chat(system=system, user=user)
         return clean_response(raw, target_result.target.language)
 
+    def refactor_files(
+        self,
+        *,
+        ctx: Any,
+        retrieved: str,
+        max_files: int,
+    ) -> List[FileEdit]:
+        """Ask Ollama for one or more full-file refactor proposals."""
+
+        system = REFACTOR_SYSTEM_PROMPT
+        user = REFACTOR_USER_PROMPT.format(
+            request=ctx.request,
+            service_dir=ctx.service_dir,
+            max_files=max_files,
+            retrieved_context=retrieved,
+        )
+        raw = self.chat(system=system, user=user)
+        return _split_refactor_response(raw, max_files=max_files)
+
     # ---- internals --------------------------------------------------------
 
     def _retrieve_block_for_target(
@@ -478,3 +512,48 @@ class RagAgent:
         return render_retrieved_block(
             chunks, max_chars=self.rag_cfg.max_context_chars
         )
+
+
+def _split_refactor_response(text: str, *, max_files: int) -> List[FileEdit]:
+    edits: List[FileEdit] = []
+    marker = "FILE: "
+    for block in [part.strip() for part in text.split(marker) if part.strip()]:
+        lines = block.splitlines()
+        if not lines:
+            continue
+        rel_path = lines[0].strip()
+        if not rel_path or rel_path.startswith("/"):
+            continue
+        rel = Path(rel_path)
+        if any(part == ".." for part in rel.parts):
+            continue
+        rationale = ""
+        body_lines = lines[1:]
+        if body_lines and body_lines[0].startswith("RATIONALE:"):
+            rationale = body_lines[0].split(":", 1)[1].strip()
+            body_lines = body_lines[1:]
+        body = "\n".join(body_lines).strip()
+        language = rel.suffix.lstrip(".")
+        if body.startswith("```"):
+            first_newline = body.find("\n")
+            if first_newline != -1:
+                fence = body[3:first_newline].strip()
+                if fence:
+                    language = fence
+                body = body[first_newline + 1 :]
+            if body.endswith("```"):
+                body = body[:-3]
+        body = body.strip("\n")
+        if not body:
+            continue
+        edits.append(
+            FileEdit(
+                rel_path=str(rel),
+                language=language,
+                new_contents=body,
+                rationale=rationale,
+            )
+        )
+        if len(edits) >= max_files:
+            break
+    return edits

@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Generator for python-django-skel.
+#
+# Creates the wrapper service directory, runs `django-admin
+# startproject` to scaffold `manage.py` + `myproject/{__init__,asgi,
+# wsgi}.py`, then overlays the skeleton's `myproject/settings.py`,
+# `myproject/urls.py`, and the `app/` package on top. Finally
+# bootstraps the schema by running `makemigrations app` + `migrate`
+# inside the venv so a freshly generated wrapper is ready to go.
+
 SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
 COMMON_DIR="$SKEL_DIR/../_common"
 # shellcheck disable=SC1091
@@ -14,32 +23,58 @@ if [[ -z "$MAIN_DIR" ]]; then
   exit 1
 fi
 
-# Slugify the optional second arg so callers can pass either a display
-# name ("Ticket Service") or an already-slugified value ("ticket_service").
 PROJECT_SUBDIR_OVERRIDE=""
 if [[ -n "$SERVICE_NAME_RAW" ]]; then
   PROJECT_SUBDIR_OVERRIDE="$(slugify_service_name "$SERVICE_NAME_RAW")"
 fi
 
-# MAIN_DIR is already expected to be an absolute wrapper directory; Django app lives in service_subdir inside it
 PROJECT_SUBDIR="${PROJECT_SUBDIR_OVERRIDE:-backend}"
 PROJECT_DIR="$MAIN_DIR/$PROJECT_SUBDIR"
 
 echo "[django] Generating into: $MAIN_DIR (project dir: $PROJECT_SUBDIR)"
 mkdir -p "$PROJECT_DIR"
 
+# Step 1: create venv + install just enough to run `django-admin
+# startproject`. The full editable install (with dev extras) happens
+# after the merge so the ``app/`` package is on disk first.
 (
   cd "$PROJECT_DIR"
   python3 -m venv .venv
+  # shellcheck disable=SC1091
   . .venv/bin/activate
-  pip install -q django python-dotenv gunicorn pyjwt
-  django-admin startproject myproject .
+  pip install -q --upgrade pip
+  pip install -q "Django>=5.1,<6.0"
+  if [[ ! -f manage.py ]]; then
+    django-admin startproject myproject .
+  fi
 )
 
-# Merge overlays into inner project directory
+# Step 2: overlay the skeleton's enriched settings/urls + the app/
+# package on top of django-admin's bare scaffold.
 bash "$SKEL_DIR/merge" "$SKEL_DIR" "$PROJECT_DIR"
 
-# Create wrapper-level README, Makefile, and thin scripts
+# Step 3: install the project itself in editable mode (picks up
+# everything in pyproject.toml including dev extras like pytest).
+(
+  cd "$PROJECT_DIR"
+  # shellcheck disable=SC1091
+  . .venv/bin/activate
+  pip install -q -e ".[dev]"
+)
+
+# Step 4: bootstrap the schema. We run `makemigrations app` so the
+# generated project ships with `app/migrations/0001_initial.py` and
+# subsequent `migrate` calls just-work. This is run with no
+# DATABASE_URL so the migration files are dialect-agnostic.
+(
+  cd "$PROJECT_DIR"
+  # shellcheck disable=SC1091
+  . .venv/bin/activate
+  python manage.py makemigrations app --noinput >/dev/null
+  python manage.py migrate --noinput >/dev/null
+)
+
+# Step 5: wrapper-level dispatch scripts (run, test, build, stop, ...).
 bash "$COMMON_DIR/common-wrapper.sh" "$MAIN_DIR" "$PROJECT_SUBDIR" "Django Backend"
 
 echo "[django] Done."

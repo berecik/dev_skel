@@ -7,9 +7,25 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Source the wrapper-shared `.env` first then the local `.env` so the
+# Django child process inherits DATABASE_URL, JWT_SECRET, SERVICE_HOST,
+# SERVICE_PORT, etc.
+if [[ -f "$SCRIPT_DIR/../.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/../.env"
+  set +a
+fi
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/.env"
+  set +a
+fi
+
 MODE="${1:-dev}"
-HOST="0.0.0.0"
-PORT="8000"
+HOST="${SERVICE_HOST:-${HOST:-0.0.0.0}}"
+PORT="${SERVICE_PORT:-${PORT:-8000}}"
 
 case $MODE in
     dev)

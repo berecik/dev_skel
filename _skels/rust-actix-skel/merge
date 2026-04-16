@@ -8,13 +8,20 @@ echo "Merging additional files from $SKEL_DIR to $TARGET_DIR (Rust Actix)..."
 
 # `cargo new` writes its own minimal Cargo.toml + src/main.rs in the
 # target directory. The skel ships richer versions (with actix-web,
-# tracing, dotenvy dependencies and the wrapper-shared `Config`
-# wiring); they MUST always overwrite cargo's hello-world template,
-# otherwise the generated project has no dependencies and cannot
-# compile against any handlers. The dev_skel-side helper scripts
-# (Makefile, merge, test_skel, deps, install-deps, AGENTS.md, ...)
-# are excluded so they do not leak into the generated project.
-OVERWRITE_REGEX='^/(Cargo\.toml|src/main\.rs)$'
+# tracing, sqlx, jsonwebtoken, argon2 dependencies, the wrapper-shared
+# `Config` wiring, and the full `/api/auth/*`, `/api/items`,
+# `/api/state` handler tree under `src/handlers/`); they MUST always
+# overwrite cargo's hello-world template, otherwise the generated
+# project has no dependencies and cannot compile against any handlers.
+#
+# Every file shipped under `src/` is regenerated on overwrite so the
+# wrapper-shared backend stack stays in sync — keep this regex up to
+# date when adding files under `src/handlers/`.
+#
+# The dev_skel-side helper scripts (Makefile, merge, test_skel, deps,
+# install-deps, AGENTS.md, ...) are excluded so they do not leak into
+# the generated project.
+OVERWRITE_REGEX='^/(Cargo\.toml|src/.*\.rs)$'
 EXCLUDE_REGEX='^/(Makefile|merge|gen|test_skel|deps|install-deps|AGENTS\.md|CLAUDE\.md|JUNIE-RULES\.md)$'
 
 while IFS= read -r -d '' src; do

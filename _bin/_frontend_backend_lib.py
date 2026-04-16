@@ -289,13 +289,25 @@ def run_backend_setup(
     host: str,
     port: int,
 ) -> None:
-    """Run every entry in ``spec.pre_server_setup`` from ``backend_dir``."""
+    """Run every entry in ``spec.pre_server_setup`` from ``backend_dir``.
+
+    The setup commands inherit ``spec.extra_env`` (so ``migrate``,
+    ``schema-load``, etc. see the same ``DATABASE_URL`` the server
+    will). Without this, a per-test ``DATABASE_URL`` override would
+    only reach the spawned server process, leaving migrations to
+    target the skeleton's default DB file — and the cross-stack
+    request would then hit empty tables.
+    """
+
+    setup_env = os.environ.copy()
+    setup_env.update(spec.extra_env)
 
     for label, argv_template in spec.pre_server_setup:
         argv = _format_argv(argv_template, host, port)
         result = subprocess.run(
             argv,
             cwd=backend_dir,
+            env=setup_env,
             check=False,
             capture_output=True,
             text=True,

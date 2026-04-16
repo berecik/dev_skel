@@ -1736,6 +1736,7 @@ def run_test_and_fix_loop(
     ctx: GenerationContext,
     manifest: IntegrationManifest,
     integration_results: List[TargetResult],
+    discover_project_files: Optional[Any] = None,
     progress: Optional[Any] = None,
 ) -> TestRunResult:
     """Run the new service's tests and ask Ollama to repair failures.
@@ -1844,7 +1845,8 @@ def run_test_and_fix_loop(
         # outputs. A bug in models.py or api.py (written by Phase 1) can
         # cause integration tests to fail — Ollama needs to see and fix
         # those too.
-        all_files = _discover_project_files(ctx.project_dir)
+        discover = discover_project_files or _discover_project_files
+        all_files = discover(ctx.project_dir)
         if not all_files:
             if progress is not None:
                 progress.write(

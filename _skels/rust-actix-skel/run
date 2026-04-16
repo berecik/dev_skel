@@ -7,8 +7,26 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Source the wrapper-shared `.env` first then the local `.env` so
+# child cargo processes (and the compiled binary, when run via
+# `./run prod`) inherit DATABASE_URL, JWT_SECRET, SERVICE_HOST,
+# SERVICE_PORT, etc. The application's own `load_dotenv()` also
+# loads them; reading them here keeps the banner accurate.
+if [[ -f "$SCRIPT_DIR/../.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/../.env"
+  set +a
+fi
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/.env"
+  set +a
+fi
+
 MODE="${1:-dev}"
-PORT="8080"
+PORT="${SERVICE_PORT:-${PORT:-8080}}"
 
 case $MODE in
     dev)

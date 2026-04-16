@@ -28,9 +28,11 @@ impl Config {
     /// the wrapper-shared `.env` is not available we fall back to a
     /// per-service sqlite file and a placeholder JWT secret.
     pub fn from_env() -> Self {
+        let raw_database_url = env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "sqlite://./service.db".to_string());
+        let database_url = normalize_sqlite_url(&raw_database_url);
         Self {
-            database_url: env::var("DATABASE_URL")
-                .unwrap_or_else(|_| "sqlite://./service.db".to_string()),
+            database_url,
             jwt_secret: env::var("JWT_SECRET")
                 .unwrap_or_else(|_| "change-me-32-bytes-of-random-data".to_string()),
             jwt_algorithm: env::var("JWT_ALGORITHM").unwrap_or_else(|_| "HS256".to_string()),
@@ -53,6 +55,58 @@ impl Config {
     }
 }
 
+/// Translate a Python-flavored `sqlite:///relative/path` URL into a form
+/// sqlx accepts and that resolves against the wrapper directory.
+///
+/// Background: `<wrapper>/.env` ships
+/// `DATABASE_URL=sqlite:///_shared/db.sqlite3`. In SQLAlchemy / Django
+/// the triple-slash prefix means "relative to the cwd"; in sqlx the
+/// triple slash means "absolute path", which would resolve to
+/// `/_shared/db.sqlite3` and fail. We work around it by:
+///
+/// 1. Stripping the `sqlite:` / `sqlite://` / `sqlite:///` prefix down
+///    to the bare path component.
+/// 2. If the path does not start with `/`, treat it as relative to the
+///    wrapper directory (the parent of the service dir, by dev_skel
+///    convention) so different services can share one database file
+///    regardless of which one is the cwd.
+/// 3. Re-emit a `sqlite://<absolute-path>?mode=rwc` URL so sqlx will
+///    auto-create the file on first connect.
+///
+/// Non-sqlite URLs (postgres://, mysql://, ...) are passed through
+/// unchanged because the wrapper convention only translates sqlite.
+pub fn normalize_sqlite_url(raw: &str) -> String {
+    if !raw.starts_with("sqlite:") {
+        return raw.to_string();
+    }
+    let path_part = raw
+        .strip_prefix("sqlite:///")
+        .or_else(|| raw.strip_prefix("sqlite://"))
+        .or_else(|| raw.strip_prefix("sqlite:"))
+        .unwrap_or(raw);
+
+    if path_part == ":memory:" {
+        return "sqlite::memory:".to_string();
+    }
+
+    let (path_only, _existing_query) = match path_part.find('?') {
+        Some(idx) => (&path_part[..idx], &path_part[idx..]),
+        None => (path_part, ""),
+    };
+
+    let candidate = std::path::Path::new(path_only);
+    let resolved: PathBuf = if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else if let Some(wrapper) = wrapper_dir() {
+        wrapper.join(candidate)
+    } else {
+        candidate.to_path_buf()
+    };
+
+    let resolved_str = resolved.to_string_lossy();
+    format!("sqlite://{}?mode=rwc", resolved_str)
+}
+
 /// Load `<wrapper>/.env` then the local `./.env` (if present) so child
 /// processes inherit the shared environment.
 ///
@@ -67,13 +121,48 @@ pub fn load_dotenv() {
     }
 }
 
-fn wrapper_env_path() -> Option<PathBuf> {
+fn wrapper_dir() -> Option<PathBuf> {
     let cwd = env::current_dir().ok()?;
     let parent = cwd.parent()?;
-    let candidate = parent.join(".env");
+    Some(parent.to_path_buf())
+}
+
+fn wrapper_env_path() -> Option<PathBuf> {
+    let candidate = wrapper_dir()?.join(".env");
     if candidate.is_file() {
         Some(candidate)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_passes_through_postgres_url() {
+        let s = normalize_sqlite_url("postgres://user:pw@host/db");
+        assert_eq!(s, "postgres://user:pw@host/db");
+    }
+
+    #[test]
+    fn normalize_handles_in_memory_marker() {
+        let s = normalize_sqlite_url("sqlite::memory:");
+        assert_eq!(s, "sqlite::memory:");
+    }
+
+    #[test]
+    fn normalize_makes_relative_sqlite_absolute() {
+        let s = normalize_sqlite_url("sqlite:///_shared/db.sqlite3");
+        assert!(s.starts_with("sqlite://"), "got: {s}");
+        assert!(s.ends_with("?mode=rwc"));
+        let path_part = s
+            .strip_prefix("sqlite://")
+            .unwrap()
+            .split('?')
+            .next()
+            .unwrap();
+        assert!(path_part.starts_with('/'), "expected absolute path, got: {path_part}");
     }
 }

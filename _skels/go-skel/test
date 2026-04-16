@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Test script for the Go service.
+# Usage: ./test [go-test-args]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            echo "Usage: ./test [go-test-args]"
+            echo "Examples:"
+            echo "  ./test"
+            echo "  ./test -run TestHealth"
+            echo "  ./test -race"
+            exit 0 ;;
+        *) break ;;
+    esac
+done
+
+exec go test ./... "$@"

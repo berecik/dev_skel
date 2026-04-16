@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Stop the running Go service.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Stop docker container if running
+if docker ps --filter "name=go-app" --format "{{.Names}}" 2>/dev/null | grep -q "go-app"; then
+    echo "Stopping Docker container..."
+    docker stop go-app >/dev/null 2>&1 || true
+fi
+
+# Kill any local `go run` / `bin/app` processes started by ./run.
+killed=0
+for pattern in "exe/main$" "bin/app$" "go run \."; do
+    if pids=$(pgrep -f "$pattern" 2>/dev/null); then
+        for pid in $pids; do
+            kill "$pid" 2>/dev/null && killed=1 || true
+        done
+    fi
+done
+if [[ "$killed" == 0 ]]; then
+    echo "No Go service is running."
+else
+    echo "Stopped local Go process(es)."
+fi
