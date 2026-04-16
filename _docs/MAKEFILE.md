@@ -1,188 +1,236 @@
 # Makefile Reference
 
-## Overview
+The top-level `Makefile` orchestrates two parallel pipelines:
 
-The main `Makefile` orchestrates project generation by delegating to individual skeleton Makefiles. Each skeleton contains its own `Makefile` with a `gen` target that delegates to the skeleton's Bash `gen` script (which contains the full generation logic) and a `test` target that runs an end-to-end validation via `bash ./test`.
+* **Static generators** — one `gen-<framework>` target per skeleton,
+  delegating to the per-skel `gen` script. Used for AI-free baselines
+  and for the `test-generators` smoke that runs in CI without a model
+  server.
+* **AI pipeline** — `test-ai-*` targets that exercise the
+  `skel-gen-ai` orchestrator, the in-service `./ai` runtime, the
+  `./backport` round-trip, the `./ai upgrade` flow, and the
+  wrapper-level fan-out behavior.
 
-## Architecture
+Plus a handful of cross-stack HTTP integration tests that pair a
+backend with a frontend and exercise the full `register → login → CRUD
+→ complete` flow over real ports.
 
+---
+
+## AI pipeline targets
+
+These are the **AI-first** targets — they exercise the surfaces that
+make this project distinctive. Most are no-LLM smokes (cheap, run on
+every CI machine); the slow real-Ollama runners are clearly marked.
+
+### Per-service `./ai` agent
+
+| Target | LLM? | What it covers |
+| ------ | ---- | -------------- |
+| `make test-ai-script` | no | `./ai` dispatches into the runtime, scratch dir + `request.txt` + `context.json` are populated, `./ai history` lists the run. |
+| `make test-ai-script-keep` | no | Same, leaves the wrapper on disk under `_test_projects/`. |
+| `make test-ai-memory` | no | Wrapper-level `./ai` dispatches into per-service `./ai`; project-wide memory round-trips through `<wrapper>/.ai/memory.jsonl` AND `<service>/.ai/memory.jsonl`; `./ai history` aggregates both layers. |
+
+### `./ai upgrade` (template → service)
+
+| Target | LLM? | What it covers |
+| ------ | ---- | -------------- |
+| `make test-ai-upgrade` | no | No-op upgrade (sidecar version matches skel) returns "nothing to upgrade". Outdated upgrade (synthetic VERSION bump) surfaces the `vX → vY` transition + CHANGELOG excerpt and dispatches through the propose path. Sidecar is left untouched on dry-run. |
+| `make test-ai-upgrade-keep` | no | Same, keeps the wrapper. |
+
+### Wrapper-level fan-out
+
+| Target | LLM? | What it covers |
+| ------ | ---- | -------------- |
+| `make test-ai-fanout` | no | Generates a wrapper with two services. `./ai "..."` at wrapper root hits both. `./ai <slug> "..."` scopes to one. `./ai upgrade` (no-op) fans out to both. |
+| `make test-ai-fanout-keep` | no | Same, keeps the wrapper. |
+
+### `./backport` (service → template)
+
+| Target | LLM? | What it covers |
+| ------ | ---- | -------------- |
+| `make test-backport-script` | no | Generates a service, modifies one file, runs `./backport propose` (asserts the file appears in the diff), runs `./backport apply` (asserts the skel template was updated, **VERSION** was bumped, and **CHANGELOG.md** got a new entry). Restores the skel state on teardown. |
+| `make test-backport-script-keep` | no | Same, keeps the wrapper. |
+
+### Real Ollama tests
+
+These need a running Ollama daemon. They exit with code `2`
+(treated as "skipped") when Ollama is unreachable, so they're safe to
+call from longer scripts.
+
+| Target | LLM? | What it covers |
+| ------ | ---- | -------------- |
+| `make test-ai-generators-dry` | no | Verifies dispatch + base scaffolding for every AI-supported skel without calling Ollama. **Run this first** when changing a manifest. |
+| `make test-ai-generators` | **yes** | Slow (~30 min total). Runs the entire `skel-gen-ai` pipeline (Phase 1 backend overlay + Phase 2 frontend overlay + Phase 3 integration + Phase 4 test-and-fix + Phase 5 docs) per skel. |
+| `make test-gen-ai-<framework>` | **yes** | One skel at a time (e.g. `test-gen-ai-fastapi`, `test-gen-ai-django-bolt`). |
+
+### Sync the in-service runtime
+
+| Target | What it does |
+| ------ | ------------ |
+| `make sync-ai-runtime` | Copies the canonical `_bin/dev_skel_refactor_runtime.py` into `_skels/_common/refactor_runtime/` so newly-generated services pick up runtime changes. **Run after editing the runtime.** |
+
+### Install RAG dependencies
+
+| Target | What it does |
+| ------ | ------------ |
+| `make install-rag-deps` | Installs the optional in-tree FAISS deps (`sentence-transformers`, `faiss-cpu`, `langchain-ollama`). Required for in-tree `./ai` mode and for `skel-gen-ai`'s `{retrieved_context}` / `{retrieved_siblings}` placeholders. The out-of-tree `./ai` mode works without these. |
+
+---
+
+## Cross-stack HTTP integration tests
+
+Each one generates a wrapper containing a backend + a frontend skel,
+rewrites `BACKEND_URL` to a non-conflicting port, builds the frontend,
+runs migrations (where applicable), starts the backend, and exercises
+the canonical 9-step `register → login → CRUD → complete` flow over
+real HTTP. Skips gracefully when the required toolchain is missing.
+
+### React + backend
+
+| Target | Backend |
+| ------ | ------- |
+| `make test-react-django-bolt` | `python-django-bolt-skel` (canonical pair, ~3 min cold) |
+| `make test-react-fastapi` | `python-fastapi-skel` (~1 min) |
+| `make test-react-django` | `python-django-skel` |
+| `make test-react-flask` | `python-flask-skel` |
+| `make test-react-spring` | `java-spring-skel` |
+| `make test-react-actix` | `rust-actix-skel` |
+| `make test-react-axum` | `rust-axum-skel` |
+| `make test-react-go` | placeholder Go backend (TBD) |
+
+Each has a `-keep` sibling that leaves the wrapper on disk for
+debugging. Pass `--port <N>` to override the backend port.
+
+### Flutter + backend
+
+| Target | Backend |
+| ------ | ------- |
+| `make test-flutter-django-bolt` | `python-django-bolt-skel` |
+| `make test-flutter-fastapi` | `python-fastapi-skel` |
+| `make test-flutter-cross-stack` | both, sequentially |
+
+Skips when the Flutter SDK isn't on the PATH.
+
+### Cross-language shared DB
+
+| Target | What it covers |
+| ------ | -------------- |
+| `make test-shared-db` | Generates a wrapper containing every backend skel, seeds `<wrapper>/_shared/db.sqlite3`, asserts each backend reads the seed row through the env-driven flow. Cross-stack round-trip: writes via one Python service's venv, reads from another. Auto-skips toolchains that aren't installed. |
+| `make test-shared-db-python` | Same, but Python-only (~25 s). |
+| `make test-shared-db-keep` | Keeps the wrapper. |
+
+| Target | What it covers |
+| ------ | -------------- |
+| `make test-cross-stack` | Aggregator — every cross-stack HTTP test in one run. |
+
+---
+
+## Static generator targets
+
+The pre-AI baseline. All accept `NAME=<wrapper>` plus an optional
+`SERVICE=<display-name>`.
+
+| Target | Skeleton | Default service slug |
+| ------ | -------- | -------------------- |
+| `make gen-fastapi NAME=<w>` | `python-fastapi-skel` | `backend/` |
+| `make gen-fastapi-rag NAME=<w>` | `python-fastapi-rag-skel` | `backend/` |
+| `make gen-django NAME=<w>` | `python-django-skel` | `backend/` |
+| `make gen-django-bolt NAME=<w>` | `python-django-bolt-skel` | `backend/` |
+| `make gen-flask NAME=<w>` | `python-flask-skel` | `backend/` |
+| `make gen-spring NAME=<w>` | `java-spring-skel` | `service/` |
+| `make gen-actix NAME=<w>` | `rust-actix-skel` | `service/` |
+| `make gen-axum NAME=<w>` | `rust-axum-skel` | `service/` |
+| `make gen-go NAME=<w>` | `go-skel` | `service/` |
+| `make gen-js NAME=<w>` | `js-skel` | `app/` |
+| `make gen-react NAME=<w>` | `ts-react-skel` | `frontend/` |
+| `make gen-flutter NAME=<w>` | `flutter-skel` | `frontend/` |
+
+These dispatch into each skel's `gen` script via `bash $(GEN)`. The
+**relocatable** sibling — `_bin/skel-gen-static` — accepts the same
+positional `[proj_name] [skel_name] [service_name]` layout and works
+from any directory.
+
+```bash
+make gen-fastapi NAME=myproj SERVICE="Auth API"   # → myproj/auth_api/
+_bin/skel-gen-static myproj python-fastapi-skel "Auth API"   # equivalent
 ```
-Main Makefile
-    │
-    ├── gen-fastapi ──► _skels/python-fastapi-skel/Makefile (gen target)
-    ├── gen-flask ────► _skels/python-flask-skel/Makefile (gen target)
-    ├── gen-django ───► _skels/python-django-skel/Makefile (gen target)
-    ├── gen-react► _skels/ts-react-skel/Makefile (gen target)
-    ├── gen-js ───────► _skels/js-skel/Makefile (gen target)
-    ├── gen-spring ───► _skels/java-spring-skel/Makefile (gen target)
-    ├── gen-actix ────► _skels/rust-actix-skel/Makefile (gen target)
-    └── gen-axum ─────► _skels/rust-axum-skel/Makefile (gen target)
-```
 
-## Variables
+### Per-skel test targets
 
-### Directory Configuration
+| Target | What it does |
+| ------ | ------------ |
+| `make test-generators` | Generates a project from every skel, runs basic import/build checks. **No Ollama required.** Runs in CI. |
+| `make test-gen-<framework>` | One skel only (e.g. `test-gen-fastapi`). |
+| `make test-all` | Runs each skel's own `bash ./test` (its end-to-end self-test). |
+| `make test-<framework>` | One skel's self-test. |
+| `make clean-test` | Wipes `_test_projects/`. |
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SKEL_DIR` | `_skels` | Base directory containing all skeletons |
-| `TEST_OUTPUT` | `_test_projects` | Directory for test-generated projects |
-| `FASTAPI_SKEL` | `$(SKEL_DIR)/python-fastapi-skel` | FastAPI skeleton path |
-| `FLASK_SKEL` | `$(SKEL_DIR)/python-flask-skel` | Flask skeleton path |
-| `DJANGO_SKEL` | `$(SKEL_DIR)/python-django-skel` | Django skeleton path |
-| `REACT_SKEL` | `$(SKEL_DIR)/ts-react-skel` | React+Vite skeleton path |
-| `JS_SKEL` | `$(SKEL_DIR)/js-skel` | JavaScript skeleton path |
-| `SPRING_SKEL` | `$(SKEL_DIR)/java-spring-skel` | Spring Boot skeleton path |
-| `ACTIX_SKEL` | `$(SKEL_DIR)/rust-actix-skel` | Actix-web skeleton path |
-| `AXUM_SKEL` | `$(SKEL_DIR)/rust-axum-skel` | Axum skeleton path |
-| `SKELETONS` | All above | List of all skeleton directories |
+### Maintenance
 
-### Color Codes
+| Target | What it does |
+| ------ | ------------ |
+| `make help` | Lists every target with descriptions. |
+| `make list` | Lists discovered skeletons. |
+| `make status` | Shows which skeleton directories exist. |
+| `make info-all` | Per-skel info dumps. |
+| `make clean-all` | Wipes per-skel build artefacts. |
 
-| Variable | Value | Usage |
-|----------|-------|-------|
-| `GREEN` | `\033[0;32m` | Success messages |
-| `YELLOW` | `\033[0;33m` | Warnings, progress |
-| `BLUE` | `\033[0;34m` | Help text |
-| `RED` | `\033[0;31m` | Errors |
-| `NC` | `\033[0m` | Reset color |
+The `./maintenance` shell script (at the repo root) runs `make
+clean-test && make test-generators && ./test` — the canonical
+pre-commit triplet, also wired into
+`.github/workflows/maintenance.yml`.
 
-## Targets
+---
 
-### Generator Targets
+## Per-skel Makefile structure
 
-| Target | Usage | Description |
-|--------|-------|-------------|
-| `gen-fastapi` | `make gen-fastapi NAME=myapp` | Generate Python FastAPI project |
-| `gen-flask` | `make gen-flask NAME=myapp` | Generate Python Flask project |
-| `gen-django` | `make gen-django NAME=myapp` | Generate Python Django project |
-| `gen-react` | `make gen-react NAME=myapp` | Generate TypeScript React+Vite project |
-| `gen-js` | `make gen-js NAME=myapp` | Generate JavaScript/Node.js project |
-| `gen-spring` | `make gen-spring NAME=myapp` | Generate Java Spring Boot project |
-| `gen-actix` | `make gen-actix NAME=myapp` | Generate Rust Actix-web project |
-| `gen-axum` | `make gen-axum NAME=myapp` | Generate Rust Axum project |
-
-All generator targets:
-- Require `NAME` parameter
-- Convert `NAME` to absolute path before delegating
-- Delegate to skeleton's `gen` target via `$(MAKE) -C $(SKEL) gen NAME=$(abspath $(NAME))`
-
-### Test Targets
-
-| Target | Description |
-|--------|-------------|
-| `test-generators` | Run all generator tests (creates projects in `_test_projects/`) |
-| `test-gen-fastapi` | Test FastAPI generator |
-| `test-gen-flask` | Test Flask generator |
-| `test-gen-django` | Test Django generator |
-| `test-gen-react` | Test React+Vite generator |
-| `test-gen-js` | Test JavaScript generator |
-| `test-gen-spring` | Test Spring Boot generator |
-| `test-gen-actix` | Test Actix generator |
-| `test-gen-axum` | Test Axum generator |
-| `test-all` | Run tests within each skeleton directory (calls `bash ./test`) |
-| `test-fastapi` | Run FastAPI skeleton tests |
-| `test-flask` | Run Flask skeleton tests |
-| `test-django` | Run Django skeleton tests |
-| `test-react` | Run React+Vite skeleton tests |
-| `test-js` | Run JavaScript skeleton tests |
-| `test-spring` | Run Spring Boot skeleton tests |
-| `test-actix` | Run Actix skeleton tests |
-| `test-axum` | Run Axum skeleton tests |
-
-### Utility Targets
-
-| Target | Description |
-|--------|-------------|
-| `help` | Show available targets with descriptions |
-| `list` | List all skeleton projects |
-| `status` | Show status of skeleton directories (exists/missing) |
-| `info-all` | Show info for all skeleton projects |
-| `clean-all` | Clean all skeleton projects |
-| `clean-test` | Remove `_test_projects/` directory |
-
-## Skeleton Makefile Structure
-
-Each skeleton's `Makefile` follows this pattern:
+Each `_skels/<name>-skel/Makefile` is auto-discovered. The structure is:
 
 ```makefile
-# Skeleton Name - Makefile
-
 .PHONY: gen test
 
-# Auto-detect skeleton directory (works regardless of where make is called from)
+# Auto-detect skeleton directory regardless of where make is called from
 SKEL_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-# Colors
-GREEN := \033[0;32m
-YELLOW := \033[0;33m
-NC := \033[0m
-
-# Standard scripts
 GEN := $(SKEL_DIR)/gen
 MERGE := $(SKEL_DIR)/merge
 
-gen: ## Generate project (NAME=myapp)
+gen: ## Generate project (NAME=myapp [SERVICE="Display Name"])
 ifndef NAME
-    @echo "Usage: make gen NAME=<project-name>"
-    @exit 1
+	@echo "Usage: make gen NAME=<project-name>"
+	@exit 1
 endif
-    @bash $(GEN) "$(NAME)"
+	@bash $(GEN) "$(NAME)"
 
 test: ## Generate a temp project and run its tests (e2e)
-    @bash ./test
+	@bash ./test
 ```
 
-### Key Points
+The `gen` Bash script is the source of truth — it scaffolds the
+service tree, calls `merge` (rsync with exclusions), then invokes
+`_skels/_common/common-wrapper.sh` to install the shared layer + the
+in-service `./ai` machinery.
 
-1. **SKEL_DIR Detection**: Uses `$(dir $(abspath $(lastword $(MAKEFILE_LIST))))` to auto-detect the skeleton directory path, ensuring correct operation whether called directly or via the main Makefile.
+---
 
-2. **gen Script**:
-   - Each skeleton ships an executable `gen` Bash script that contains ALL generation logic (scaffolding, dependency installation, and calling `merge`).
-   - Skeleton Makefiles must delegate to it with: `bash $(SKEL_DIR)/gen "$(NAME)"`.
+## Adding a new skeleton
 
-3. **merge Script**:
-   - Each skeleton ships an executable `merge` script that copies auxiliary files into the newly generated project without overwriting generator-owned files (e.g., `Cargo.toml`, `package.json`, framework-initialized sources).
-   - The `gen` script invokes it with: `bash "$SKEL_DIR/merge" "$SKEL_DIR" "$TARGET"`.
-
-3. **NAME Parameter**: All `gen` targets require `NAME` to be set and should be an absolute path when called from the main Makefile.
-
-4. **Test Scripts**: Each skeleton contains a `test` Bash script that generates into a temporary directory, runs the project's tests, and performs a non-interactive run/build check. The skeleton `Makefile` simply delegates to `bash ./test`.
-
-## Adding a New Skeleton
-
-1. Create new directory: `_skels/language-framework-skel/`
-2. Add skeleton files with working example code
-3. Create `Makefile` with `gen` and `test` targets
-   - Use `GEN := $(SKEL_DIR)/gen` and delegate `gen` to `@bash $(GEN) "$(NAME)"`.
-   - Keep `test` delegating to `bash ./test`.
-4. Add an executable `merge` script that implements copy logic and excludes generator-owned files.
-5. Add an executable `gen` script that wraps `make -C "$SKEL_DIR" gen NAME="$TARGET"`.
-6. Add an executable `test` script that generates into a temp dir and validates non-interactively.
-7. Add variables to main Makefile:
+1. Create `_skels/<name>-skel/` with a working source tree.
+2. Add `gen`, `merge`, `test`, `deps` Bash scripts (copy from a
+   similar skel and adjust).
+3. Add `VERSION` (`0.1.0`) and `CHANGELOG.md` (Keep-a-Changelog seed).
+4. Add the per-skel `Makefile` (template above).
+5. Wire into the top-level Makefile:
    ```makefile
-   NEW_SKEL := $(SKEL_DIR)/language-framework-skel
-   SKELETONS := ... $(NEW_SKEL)
+   NEW_SKEL := $(SKEL_DIR)/<name>-skel
+   gen-<name>: ## Generate <Name> project (NAME=...)
+       @bash $(NEW_SKEL)/gen "$(NAME)"
+   test-gen-<name>: ## Test <Name> generator
+       @bash $(NEW_SKEL)/test
    ```
-8. Add generator target:
-   ```makefile
-   gen-new: ## Generate New Framework project (NAME=myapp)
-       @$(MAKE) -C $(NEW_SKEL) gen NAME=$(abspath $(NAME))
-   ```
-9. Add test targets (`test-gen-new`, `test-new`)
-10. Update `.PHONY` declarations
-11. Run `make test-generators` to verify
-
-## Generator Tool
-
-You can also generate projects from anywhere using the relocatable tool:
-
-```bash
-_bin/skel-gen <skel_type> <proj_name> [service_in_proj_name]
-```
-
-- `skel_type` – skeleton directory name under `_skels/` (for example `python-fastapi-skel`).
-- `proj_name` – **leaf** directory name (no `/`), created under the current working directory.
-- `service_in_proj_name` – optional inner service directory name.
-
-The tool prefers a skeleton's `gen` script (which contains all logic) and falls back to `make -C <skel> gen NAME=<main_dir> SERVICE=<service_subdir>` if missing.
+6. (For AI support) drop a manifest at
+   `_skels/_common/manifests/<name>-skel.py`. The full-stack dialog
+   auto-discovers it.
+7. Run `make test-generators` (no Ollama) and
+   `make test-ai-generators-dry` to verify dispatch.

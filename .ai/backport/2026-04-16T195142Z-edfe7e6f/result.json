@@ -1,0 +1,7 @@
+{
+  "candidates": [],
+  "command": "propose",
+  "generated_service": null,
+  "service_dir": "/Users/beret/dev_skel/_test_projects/test-backport-script-fastapi/items_api",
+  "skeleton_dir": "/Users/beret/dev_skel/_skels/python-fastapi-skel"
+}

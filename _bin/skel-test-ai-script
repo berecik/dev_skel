@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""Smoke test for the per-service ./ai script.
+
+Generates a small service via skel-gen-static, then invokes
+``./ai --no-llm "<canned request>"`` against it and asserts:
+
+* exit code 0;
+* a deterministic ``.ai/<ts>-<sha>/`` scratch dir was created;
+* ``.ai/<run>/request.txt`` matches the canned input;
+* ``.ai/<run>/context.json`` parses + has the expected keys;
+* (when run with ``--include-skeleton-retrieval``) the retrieval
+  block is non-empty.
+
+This runner intentionally does NOT touch Ollama. Real-LLM tests
+live under ``_bin/skel_rag/tests/test_refactor_*.py`` and require
+a running Ollama daemon.
+
+Usage:
+
+    _bin/skel-test-ai-script                          # dry default
+    _bin/skel-test-ai-script --skel python-fastapi-skel
+    _bin/skel-test-ai-script --keep                   # leave wrapper on disk
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+TEST_OUTPUT = REPO_ROOT / "_test_projects"
+
+EXIT_OK = 0
+EXIT_FAIL = 1
+
+DEFAULT_SKEL = "python-fastapi-skel"
+DEFAULT_REQUEST = "no-op smoke (--no-llm)"
+
+
+def _run(argv, **kwargs):
+    return subprocess.run(argv, capture_output=True, text=True, **kwargs)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--skel", default=DEFAULT_SKEL,
+        help=f"Skeleton to test against (default: {DEFAULT_SKEL}).")
+    parser.add_argument("--service-name", default="Items API")
+    parser.add_argument("--request", default=DEFAULT_REQUEST)
+    parser.add_argument("--keep", action="store_true",
+        help="Leave the generated wrapper on disk after the test.")
+    args = parser.parse_args()
+
+    project = f"test-ai-script-{args.skel.replace('python-', '').replace('-skel', '')}"
+    wrapper = TEST_OUTPUT / project
+    if wrapper.exists():
+        shutil.rmtree(wrapper)
+
+    print(f"[ai-smoke] Generating {args.skel} into {wrapper}")
+    gen = _run(
+        [str(REPO_ROOT / "_bin" / "skel-gen-static"),
+         project, args.skel, args.service_name],
+        cwd=TEST_OUTPUT,
+    )
+    if gen.returncode != 0:
+        print(gen.stdout); print(gen.stderr, file=sys.stderr)
+        return EXIT_FAIL
+
+    # Find the service directory inside the wrapper (the only entry
+    # whose name isn't `_shared` and isn't a top-level script).
+    services = [
+        p for p in wrapper.iterdir()
+        if p.is_dir() and p.name != "_shared" and not p.name.startswith(".")
+    ]
+    if not services:
+        print(f"[ai-smoke] FAIL: no service dir under {wrapper}", file=sys.stderr)
+        return EXIT_FAIL
+    service_dir = services[0]
+    print(f"[ai-smoke] Service dir: {service_dir.relative_to(REPO_ROOT)}")
+
+    ai_script = service_dir / "ai"
+    runtime = service_dir / ".ai_runtime.py"
+    if not ai_script.is_file() or not runtime.is_file():
+        print(
+            f"[ai-smoke] FAIL: missing ai script or runtime "
+            f"(ai={ai_script.is_file()}, runtime={runtime.is_file()})",
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+
+    print(f"[ai-smoke] Running ./ai --no-llm \"{args.request}\"")
+    proc = _run(["./ai", "--no-llm", args.request], cwd=service_dir)
+    if proc.returncode != 0:
+        print(proc.stdout); print(proc.stderr, file=sys.stderr)
+        print("[ai-smoke] FAIL: ./ai exited non-zero")
+        return EXIT_FAIL
+
+    # Find the scratch dir.
+    ai_dir = service_dir / ".ai"
+    if not ai_dir.is_dir():
+        print(f"[ai-smoke] FAIL: {ai_dir} not created")
+        return EXIT_FAIL
+    runs = [p for p in ai_dir.iterdir() if p.is_dir() and p.name != ".lock"]
+    if not runs:
+        print(f"[ai-smoke] FAIL: no run dir under {ai_dir}")
+        return EXIT_FAIL
+    run_dir = runs[0]
+    print(f"[ai-smoke] Scratch dir: .ai/{run_dir.name}/")
+
+    # Assertions on the artefacts.
+    request_txt = (run_dir / "request.txt").read_text(encoding="utf-8")
+    if request_txt.strip() != args.request:
+        print(
+            f"[ai-smoke] FAIL: request.txt mismatch "
+            f"(got {request_txt!r}, expected {args.request!r})",
+        )
+        return EXIT_FAIL
+
+    ctx = json.loads((run_dir / "context.json").read_text(encoding="utf-8"))
+    for key in ("request", "mode", "max_files", "test_command", "ollama"):
+        if key not in ctx:
+            print(f"[ai-smoke] FAIL: context.json missing key {key!r}")
+            return EXIT_FAIL
+    if ctx["request"] != args.request:
+        print(f"[ai-smoke] FAIL: context.json request mismatch")
+        return EXIT_FAIL
+    print(f"[ai-smoke] context.json has {len(ctx)} top-level keys ✓")
+
+    # `./ai history` must list this run.
+    hist = _run(["./ai", "history"], cwd=service_dir)
+    if hist.returncode != 0 or run_dir.name not in hist.stdout:
+        print(
+            f"[ai-smoke] FAIL: ./ai history did not list {run_dir.name}\n"
+            f"  stdout: {hist.stdout!r}\n"
+            f"  stderr: {hist.stderr!r}",
+        )
+        return EXIT_FAIL
+    print("[ai-smoke] ./ai history lists the run ✓")
+
+    if not args.keep:
+        shutil.rmtree(wrapper)
+    print("[ai-smoke] OK — ./ai dispatch + scratch artefacts verified.")
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())

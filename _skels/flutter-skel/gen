@@ -180,6 +180,7 @@ fi
 
 # Create wrapper-level README, Makefile, and thin scripts. Same call as
 # every other skeleton — the wrapper layout is framework-agnostic.
+export SKEL_NAME="$(basename "$SKEL_DIR")"
 bash "$COMMON_DIR/common-wrapper.sh" "$MAIN_DIR" "$PROJECT_SUBDIR" "Flutter Frontend"
 
 # `flutter_dotenv` reads the bundled `.env` asset at runtime. The wrapper

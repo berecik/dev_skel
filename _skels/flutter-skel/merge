@@ -42,7 +42,7 @@ EXCLUDE_DIRS=(
 # is added or renamed inside `lib/api/`, `lib/auth/`, `lib/controllers/`,
 # `lib/screens/`, or `lib/state/`. Otherwise re-runs against an
 # existing wrapper will silently leave stale copies in place.
-OVERWRITE_PATTERN="^/(pubspec\.yaml|analysis_options\.yaml|lib/main\.dart|lib/config\.dart|lib/auth/token_store\.dart|lib/auth/auth_scope\.dart|lib/api/items_client\.dart|lib/state/app_state_store\.dart|lib/state/state_api\.dart|lib/state/app_state_scope\.dart|lib/controllers/items_controller\.dart|lib/screens/login_screen\.dart|lib/screens/home_screen\.dart|lib/screens/item_form\.dart|lib/screens/item_list\.dart|test/widget_test\.dart|test/cross_stack_smoke_test\.dart|test/login_screen_test\.dart|test/item_form_test\.dart|test/items_controller_test\.dart)$"
+OVERWRITE_PATTERN="^/(pubspec\.yaml|analysis_options\.yaml|lib/main\.dart|lib/config\.dart|lib/auth/token_store\.dart|lib/auth/auth_scope\.dart|lib/api/items_client\.dart|lib/state/app_state_store\.dart|lib/state/state_api\.dart|lib/state/app_state_scope\.dart|lib/controllers/items_controller\.dart|lib/screens/login_screen\.dart|lib/screens/home_screen\.dart|lib/screens/item_form\.dart|lib/screens/item_list\.dart|test/widget_test\.dart|test/cross_stack_smoke_test\.dart|test/cross_stack_e2e_test\.dart|test/login_screen_test\.dart|test/item_form_test\.dart|test/items_controller_test\.dart)$"
 
 while IFS= read -r -d '' src; do
   rel="${src#"$SKEL_DIR"}"

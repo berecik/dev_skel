@@ -9,6 +9,7 @@
         test-gen-ai-spring test-gen-ai-actix test-gen-ai-axum test-gen-ai-js test-gen-ai-react test-gen-ai-flutter \
         install-rag-deps install-deps rag-index-skels rag-clean-skels \
         test-shared-db test-shared-db-keep test-shared-db-python \
+        test-react-cross-stack \
         test-react-django-bolt test-react-django-bolt-keep \
         test-react-fastapi test-react-fastapi-keep \
         test-react-actix test-react-actix-keep \
@@ -17,8 +18,13 @@
         test-react-flask test-react-flask-keep \
         test-react-go test-react-go-keep \
         test-react-django test-react-django-keep \
+        sync-ai-runtime test-ai-script test-ai-script-keep \
+        test-backport-script test-backport-script-keep \
+        test-ai-memory test-ai-memory-keep \
+        test-ai-upgrade test-ai-upgrade-keep \
+        test-ai-fanout test-ai-fanout-keep \
         test-flutter-django-bolt test-flutter-django-bolt-keep \
-        test-flutter-fastapi test-flutter-fastapi-keep \
+        test-flutter-fastapi test-flutter-fastapi-keep test-flutter-cross-stack \
         test-cross-stack
 
 # Skeleton directories
@@ -395,6 +401,65 @@ test-react-django-keep: ## Same, but leave _test_projects/test-react-django on d
 	@_bin/skel-test-react-django --keep
 
 #
+# === SERVICE-LOCAL ./ai (per-service AI refactoring) ===
+#
+# Per-service AI refactoring. The `./ai` script ships in every
+# generated service via _skels/_common/refactor_runtime/install-ai-script
+# (called by common-wrapper.sh). The runtime auto-detects whether a
+# dev_skel checkout is reachable (in-tree mode → full RAG via FAISS)
+# or not (out-of-tree mode → ripgrep + stdlib Ollama HTTP).
+#
+# Targets:
+#   sync-ai-runtime    Refresh _skels/_common/refactor_runtime/ from
+#                      _bin/dev_skel_refactor_runtime.py — run this
+#                      whenever the canonical runtime is edited so
+#                      newly-generated services pick up the changes.
+#   test-ai-script     Cheap dispatch smoke (no LLM). Generates a
+#                      fastapi service, runs `./ai --no-llm`, asserts
+#                      the scratch dir + history are populated.
+#
+
+sync-ai-runtime: ## Sync the canonical AI runtime into the wrapper template
+	@cp _bin/dev_skel_refactor_runtime.py \
+	    _skels/_common/refactor_runtime/dev_skel_refactor_runtime.py
+	@echo "$(GREEN)Synced refactor runtime to wrapper template.$(NC)"
+
+test-ai-script: ## Smoke the per-service ./ai script (no Ollama required)
+	@echo "$(GREEN)=== ./ai dispatch smoke ===$(NC)"
+	@_bin/skel-test-ai-script
+
+test-ai-script-keep: ## Same, but leave the test wrapper on disk
+	@_bin/skel-test-ai-script --keep
+
+test-backport-script: ## Smoke the per-service ./backport propose+apply round trip
+	@echo "$(GREEN)=== ./backport propose+apply smoke ===$(NC)"
+	@_bin/skel-test-backport-script
+
+test-backport-script-keep: ## Same, but leave the test wrapper on disk
+	@_bin/skel-test-backport-script --keep
+
+test-ai-memory: ## Smoke project-wide ./ai memory + wrapper-level dispatch
+	@echo "$(GREEN)=== ./ai memory + wrapper dispatch smoke ===$(NC)"
+	@_bin/skel-test-ai-memory
+
+test-ai-memory-keep: ## Same, but leave the test wrapper on disk
+	@_bin/skel-test-ai-memory --keep
+
+test-ai-upgrade: ## Smoke ./ai upgrade no-op + outdated paths (no LLM)
+	@echo "$(GREEN)=== ./ai upgrade smoke ===$(NC)"
+	@_bin/skel-test-ai-upgrade
+
+test-ai-upgrade-keep: ## Same, but leave the test wrapper on disk
+	@_bin/skel-test-ai-upgrade --keep
+
+test-ai-fanout: ## Smoke wrapper-level ./ai fan-out default (two services)
+	@echo "$(GREEN)=== ./ai wrapper fan-out smoke ===$(NC)"
+	@_bin/skel-test-ai-fanout
+
+test-ai-fanout-keep: ## Same, but leave the test wrapper on disk
+	@_bin/skel-test-ai-fanout --keep
+
+#
 # === FLUTTER + BACKEND CROSS-STACK INTEGRATION TESTS ===
 #
 # Same shape as the React tests but for the Flutter frontend. Each one
@@ -424,16 +489,32 @@ test-flutter-fastapi: ## Cross-stack integration test (fastapi + flutter)
 test-flutter-fastapi-keep: ## Same, but leave _test_projects/test-flutter-fastapi on disk
 	@_bin/skel-test-flutter-fastapi --keep
 
+test-flutter-cross-stack: ## Run every Flutter + backend cross-stack integration test in sequence
+	@echo "$(GREEN)=== Running all Flutter + backend integration tests ===$(NC)"
+	@$(MAKE) test-flutter-django-bolt
+	@$(MAKE) test-flutter-fastapi
+	@echo "$(GREEN)All Flutter + backend integration tests passed.$(NC)"
+
 #
 # === ALL CROSS-STACK TESTS (one shot) ===
 #
+test-react-cross-stack: ## Run every React + backend cross-stack integration test in sequence
+	@echo "$(GREEN)=== Running all React + backend integration tests ===$(NC)"
+	@$(MAKE) test-react-django-bolt
+	@$(MAKE) test-react-fastapi
+	@$(MAKE) test-react-flask
+	@$(MAKE) test-react-django
+	@$(MAKE) test-react-spring
+	@$(MAKE) test-react-actix
+	@$(MAKE) test-react-axum
+	@$(MAKE) test-react-go
+	@echo "$(GREEN)All React + backend integration tests passed.$(NC)"
+
 test-cross-stack: ## Run every cross-stack integration test in sequence
 	@echo "$(GREEN)=== Running all cross-stack integration tests ===$(NC)"
 	@$(MAKE) test-shared-db
-	@$(MAKE) test-react-django-bolt
-	@$(MAKE) test-react-fastapi
-	@$(MAKE) test-flutter-django-bolt
-	@$(MAKE) test-flutter-fastapi
+	@$(MAKE) test-react-cross-stack
+	@$(MAKE) test-flutter-cross-stack
 	@echo "$(GREEN)All cross-stack tests passed.$(NC)"
 
 #

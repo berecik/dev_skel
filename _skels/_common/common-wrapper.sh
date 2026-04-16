@@ -508,7 +508,14 @@ chmod +x "$MAIN_DIR/services"
 SINGLE_SHOT_SCRIPTS=(run run-dev lint format deps)
 
 # Fan-out scripts: default to every matching service.
-FAN_OUT_SCRIPTS=(test build build-dev stop stop-dev install-deps)
+#
+# `ai` and `backport` sit in this list so that a bare wrapper-level
+# invocation (`./ai "REQUEST"` or `./ai upgrade`) fans out across
+# every service by default — the user can still scope to one service
+# with `./ai <svc> "REQUEST"`. This matches the user's mental model:
+# "at the project level, talk to the whole project; at the service
+# level, talk to just this service".
+FAN_OUT_SCRIPTS=(test build build-dev stop stop-dev install-deps ai backport)
 
 write_dispatch_script() {
   local name="$1"
@@ -553,6 +560,21 @@ if [[ \${#SERVICES[@]} -eq 0 ]]; then
   exit 0
 fi
 
+# --all forces fan-out: run the script on every service in the
+# wrapper. Useful for ./ai --all "rename Item to Task" so a single
+# request lands across the whole project (multi-service refactor).
+# Recognised both as the first arg and embedded later in the arg list.
+ALL_MODE=0
+ARGS=()
+for arg in "\$@"; do
+  if [[ "\$arg" == "--all" ]]; then
+    ALL_MODE=1
+  else
+    ARGS+=("\$arg")
+  fi
+done
+set -- "\${ARGS[@]}"
+
 # If the first arg matches a service slug, dispatch to that service only.
 TARGET=""
 if [[ \${#@} -gt 0 ]]; then
@@ -575,6 +597,22 @@ run_one() {
 if [[ -n "\$TARGET" ]]; then
   run_one "\$TARGET" "\$@"
   exit \$?
+fi
+
+# --all promotes a "single" script into fan-out for this invocation
+# (e.g. \`./ai --all "REQUEST"\` runs the AI request against every
+# service that ships ./ai). Failures are accumulated like a fanout
+# script; the final exit code is the last non-zero status.
+if [[ "\$ALL_MODE" == 1 ]]; then
+  status=0
+  for svc in "\${SERVICES[@]}"; do
+    run_one "\$svc" "\$@" || {
+      rc=\$?
+      status=\$rc
+      echo "[\$svc] failed with exit \$rc" >&2
+    }
+  done
+  exit \$status
 fi
 
 EOF
@@ -606,6 +644,41 @@ EOF
   chmod +x "$path"
   echo "  + $name (${mode})"
 }
+
+# Install the wrapper-shared `./ai` script + vendored runtime into
+# every discovered service. The script is identical across skels;
+# the per-service `./test` command embeds in `.skel_context.json`
+# (or falls back to `./test` automatically) so each language picks
+# up its own test runner.
+COMMON_DIR_ABS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AI_INSTALLER="$COMMON_DIR_ABS/refactor_runtime/install-ai-script"
+if [[ -x "$AI_INSTALLER" ]]; then
+  shopt -s nullglob
+  for dir in "$MAIN_DIR"/*/; do
+    svc_name="$(basename "$dir")"
+    case "$svc_name" in _shared|.*) continue ;; esac
+    # Only services that ship at least one executable script (the
+    # canonical "this is a real service dir" marker) get the AI
+    # script; pure asset directories are left alone.
+    has_script=0
+    for f in "${dir%/}"/*; do
+      [[ -f "$f" && -x "$f" ]] && { has_script=1; break; }
+    done
+    if [[ "$has_script" == 1 ]]; then
+      # The just-generated service (PROJECT_SUBDIR) gets a
+      # force-overwritten `.skel_context.json` so its sidecar always
+      # matches the current gen invocation. Sibling services keep
+      # their existing sidecars (each one was set when ITS gen ran).
+      # SKEL_NAME is exported by the per-skel gen scripts before they
+      # call common-wrapper.sh.
+      if [[ "$svc_name" == "$PROJECT_SUBDIR" && -n "${SKEL_NAME:-}" ]]; then
+        bash "$AI_INSTALLER" "${dir%/}" "$SKEL_NAME" force >/dev/null
+      else
+        bash "$AI_INSTALLER" "${dir%/}" >/dev/null
+      fi
+    fi
+  done
+fi
 
 echo "[common-wrapper] Creating dispatch scripts..."
 

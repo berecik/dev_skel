@@ -64,6 +64,10 @@ Backend-only project (skip the frontend pick)::
 
     _bin/skel-gen-ai myproj --no-frontend --backend python-fastapi-skel
 
+Frontend-only project (skip the backend pick)::
+
+    _bin/skel-gen-ai myproj --no-backend --frontend ts-react-skel
+
 Single-skel mode (legacy — pass an explicit positional skel_name)::
 
     _bin/skel-gen-ai myproj python-django-skel
@@ -237,6 +241,15 @@ def parse_args() -> argparse.Namespace:
         "--no-frontend",
         action="store_true",
         help="Skip the frontend pick (backend-only project)",
+    )
+    fs.add_argument(
+        "--no-backend",
+        action="store_true",
+        help=(
+            "Skip the backend pick (frontend-only project). The "
+            "frontend will be generated against an external/yet-to-exist "
+            "backend reachable via BACKEND_URL."
+        ),
     )
     fs.add_argument(
         "--backend-service-name",
@@ -957,10 +970,13 @@ def _print_fullstack_summary(
     print()
     print("  ===== full-stack run summary =====")
     print(f"  Project (wrapper) : {choices.project_name}  ({target})")
-    print(
-        f"  Backend           : {choices.backend_skeleton} → "
-        f"{choices.backend_service_label}"
-    )
+    if choices.has_backend:
+        print(
+            f"  Backend           : {choices.backend_skeleton} → "
+            f"{choices.backend_service_label}"
+        )
+    else:
+        print("  Backend           : (none — frontend-only)")
     if choices.has_frontend:
         print(
             f"  Frontend          : {choices.frontend_skeleton} → "
@@ -1042,6 +1058,8 @@ def _run_fullstack_flow(
         no_input=args.no_input,
         allow_no_frontend=True,
         skip_frontend=args.no_frontend,
+        allow_no_backend=True,
+        skip_backend=args.no_backend,
     )
 
     _print_fullstack_summary(choices, target)
@@ -1060,28 +1078,35 @@ def _run_fullstack_flow(
             raise SystemExit(f"Ollama check failed:\n{exc}")
         print(f"  Ollama: {ollama_cfg.model} @ {ollama_cfg.base_url}")
 
-    # ----- Phase 1: backend per-target overlay -------------------------- #
-    print()
-    print("  ===== Phase 1: Backend generation =====")
-    backend_subdir, backend_ctx, backend_integration, _backend_manifest = (
-        _generate_per_target_overlay(
-            args=args,
-            repo_root=repo_root,
-            skel_name=choices.backend_skeleton,
-            service_label=choices.backend_service_label,
-            target=target,
-            display_proj_name=display_proj_name,
-            gen_proj_arg=gen_proj_arg,
-            item_name=choices.item_name,
-            auth_type=choices.auth_type,
-            backend_extra=choices.backend_extra,
-            frontend_extra=choices.frontend_extra,
-            integration_extra=choices.integration_extra,
-            client=client,
-            skip_base=args.skip_base,
-            dry_run=args.dry_run,
+    # ----- Phase 1: backend per-target overlay (optional) --------------- #
+    backend_subdir: Optional[str] = None
+    backend_ctx: Optional[GenerationContext] = None
+    backend_integration = None
+    if choices.has_backend:
+        print()
+        print("  ===== Phase 1: Backend generation =====")
+        backend_subdir, backend_ctx, backend_integration, _backend_manifest = (
+            _generate_per_target_overlay(
+                args=args,
+                repo_root=repo_root,
+                skel_name=choices.backend_skeleton,
+                service_label=choices.backend_service_label,
+                target=target,
+                display_proj_name=display_proj_name,
+                gen_proj_arg=gen_proj_arg,
+                item_name=choices.item_name,
+                auth_type=choices.auth_type,
+                backend_extra=choices.backend_extra,
+                frontend_extra=choices.frontend_extra,
+                integration_extra=choices.integration_extra,
+                client=client,
+                skip_base=args.skip_base,
+                dry_run=args.dry_run,
+            )
         )
-    )
+    else:
+        print()
+        print("  ===== Phase 1: Backend skipped (frontend-only project) =====")
 
     # ----- Phase 2: frontend per-target overlay (optional) -------------- #
     frontend_subdir: Optional[str] = None
@@ -1115,20 +1140,37 @@ def _run_fullstack_flow(
     # only with the services it knew about at that point. Now that every
     # service (backend + frontend) is generated, re-run the wrapper
     # scaffolder so the dispatch scripts (``run``, ``test``, ``build``,
-    # ``install-deps``, …) are fully aware of all siblings.
+    # ``install-deps``, …) are fully aware of all siblings. When the
+    # project skipped the backend, we anchor the refresh on the frontend
+    # subdir instead (common-wrapper.sh expects *some* service slug to
+    # treat as the "just-generated" one for sidecar-overwrite purposes).
     if not args.dry_run:
         common_wrapper = repo_root / "_skels" / "_common" / "common-wrapper.sh"
         if common_wrapper.is_file():
-            print()
-            print("  Refreshing wrapper dispatch scripts (all services visible)...")
-            subprocess.run(
-                ["bash", str(common_wrapper), str(target), backend_subdir],
-                check=False,
-            )
+            anchor_subdir = backend_subdir or frontend_subdir
+            if anchor_subdir:
+                print()
+                print(
+                    "  Refreshing wrapper dispatch scripts "
+                    "(all services visible)..."
+                )
+                subprocess.run(
+                    ["bash", str(common_wrapper), str(target), anchor_subdir],
+                    check=False,
+                )
 
     # ----- Phase 3: backend integration (now sees frontend as sibling) - #
+    #
+    # Integration is a backend-side concern (the manifest lives on the
+    # backend skeleton and writes integration files into the backend
+    # service). A frontend-only project has nothing to integrate.
     integration_results: list = []
-    if backend_integration and backend_integration.targets and not args.no_integrate:
+    if (
+        choices.has_backend
+        and backend_integration
+        and backend_integration.targets
+        and not args.no_integrate
+    ):
         if args.dry_run:
             backend_ctx.siblings = discover_siblings(target, exclude_slug=backend_subdir)
             print()
@@ -1185,7 +1227,11 @@ def _run_fullstack_flow(
                 except ValueError:
                     rel = r.written_to
                 print(f"    + {rel}  ({r.bytes_written} bytes)")
-    elif not args.no_integrate and not args.dry_run:
+    elif (
+        choices.has_backend
+        and not args.no_integrate
+        and not args.dry_run
+    ):
         print()
         print(
             f"  (no INTEGRATION_MANIFEST in {choices.backend_skeleton}.py — "
@@ -1236,7 +1282,9 @@ def _run_fullstack_flow(
     if not args.dry_run and client is not None and not args.no_docs:
         print()
         print("  ===== Phase 5: Documentation & LLM instructions =====")
-        service_contexts = [backend_ctx]
+        service_contexts = []
+        if backend_ctx is not None:
+            service_contexts.append(backend_ctx)
         if frontend_ctx is not None:
             service_contexts.append(frontend_ctx)
         try:

@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""Run ./ai against a service from outside it.
+
+Usage:
+  _bin/skel-ai SERVICE_DIR "REQUEST" [ai-flags...]
+
+This is the same code path the per-service ./ai script uses; the only
+difference is that it accepts an arbitrary SERVICE_DIR so maintainers
+can drive AI refactors over multiple services from a single shell
+session.
+
+Examples:
+  _bin/skel-ai _test_projects/myproj/items_api "add a /healthz endpoint"
+  _bin/skel-ai _test_projects/rf-fastapi/items_api apply "extract a service layer"
+  _bin/skel-ai _test_projects/rf-fastapi/items_api history
+"""
+
+import sys
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from dev_skel_refactor_runtime import main as runtime_main  # noqa: E402
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2 or sys.argv[1] in {"-h", "--help"}:
+        print(__doc__, file=sys.stderr)
+        sys.exit(0 if (len(sys.argv) >= 2 and sys.argv[1] in {"-h", "--help"}) else 1)
+    service_dir = Path(sys.argv[1]).resolve()
+    if not service_dir.is_dir():
+        print(f"Not a directory: {service_dir}", file=sys.stderr)
+        sys.exit(1)
+    sys.exit(runtime_main(service_dir, sys.argv[2:]))

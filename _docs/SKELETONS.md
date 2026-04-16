@@ -1,95 +1,219 @@
-# Skeleton Templates Reference
+# Skeleton Templates
 
-## Overview
+A skeleton is a complete, working project template **plus** the AI
+machinery that lets `skel-gen-ai` regenerate its core files for any
+entity / auth style / pair of custom prompts. Every skeleton in the
+catalogue is AI-supported and every generated service ships its own
+in-service `./ai` agent.
 
-Each skeleton is a complete, working project template that can be used to bootstrap new projects. Skeletons include:
-- Source code with example implementations
-- Configuration files
-- Test setup
-- Development tooling
+---
 
-### Common conventions
+## What every skeleton ships
 
-- **Generation**
-  - From repo root: `make gen-<name> NAME=<target-path>` (delegates to the skeleton's `gen` script)
-  - From anywhere: `_bin/skel-gen <skel_type> <proj_name> [service_in_proj_name]` (prefers per-skeleton `gen` script)
-  - From skeleton dir: `bash ./gen <target-path>` (the `gen` script contains ALL generation logic)
-- **Generated layout (wrapper + inner project)**
-  - The `NAME` / `target-path` you pass is the **wrapper directory** (`main_dir`).
-  - The real framework-specific project lives in a per-skeleton subdirectory (`project_dir`) inside `main_dir`:
-    - Python backends (FastAPI, Flask, Django): `backend/`
-    - React frontend (ts-react-skel): `frontend/`
-    - Flutter frontend (flutter-skel): `frontend/`
-    - Node.js (js-skel): `app/`
-    - Java Spring, Rust Actix, Rust Axum: `service/`
-  - A common wrapper script (`_skels/_common/common-wrapper.sh`) creates in `main_dir`:
-    - A generic `README.md` and `Makefile`.
-    - Thin wrapper scripts (`./run`, `./test`, `./build`, `./stop`, `./install-deps`, etc.) that **forward all arguments** to matching scripts in `project_dir/`.
-- **Testing**
-  - From skeleton dir: `make test` which runs `bash ./test`
-  - E2E skeleton tests: `./test_skel` generates into a temporary directory, uses the wrapper layout, runs tests, and builds Docker image
-- **Build/Run/Stop**
-  - `./build` - Build Docker image (with options like `--no-cache`, `--tag=`, framework-specific like `--jar`, `--release`, `--local`)
-  - `./run` - Run development server (modes: `dev`, `prod`, `docker`)
-  - `./stop` - Stop running Docker containers
-- **Merge script**
-  - Each skeleton uses an executable `merge` script referenced by its Makefile as `MERGE := $(SKEL_DIR)/merge`
-  - It copies auxiliary files into the generated project without overwriting generator-owned files
+```
+_skels/<lang>-<framework>-skel/
+├── VERSION                 # semver — bumped by `./backport apply`
+├── CHANGELOG.md            # Keep a Changelog — appended by `./backport apply`
+├── gen                     # static base scaffolder (called by skel-gen + skel-gen-ai)
+├── merge                   # rsync helper that excludes generator-owned files
+├── deps                    # per-stack toolchain installer (called by ./skel-deps)
+├── test                    # end-to-end skeleton test (generates → tests → cleans up)
+├── AGENTS.md               # cross-agent rules for this skel (rendered into projects)
+├── JUNIE-RULES.md          # project-authoritative rules for this skel
+├── (skeleton source tree)  # the actual template content
+└── (per-skeleton README)
+```
 
-### Scripts available in generated projects
+And under `_skels/_common/`:
 
-| Script | Description | Common Options |
-|--------|-------------|----------------|
-| `./test` | Run project tests | `-q` (quiet), `--cov` (coverage) |
-| `./build` | Build Docker image | `--tag=NAME`, `--no-cache`, `--push` |
-| `./run` | Run server | `dev`, `prod`, `docker` |
-| `./stop` | Stop services | - |
+```
+_skels/_common/
+├── common-wrapper.sh                # wrapper-level scaffolder (.env, dispatch scripts, ./ai installer)
+├── manifests/<skel>.py              # AI manifest — list of files Ollama rewrites + prompts
+├── refactor_runtime/
+│   ├── ai                           # per-service ./ai script (vendored into every gen)
+│   ├── dev_skel_refactor_runtime.py # per-service .ai_runtime.py source
+│   ├── install-ai-script            # writes ./ai + .ai_runtime.py + .skel_context.json into each service
+│   └── backport                     # per-service ./backport script
+└── AGENTS.md / CLAUDE.md / JUNIE-RULES.md  # templates rendered into generated projects
+```
 
-Framework-specific build options:
-- **Java Spring**: `./build --jar` - Build JAR only
-- **Rust**: `./build --release` - Build release binary
-- **Vite/React**: `./build --local` - Build locally (npm run build)
+A generated service inherits from both — the skeleton's source tree
+plus the AI runtime that the wrapper installer drops next to it.
 
-## Available Skeletons
+---
 
-### Python
+## What every generated service ships
 
-- [python-fastapi-skel](./python-fastapi-skel.md) - FastAPI with async SQLAlchemy
-- [python-flask-skel](./python-flask-skel.md) - Flask with Flask-SQLAlchemy
-- [python-django-skel](./python-django-skel.md) - Django
-- [python-django-bolt-skel](./python-django-bolt-skel.md) - Django + django-bolt (Rust HTTP layer) + msgspec.Struct schemas
+After `skel-gen-ai` (or `skel-gen-static`) finishes, every service
+directory contains:
 
-### TypeScript/JavaScript
+```
+<wrapper>/<service>/
+├── (real source tree for the chosen stack)
+├── ai                        # in-service code agent (refactor / verify / undo / upgrade)
+├── backport                  # per-service backport script (service → skel)
+├── .ai_runtime.py            # vendored runtime (in-tree → RAG, out-of-tree → stdlib)
+├── .skel_context.json        # sidecar: skeleton_name, skeleton_version, generated_at, test_command
+├── .ai/ (gitignored)         # propose dirs, memory.jsonl, .lock
+├── test  build  run  stop  install-deps   # per-stack scripts
+└── (per-service README + AGENTS.md + CLAUDE.md generated by Phase 5)
+```
 
-- [ts-react-skel](./ts-react-skel.md) - React + Vite + TypeScript + Vitest
-- [js-skel](./js-skel.md) - Plain JavaScript/Node.js
+The wrapper auto-generates dispatch scripts (`<wrapper>/run`,
+`<wrapper>/test`, `<wrapper>/ai`, `<wrapper>/backport` …) that fan out
+to every service by default and accept an optional first-arg slug for
+single-service scoping.
 
-### Dart / Flutter
+---
 
-- [flutter-skel](./flutter-skel.md) - Flutter (Material 3) + `http` + `flutter_secure_storage` + `flutter_dotenv`. Frontend that pairs with the wrapper-shared `/api/items` + `/api/auth/login` + `/api/state` contract.
+## The catalogue (12 skeletons)
 
-### Java
+| Skeleton | Kind | AI manifest | Default slug | Items API contract | Marker file (sibling discovery) |
+| -------- | ---- | ----------- | ------------ | ------------------ | ------------------------------- |
+| [`python-fastapi-skel`](python-fastapi-skel.md) | backend | ✓ | `backend/` | **server** | `core/config.py` |
+| `python-fastapi-rag-skel` | backend | — | `backend/` | partial | `app/__init__.py` |
+| [`python-django-skel`](python-django-skel.md) | backend | ✓ | `backend/` | — | `myproject/settings.py` |
+| [`python-django-bolt-skel`](python-django-bolt-skel.md) | backend | ✓ | `backend/` | **server** | `app/api.py` |
+| [`python-flask-skel`](python-flask-skel.md) | backend | ✓ | `backend/` | — | `app/config.py` |
+| [`java-spring-skel`](java-spring-skel.md) | backend | ✓ | `service/` | — | `src/main/resources/application.properties` |
+| [`rust-actix-skel`](rust-actix-skel.md) | backend | ✓ | `service/` | — | `src/config.rs` |
+| [`rust-axum-skel`](rust-axum-skel.md) | backend | ✓ | `service/` | — | `src/config.rs` |
+| `go-skel` | backend | — | `service/` | — | `internal/config/config.go` |
+| [`js-skel`](js-skel.md) | backend | ✓ | `app/` | — | `src/config.js` |
+| [`ts-react-skel`](ts-react-skel.md) | frontend | ✓ | `frontend/` | **client** | `vite.config.ts` |
+| [`flutter-skel`](flutter-skel.md) | frontend | ✓ | `frontend/` | **client** | `pubspec.yaml` |
 
-- [java-spring-skel](./java-spring-skel.md) - Spring Boot
+Backends marked **server** ship the wrapper-shared `/api/items` +
+`/api/auth/login` + `/api/state` contract. Frontends marked **client**
+ship a typed call layer that targets that contract via `BACKEND_URL`.
+Pair any **server** with any **client** for a working full-stack pair
+out of the box; pair a non-server backend with a client and the
+frontend will get 404s until you hand-wire the routes (the dialog
+warns on this combination).
 
-### Rust
+---
 
-- [rust-actix-skel](./rust-actix-skel.md) - Actix-web
-- [rust-axum-skel](./rust-axum-skel.md) - Axum
+## AI manifest — what `skel-gen-ai` rewrites
 
-## Merge Script Typical Exclusions
+Each skel has a manifest at `_skels/_common/manifests/<skel>.py` with
+two top-level dicts:
 
-Each skeleton ships a `merge` Bash script to copy auxiliary files into the generated project without overwriting generator-owned files. Typical exclusions include:
+* `MANIFEST = {...}` — the per-target overlay phase (Phase 1 for
+  backend, Phase 2 for frontend). Rewrites a curated set of "core"
+  files (model + repository + service + controller + tests) for the
+  user's `{item_class}`.
+* `INTEGRATION_MANIFEST = {...}` (optional) — the cross-service
+  wiring phase (Phase 3). Discovers sibling services in the wrapper,
+  exposes them via `{wrapper_snapshot}` / `{retrieved_siblings}` /
+  `{sibling_count}` / `{sibling_slugs}` placeholders, writes typed
+  sibling clients + integration tests, then drives the test-and-fix
+  loop (`./test → repair → re-run`, capped by `fix_timeout_m`).
 
-**Shared directories and caches:**
-- `.venv/`, `node_modules/`, `target/`, `__pycache__/`, `.git/`, `dist/`, `build/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `*.egg-info/`
+Available prompt placeholders are documented at the top of
+[`../_bin/skel_ai_lib.py`](../_bin/skel_ai_lib.py); the FastAPI
+manifest is the reference migration to the new `{retrieved_context}`
+/ `{retrieved_siblings}` RAG-aware shape.
 
-**Shared files and helpers:**
-- `Makefile`, `merge`, `gen`, `test`, `*.pyc`, `*.pyo`, `*.class`, `*.db`, `*.sqlite`, `*.sqlite3`
+To extend support to a new skeleton: drop the source tree under
+`_skels/<name>-skel/`, drop a `<name>-skel.py` manifest under
+`_skels/_common/manifests/`, then run
+`make test-ai-generators-dry --skel <name>-skel` and finally
+`make test-ai-generators-<name>` if you have a model server.
 
-**Stack-specific exclusions:**
-- Python Django: `manage.py`, `myproject/__init__.py`, `myproject/asgi.py`, `myproject/settings.py`, `myproject/urls.py`, `myproject/wsgi.py`
-- JavaScript (Node): `package.json`, `package-lock.json`
-- TS React: `package.json`, `package-lock.json`, `tsconfig.json` (vite.config.ts and src files are overwritten)
-- Rust (Actix, Axum): `Cargo.toml`, `src/main.rs` (leave these from `cargo new`)
-- Java Spring: generally exclude `Makefile` and `merge` only (project content comes from Spring Initializr)
+---
+
+## Versioning + service ↔ template sync
+
+Each skel's `VERSION` + `CHANGELOG.md` are the contract that powers
+two flows:
+
+* **`./backport apply`** (service → template) — bumps `<skel>/VERSION`
+  by a semver patch and prepends a `## [VERSION] - YYYY-MM-DD` entry
+  to `<skel>/CHANGELOG.md` listing every backported file. The
+  changelog is the auditable, replayable log of every accepted
+  service-to-template change.
+* **`./ai upgrade`** (template → service) — reads
+  `<service>/.skel_context.json::skeleton_version`, compares against
+  `<skel>/VERSION`, extracts the matching CHANGELOG entries, and
+  synthesises an AI request that asks the model to apply those
+  changes to the service. Dispatched through the propose/apply path
+  so all the `./ai` safety machinery (git stash, fix loop, verify)
+  still applies. On a successful apply the sidecar's
+  `skeleton_version` is rewritten to the new baseline.
+
+See [LLM-MAINTENANCE.md § Skeleton versioning + `./ai upgrade`](LLM-MAINTENANCE.md#skeleton-versioning--ai-upgrade-since-2026-04)
+for the implementation pointers.
+
+---
+
+## Wrapper integration
+
+`_skels/_common/common-wrapper.sh` runs after every per-skel `gen`
+script and:
+
+1. Writes the wrapper-level `.env` (DATABASE_URL, JWT_SECRET, etc.)
+   if it doesn't already exist.
+2. Regenerates `<wrapper>/_shared/service-urls.env` with one
+   `SERVICE_URL_<UPPER_SLUG>=http://...` per service in the wrapper
+   (preserving previously-assigned ports).
+3. Installs `./ai` + `./backport` + `.ai_runtime.py` +
+   `.skel_context.json` into every service via
+   `_skels/_common/refactor_runtime/install-ai-script`. The
+   just-generated service gets a force-overwritten sidecar; sibling
+   services keep their existing ones.
+4. Lays down the wrapper-level dispatch scripts (`./test`, `./run`,
+   `./build`, `./stop`, `./install-deps`, `./ai`, `./backport`) using
+   the `FAN_OUT_SCRIPTS` partition (`ai` and `backport` are
+   fan-out-by-default since 2026-04).
+
+---
+
+## Per-stack environment wiring
+
+Every backend reads `<wrapper>/.env` first, then its local `.env`. The
+helper is per-stack but the contract is the same — never hard-code a
+SQLite path or JWT secret in any skel template. The env-driven flow is
+what lets a token issued by one service be accepted by every other
+service in the wrapper.
+
+| Stack | Env helper | JWT exposure |
+| ----- | ---------- | ------------ |
+| Python (Django / Django-Bolt) | `_build_databases()` in `settings.py` | `settings.JWT_*` |
+| Python (FastAPI) | `_resolve_database_url()` in `core/config.py` | `config.JWT_*` |
+| Python (Flask) | `Config` class in `app/config.py` | `config.JWT_*` |
+| Java Spring | `${SPRING_DATASOURCE_URL}` in `application.properties` | `JwtProperties` bean |
+| Rust (Actix / Axum) | `Config::from_env()` in `src/config.rs` + `load_dotenv()` | `Config.jwt_*` (in `AppState`) |
+| Node | `dotenv` in `src/config.js` (wrapper `.env` then local) | `config.jwt.*` |
+| React (Vite) | `vite.config.ts` env-loader (build-time) | `config.jwt.*` (excluding `JWT_SECRET`) |
+| Flutter | `flutter_dotenv` (runtime, bundled `.env` asset) | `flutter_secure_storage` for the bearer token |
+
+The wrapper `.env` ships `DATABASE_URL` (Python form),
+`DATABASE_JDBC_URL` and `SPRING_DATASOURCE_URL` (JVM form)
+side-by-side — keep all three in sync when switching to Postgres.
+
+---
+
+## Generator-owned files (do not hand-edit)
+
+Some files in each skel are *owned* by the static scaffolder (or by
+the upstream `cargo new` / `npm create vite` / Spring Initializr
+output) — the AI manifest steers around them, and `./backport` skips
+them by default. Hand-editing these in a generated service won't
+propagate back. Each skel's `merge` script lists the exact exclusions;
+the common ones:
+
+* **All skels** — `Makefile`, `merge`, `gen`, `test`, build artefacts
+  (`__pycache__/`, `.venv/`, `node_modules/`, `target/`, `dist/`,
+  `*.sqlite3`, …).
+* **Python Django / Django-Bolt** — `manage.py`, `myproject/asgi.py`,
+  `myproject/settings.py`, `myproject/urls.py`, `myproject/wsgi.py`.
+* **TypeScript React** — `package.json`, `package-lock.json`,
+  `tsconfig.json`, `tsconfig.node.json`, `vite.config.ts`.
+* **Rust (Actix / Axum)** — `Cargo.toml`, `src/main.rs`.
+* **Java Spring** — generally the entire generated tree (it comes from
+  Spring Initializr); only `Makefile` + `merge` are skel-owned.
+
+If you want a generator-owned change to land in future projects, edit
+the skeleton template directly (`_skels/<name>-skel/...`) and bump the
+`VERSION` + `CHANGELOG.md` to record it.

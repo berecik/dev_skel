@@ -75,6 +75,7 @@ bash "$SKEL_DIR/merge" "$SKEL_DIR" "$PROJECT_DIR"
 )
 
 # Step 5: wrapper-level dispatch scripts (run, test, build, stop, ...).
+export SKEL_NAME="$(basename "$SKEL_DIR")"
 bash "$COMMON_DIR/common-wrapper.sh" "$MAIN_DIR" "$PROJECT_SUBDIR" "Django Backend"
 
 echo "[django] Done."

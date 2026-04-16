@@ -102,6 +102,14 @@ def parse_args() -> argparse.Namespace:
             "missing argument."
         ),
     )
+    parser.add_argument(
+        "--existing-project",
+        action="store_true",
+        help=(
+            "Add the generated service into an existing wrapper directory "
+            "instead of creating/bootstrapping a new wrapper."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -181,6 +189,7 @@ def main() -> None:
         skel_name=args.skel_name,
         proj_name="." if _is_cwd_proj(args.proj_name) else args.proj_name,
         service_name=args.service_name,
+        existing_project=args.existing_project,
     )
     render_agents_template(
         target=target,

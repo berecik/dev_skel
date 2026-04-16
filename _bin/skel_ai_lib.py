@@ -823,18 +823,20 @@ SKELETON_DESCRIPTIONS: Dict[str, str] = {
 class FullstackChoices:
     """Result of :func:`prompt_fullstack_dialog`.
 
-    The dialog asks for *both* a backend and a frontend skeleton (the
-    frontend is optional — pick "none" to skip), one project name, two
-    service display names (one per side), the canonical item entity, an
-    auth style, and three freeform "extra instructions" prompts (one
-    each for the backend, frontend, and integration phases). Returning
-    a dataclass instead of a flat dict makes the CLI driver code easier
-    to read at the call site.
+    The dialog asks for *both* a backend and a frontend skeleton. Both
+    sides are optional — pick "none" on either to skip that half (a
+    backend-only or frontend-only project). The dialog enforces that
+    at least one side is chosen. Also collects one project name, two
+    service display names (one per side), the canonical item entity,
+    an auth style, and three freeform "extra instructions" prompts
+    (one each for the backend, frontend, and integration phases).
+    Returning a dataclass instead of a flat dict makes the CLI driver
+    code easier to read at the call site.
     """
 
     project_name: str
-    backend_skeleton: str
-    backend_service_label: str
+    backend_skeleton: Optional[str]
+    backend_service_label: Optional[str]
     frontend_skeleton: Optional[str]
     frontend_service_label: Optional[str]
     item_name: str
@@ -844,12 +846,19 @@ class FullstackChoices:
     integration_extra: str
 
     @property
+    def has_backend(self) -> bool:
+        return bool(self.backend_skeleton)
+
+    @property
     def has_frontend(self) -> bool:
         return bool(self.frontend_skeleton)
 
     @property
     def backend_serves_items(self) -> bool:
-        return self.backend_skeleton in BACKENDS_WITH_ITEMS_API
+        return bool(
+            self.backend_skeleton
+            and self.backend_skeleton in BACKENDS_WITH_ITEMS_API
+        )
 
 
 def _ask_choice(
@@ -946,6 +955,8 @@ def prompt_fullstack_dialog(
     no_input: bool = False,
     allow_no_frontend: bool = True,
     skip_frontend: bool = False,
+    allow_no_backend: bool = True,
+    skip_backend: bool = False,
 ) -> FullstackChoices:
     """Run the upgraded interactive dialog and return the choices.
 
@@ -988,12 +999,6 @@ def prompt_fullstack_dialog(
         return raw or default
 
     # Step 1: backend ----------------------------------------------------- #
-    if not available_backends:
-        raise SystemExit(
-            "No AI-supported backend skeletons found. Drop a manifest "
-            "under _skels/_common/manifests/ to enable one."
-        )
-
     # Default to the first backend that ships the wrapper-shared items
     # API contract. That gives the user a working items round-trip out
     # of the box; the rest are still selectable.
@@ -1004,18 +1009,41 @@ def prompt_fullstack_dialog(
             break
 
     print("  Step 1/6: Backend")
-    chosen_backend = backend_skeleton or _ask_choice(
-        "backend skeleton",
-        available_backends,
-        default_index=default_backend_idx,
-        descriptions=SKELETON_DESCRIPTIONS,
-        no_input=no_input,
-        allow_none=False,
-    )
-    if chosen_backend is None:
-        raise SystemExit("A backend selection is required.")
+    chosen_backend: Optional[str]
+    if skip_backend:
+        # Explicit "frontend-only project" — `--no-backend` on the CLI.
+        # We do not enter the picker even if the user is on a TTY.
+        chosen_backend = None
+        print("  (skipped — frontend-only project)")
+    elif backend_skeleton is not None:
+        chosen_backend = backend_skeleton or None
+    elif not available_backends:
+        if not allow_no_backend:
+            raise SystemExit(
+                "No AI-supported backend skeletons found. Drop a "
+                "manifest under _skels/_common/manifests/ to enable one."
+            )
+        chosen_backend = None
+    else:
+        chosen_backend = _ask_choice(
+            "backend skeleton",
+            available_backends,
+            default_index=default_backend_idx,
+            descriptions=SKELETON_DESCRIPTIONS,
+            no_input=no_input,
+            allow_none=allow_no_backend,
+        )
 
     # Step 2: frontend ---------------------------------------------------- #
+    # Default the frontend picker to ``ts-react-skel`` (the canonical
+    # cross-stack pair partner, matched by every backend's items API
+    # contract). Falls back to index 0 when react isn't installed.
+    default_frontend_idx = 0
+    for i, name in enumerate(available_frontends):
+        if name == "ts-react-skel":
+            default_frontend_idx = i
+            break
+
     print()
     print("  Step 2/6: Frontend")
     chosen_frontend: Optional[str]
@@ -1032,18 +1060,29 @@ def prompt_fullstack_dialog(
         chosen_frontend = _ask_choice(
             "frontend skeleton",
             available_frontends,
-            default_index=0,
+            default_index=default_frontend_idx,
             descriptions=SKELETON_DESCRIPTIONS,
             no_input=no_input,
             allow_none=allow_no_frontend,
         )
 
+    if chosen_backend is None and chosen_frontend is None:
+        raise SystemExit(
+            "Refusing to generate a project with neither a backend nor "
+            "a frontend. Pick at least one (or omit --no-backend / "
+            "--no-frontend)."
+        )
+
     # Step 3: service display names -------------------------------------- #
     print()
     print("  Step 3/6: Service display names")
-    chosen_backend_label = backend_service_label or ask(
-        "Backend service display name", _DEFAULT_BACKEND_NAME
-    )
+    chosen_backend_label: Optional[str]
+    if chosen_backend is None:
+        chosen_backend_label = None
+    else:
+        chosen_backend_label = backend_service_label or ask(
+            "Backend service display name", _DEFAULT_BACKEND_NAME
+        )
     chosen_frontend_label: Optional[str]
     if chosen_frontend is None:
         chosen_frontend_label = None
@@ -1082,11 +1121,14 @@ def prompt_fullstack_dialog(
     # Step 6: three custom prompts (replaces auth_details) --------------- #
     print()
     print("  Step 6/6: Custom instructions (optional, blank to skip)")
-    chosen_backend_extra = (
-        backend_extra
-        if backend_extra is not None
-        else ask("Additional backend instructions", "")
-    )
+    if chosen_backend is None:
+        chosen_backend_extra = ""
+    else:
+        chosen_backend_extra = (
+            backend_extra
+            if backend_extra is not None
+            else ask("Additional backend instructions", "")
+        )
     if chosen_frontend is None:
         chosen_frontend_extra = ""
     else:
@@ -1095,7 +1137,9 @@ def prompt_fullstack_dialog(
             if frontend_extra is not None
             else ask("Additional frontend instructions", "")
         )
-    if chosen_frontend is None:
+    # Integration prompt only makes sense when both halves exist —
+    # otherwise there's nothing to integrate against.
+    if chosen_frontend is None or chosen_backend is None:
         chosen_integration_extra = ""
     else:
         chosen_integration_extra = (
@@ -1105,7 +1149,11 @@ def prompt_fullstack_dialog(
         )
 
     # Items contract advisory -------------------------------------------- #
-    if chosen_frontend and chosen_backend not in BACKENDS_WITH_ITEMS_API:
+    if (
+        chosen_frontend
+        and chosen_backend
+        and chosen_backend not in BACKENDS_WITH_ITEMS_API
+    ):
         print()
         print(
             f"  ⚠ {chosen_backend} does not yet ship the wrapper-shared "
@@ -1115,6 +1163,13 @@ def prompt_fullstack_dialog(
             "    The React frontend's src/api/items.ts will receive 404 "
             "until you add a matching backend route. Run with "
             "`--no-frontend` if you only want the backend."
+        )
+    elif chosen_frontend and chosen_backend is None:
+        print()
+        print(
+            "  ⚠ frontend-only project — the React `src/api/items.ts` "
+            "calls will fail until you point BACKEND_URL at an external "
+            "service that implements /api/items + /api/auth/login."
         )
 
     print()

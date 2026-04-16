@@ -4,7 +4,39 @@ Instructions for AI assistants (Claude, GPT, Gemini, etc.) maintaining this proj
 
 ## Project Overview
 
-This is a **Makefile-based project generator system**. It creates new projects from skeleton templates. The architecture follows a delegation pattern where the main Makefile calls skeleton-specific Makefiles. Each skeleton also provides `gen` and `test` helper scripts, and an executable `merge` script used during generation.
+**Dev Skel generates whole multi-service projects where every service
+ships with its own in-service code agent.** Three AI surfaces, each
+with its own design doc, smokes, and operator commands:
+
+1. **`_bin/skel-gen-ai`** (template → new project) — full-stack
+   dialog that asks for backend + frontend separately, then runs five
+   Ollama phases: per-target backend overlay → per-target frontend
+   overlay → cross-service integration → bounded test-and-fix loop →
+   per-service docs. Backed by `_bin/skel_rag/` (FAISS RAG agent)
+   under the `_bin/skel_ai_lib.py` shim. Static AI-free fallback at
+   `_bin/skel-gen-static`.
+2. **`./ai`** (in-service code agent) — shipped in every generated
+   service. Subcommands: `propose`, `apply`, `verify`, `explain`,
+   `history`, `undo`, `upgrade`. Two activation modes: in-tree (full
+   RAG via `skel_rag.agent.RagAgent`) and out-of-tree (stdlib-only
+   retrieval + minimal fix loop). Wrapper-level `./ai` fans out
+   across services by default.
+3. **`./backport` + `./ai upgrade`** (service ↔ template sync) —
+   `./backport apply` writes service edits upstream into the
+   skeleton template AND bumps the skeleton's `VERSION` (semver
+   patch) AND prepends a `## [VERSION] - DATE` entry to
+   `<skel>/CHANGELOG.md` listing every backported file. `./ai
+   upgrade` reads the sidecar's `skeleton_version`, compares against
+   `<skel>/VERSION`, extracts the matching CHANGELOG entries, and
+   synthesises an AI request that asks the model to apply those
+   changes to the service.
+
+The infrastructure piece — and most of the legacy docs — is the
+**Makefile-based project generator**: a delegation pattern where the
+main Makefile calls skeleton-specific Makefiles. Each skeleton ships a
+`gen` script (full generation logic), a `merge` script (rsync
+helper), a `test` script (e2e self-test), a `deps` script (toolchain
+installer), a `VERSION`, and a `CHANGELOG.md`.
 
 The relocatable CLI (`_bin/skel-gen`, `_bin/skel-install`,
 `_bin/skel-update`, `_bin/skel-sync`, `_bin/skel-list`) is now a set
@@ -94,6 +126,12 @@ Before making changes, read these files:
    [skel_name] [service_name]` — both `proj_name` and `skel_name`
    are optional. `proj_name=.` (or omitted) installs into the current
    directory.
+9. **`_bin/skel-add`** - Existing-wrapper sibling of `skel-gen`.
+   Same positional order, but the wrapper must already exist. Default
+   mode is AI: it exec's `_bin/skel-gen-ai --skip-base`, so the new
+   service still runs through the per-target overlay, sibling-aware
+   integration phase, test-and-fix loop, and docs generation. Passing
+   `--static` dispatches to `_bin/skel-gen-static --existing-project`.
 9. **`_bin/skel-gen-ai`** - Relocatable Ollama-augmented generator.
    Runs the static skel-gen first (unless `--skip-base`), then loads
    the AI manifest at `_skels/_common/manifests/<skel>.py` and rewrites
@@ -109,6 +147,8 @@ Before making changes, read these files:
     `dev_skel_lib.generate_project()`. Use this in CI / when Ollama
     is unavailable / when you want a deterministic AI-free baseline.
     Same `[proj_name] [skel_name] [service_name]` positional order.
+    `--existing-project` switches it into add-service mode for wrappers
+    that already exist on disk.
 10. **`_bin/skel-test-ai-generators`** - End-to-end test runner for the AI
     generator. Auto-discovers manifests under
     `_skels/_common/manifests/`, runs base scaffold + Ollama overlay for
@@ -171,23 +211,28 @@ Before making changes, read these files:
     - `run_react_backend_integration(...)` — backwards-compat shim
       that forwards to the generic driver with `REACT_FRONTEND`.
 13. **`_bin/skel-test-react-django-bolt`,
-    `_bin/skel-test-react-fastapi`,
-    `_bin/skel-test-flutter-django-bolt`,
+    `_bin/skel-test-react-fastapi`, `_bin/skel-test-react-flask`,
+    `_bin/skel-test-react-django`, `_bin/skel-test-react-spring`,
+    `_bin/skel-test-react-actix`, `_bin/skel-test-react-axum`,
+    `_bin/skel-test-react-go`, `_bin/skel-test-flutter-django-bolt`,
     `_bin/skel-test-flutter-fastapi`** - Per-(frontend, backend)
     cross-stack integration tests. Each is a ~150-line driver that
     builds a `BackendSpec` and forwards to
     `run_frontend_backend_integration`. The React tests verify the
     Vite-baked bundle (`dist/assets/*.js`); the Flutter tests verify
     the bundled `.env` asset (`build/web/assets/.env`) and the
-    compiled `main.dart.js`. All four hit the canonical 9-step
+    compiled `main.dart.js`. Every driver hits the canonical 9-step
     `register → login → CRUD → complete → reject` items API flow
     TWICE: once via Python pre-flight (cheap, fast feedback when the
     backend is broken) and once via the frontend's own client code
     (proves the frontend ↔ backend contract end-to-end). Backs
-    `make test-react-django-bolt`, `make test-react-fastapi`,
-    `make test-flutter-django-bolt`, `make test-flutter-fastapi`,
-    and `make test-cross-stack` (the umbrella that runs every
-    cross-stack test back-to-back).
+    the per-pair `make test-react-*` / `make test-flutter-*` targets,
+    `make test-react-cross-stack` (the static React + backend matrix:
+    django-bolt, fastapi, flask, django, spring, actix, axum, go),
+    `make test-flutter-cross-stack` (currently the Flutter +
+    django-bolt/fastapi matrix), and `make test-cross-stack` (the
+    umbrella that runs the shared-db check, the full React matrix,
+    then the full Flutter matrix).
 14. **`_skels/ts-react-skel/src/cross-stack.smoke.test.ts` and
     `_skels/flutter-skel/test/cross_stack_smoke_test.dart`** -
     Frontend smoke tests shipped with each frontend skeleton. Both
@@ -1036,6 +1081,307 @@ To add a new AI-supported skeleton, drop a manifest under
 `_skels/_common/manifests/` (the runner will auto-discover it) and, if
 the validation step needs more than the baseline syntax check, add an
 entry to `VALIDATORS` in `_bin/skel-test-ai-generators`.
+
+### Project-wide `./ai` memory + wrapper-level dispatch
+
+Two layers turn the per-service `./ai` into a project-wide tool:
+
+**1. Wrapper-level `<wrapper>/ai` dispatcher** — auto-generated by
+`common-wrapper.sh`'s "single" dispatch template. Three modes:
+
+```
+./ai "REQUEST"                     # forwards to the FIRST service
+./ai <service-slug> "REQUEST"      # forwards to a specific service
+./ai --all "REQUEST"               # FAN-OUT — runs the request against
+                                    # EVERY service in the wrapper
+```
+
+The `--all` flag is the cross-service refactor mode: a single
+request ("rename Item to Task throughout the project") lands in
+every backend + frontend that has `./ai`. Failures accumulate; the
+final exit code is the last non-zero status. The `--all`
+recogniser is implemented in `common-wrapper.sh:write_dispatch_script`
+and applies to **every** "single"-mode wrapper script — so
+`./backport --all` works the same way for batch backporting.
+
+**2. Cross-call AI memory** — every `./ai apply` writes a single
+JSONL entry to two files:
+
+* `<service>/.ai/memory.jsonl` — per-service log
+* `<wrapper>/.ai/memory.jsonl` — project-wide log (shared across
+  every service in the wrapper)
+
+The next `./ai propose` (in any service of the wrapper) loads the
+last 5 entries from the wrapper-shared file and prepends them to
+the LLM prompt as a `## PREVIOUS_AI_RUNS` block. The model sees
+what was done before, whether it passed tests, and which files
+were edited — gaining continuity across invocations and across
+services.
+
+Entry shape:
+
+```json
+{
+  "ts":           "2026-04-16T18:03:21Z",
+  "service":      "items_api",
+  "request":      "extract a service layer ...",
+  "edited_files": ["app/items/service.py", "app/items/depts.py"],
+  "rationale":    "<truncated to 800 chars>",
+  "passed":       true,
+  "returncode":   0
+}
+```
+
+Memory is **never an apply blocker**: write failures swallow
+silently, malformed JSONL lines are skipped on read.
+
+`./ai history` renders both layers (project memory across
+services + local scratch runs in this service).
+
+**Files**:
+
+* `_bin/dev_skel_refactor_runtime.py` — `_memory_paths`,
+  `_append_memory`, `_load_recent_memory`, `_format_memory_block`,
+  `_record_apply_to_memory`, `_load_project_memory_block`. Wired
+  into both `MinimalRunner.propose` (raw prompt) and
+  `RagRunner.propose` (prepended to retrieved context). The
+  post-apply branches in `main()` call `_record_apply_to_memory`
+  on PASS, on rollback FAIL, and on `--no-verify`.
+* `_skels/_common/common-wrapper.sh:write_dispatch_script` — the
+  shared dispatch template that emits the `--all` recogniser into
+  every wrapper-level script.
+* `_bin/skel-test-ai-memory` — smoke harness (no Ollama). Backs
+  `make test-ai-memory`.
+
+**Operator commands**:
+
+* `make test-ai-memory` — verifies wrapper dispatch +
+  memory-write round-trip + history aggregation (no LLM).
+
+### `./backport` (service-local skeleton backport)
+
+A per-service shim that forwards to the maintainer-side
+`_bin/dev_skel_backport.py`. Lets the developer run a
+**service → template** propagation directly from inside their
+generated service, without having to switch back to the dev_skel
+root or remember the maintainer CLI's argument order.
+
+**Subcommands**:
+
+```
+./backport               # alias of `propose` (dry-run)
+./backport propose       # list every service file that differs
+                         # from its same-relative skeleton file
+./backport apply         # write the changes back into the skel
+./backport --help        # full surface area
+```
+
+**Sidecar**: reads `.skel_context.json` in the service dir to
+know which skeleton to write to. The sidecar is created by
+`install-ai-script` when `common-wrapper.sh` runs:
+
+* Each per-skel `gen` exports `SKEL_NAME="$(basename "$SKEL_DIR")"`
+  before invoking `common-wrapper.sh`.
+* `common-wrapper.sh` calls `install-ai-script <svc> "$SKEL_NAME"
+  force` for the just-generated `PROJECT_SUBDIR`. Sibling services
+  get a non-force install so their existing sidecars are preserved.
+
+**Activation**: REQUIRES a reachable dev_skel checkout (the script
+writes back into `_skels/`). Auto-detection mirrors `./ai`:
+`$DEV_SKEL_ROOT` → walk-up looking for `_skels/` + `_bin/skel-gen-ai`
++ `_bin/dev_skel_backport.py` → `~/dev_skel`, `~/src/dev_skel`,
+`/opt/dev_skel`, `/usr/local/share/dev_skel`. Detached services
+exit 1 with an actionable error.
+
+**Output**: every run drops a JSON summary to
+`<dev_skel>/.ai/backport/<ts>-<sha>/result.json` listing every
+candidate (`rel_path`, `service_path`, `skeleton_path`, `reason`).
+On `apply`, the same payload includes the files that were written.
+
+**Files**:
+
+* `_skels/_common/refactor_runtime/backport` — per-service shim
+  (~120 lines, pure Python, no third-party imports).
+* `_skels/_common/refactor_runtime/install-ai-script` — also
+  installs `./backport` next to `./ai` and writes the
+  `.skel_context.json` sidecar.
+* `_bin/dev_skel_backport.py` — maintainer-side propose/apply
+  engine. Pure file-diff (no LLM involvement); only candidates
+  whose relative paths already exist inside the target skeleton are
+  considered backportable.
+* `_bin/skel-backport` — top-level CLI wrapper around
+  `dev_skel_backport.main`.
+* `_bin/skel-test-backport-script` — propose+apply round-trip
+  smoke (generates fastapi service → mutates `app/__init__.py` →
+  asserts skel updated → `git checkout`-restores). Backs the
+  `make test-backport-script` target.
+
+**Operator commands**:
+
+* `make test-backport-script` — cheap propose+apply smoke (no LLM).
+  Now also asserts that `apply` bumps `<skel>/VERSION` (semver
+  patch) and prepends a `## [VERSION] - DATE` entry to
+  `<skel>/CHANGELOG.md`.
+* `make test-ai-script` — sibling smoke for `./ai`.
+* `make test-ai-upgrade` — no-LLM smoke for `./ai upgrade`
+  (no-op + outdated paths).
+* `make test-ai-fanout` — no-LLM smoke for the wrapper-level
+  `./ai` fan-out default (two-service wrapper).
+* `_bin/skel-backport propose <service>` /
+  `_bin/skel-backport apply <service>` — the underlying maintainer
+  CLI (forwarded to by `./backport`).
+
+**Versioning side effect** (since 2026-04): every accepted
+backport bumps the skel's `VERSION` and writes a changelog entry.
+This is what `./ai upgrade` (next section) uses to know which
+changes to replay against an already-generated service. Best-effort
+— write failures emit a warning and do not abort the apply.
+
+### `./ai` (service-local AI refactoring)
+
+A per-service script + vendored runtime that lets developers run
+AI-driven refactors **inside** a generated service. Three discrete
+"AI-leverage surfaces" of dev_skel:
+
+| Tool | Direction | Where it runs | What it touches |
+| ---- | --------- | ------------- | --------------- |
+| `_bin/skel-gen-ai` | template → service | dev_skel root | writes the generated service |
+| `_bin/skel-backport` | service → template | dev_skel root | writes the skel templates |
+| **`./ai`** | service → service | inside the generated service | rewrites the service's own code |
+
+**Subcommands** (run from inside a generated service dir):
+
+```
+./ai "REQUEST"           # default: propose, dry-run
+./ai apply "REQUEST"     # propose + apply + verify (fix loop)
+./ai verify              # re-run last proposal's fix loop
+./ai explain             # last run's per-file rationale
+./ai history             # list past runs
+./ai undo                # revert last applied refactor
+./ai upgrade             # pull skel changes since this service was generated
+                         # (dry-run; pass --apply to commit)
+```
+
+**Wrapper-level dispatch defaults to fan-out** (since 2026-04). At
+the project root, `./ai "REQUEST"` runs the request against every
+service in the wrapper; `./ai <slug> "REQUEST"` still scopes to one
+service. Same applies to `./ai upgrade` and `./backport`. The
+`--all` flag is now redundant and kept only for backwards
+compatibility.
+
+**Two activation modes** (auto-detected by `detect_devskel`):
+
+* **In-tree** — dev_skel checkout reachable. Imports
+  `skel_rag.agent.RagAgent` (FAISS + sentence-transformers) and
+  `skel_ai_lib.run_test_and_fix_loop`. Same call stack as
+  `skel-gen-ai`.
+* **Out-of-tree** — service detached from dev_skel. Stdlib-only
+  retrieval (ripgrep with a pathlib fallback) + a bundled minimal
+  fix-loop in `.ai_runtime.py`. No third-party imports beyond the
+  stdlib + a single `urllib.request` to Ollama.
+
+**Env vars** (in addition to `OLLAMA_*`):
+
+| Variable | Default | Purpose |
+| -------- | ------- | ------- |
+| `DEV_SKEL_ROOT` | unset | Force in-tree mode pointing at a specific dev_skel checkout. |
+| `SKEL_REFACTOR_FIX_TIMEOUT_M` | `15` | Fix-loop budget (minutes). |
+| `SKEL_REFACTOR_MAX_FILES` | `8` | Hard cap on files the LLM may edit per run. |
+
+**Output layout** (per run, in `<service>/.ai/<ts>-<sha>/`):
+
+```
+.ai/
+├── <ts>-<sha>/
+│   ├── request.txt              # the user's natural-language request
+│   ├── context.json             # resolved RefactorContext
+│   ├── retrieved/chunks.md      # rendered RAG retrieval block
+│   ├── proposals/<rel>.proposed # one file per proposed edit
+│   ├── rationale.md             # per-file rationale
+│   ├── applied.json             # populated only after --apply
+│   └── verification.log         # populated only after fix-loop runs
+└── HEAD                         # symlink to the latest run dir
+```
+
+The `.ai/` directory is git-ignored — `install-ai-script` appends
+`.ai/` to the service `.gitignore` on first install.
+
+**Safety contract** (cannot be defeated by adversarial LLM output):
+
+* Every write is checked against `service_dir.resolve()` and skipped
+  if it lands outside.
+* `apply` refuses to run on a dirty git tree without `--allow-dirty`.
+* Pre-apply state captured to a git stash; verification failure ⇒
+  `git stash pop` to restore.
+* Per-service `.ai/.lock` (O_CREAT|O_EXCL) prevents concurrent
+  applies.
+* Path traversal (`../`, absolute paths, `.git`, `.ai`,
+  `node_modules`, `.venv`) is rejected by both the parser and the
+  applier.
+
+**Files**:
+
+* `_bin/dev_skel_refactor_runtime.py` — canonical source of truth
+  (RefactorContext, FileEdit, AppliedResult, RagRunner,
+  MinimalRunner, `_apply_edits_with_stash`, `_minimal_fix_loop`,
+  CLI dispatch, `_self_test()`). Run
+  `python3 _bin/dev_skel_refactor_runtime.py --self-test` to verify
+  parser sanity.
+* `_bin/skel-ai` — top-level CLI for driving `./ai` from outside a
+  service: `_bin/skel-ai SERVICE_DIR "REQUEST" [flags]`.
+* `_skels/_common/refactor_runtime/ai` — the per-service script
+  (identical for every skel; bootstraps the runtime).
+* `_skels/_common/refactor_runtime/dev_skel_refactor_runtime.py` —
+  vendored copy, kept in sync via `make sync-ai-runtime`.
+* `_skels/_common/refactor_runtime/install-ai-script` — installer
+  invoked by `common-wrapper.sh` for every service in the wrapper.
+* `_skels/_common/common-wrapper.sh` — calls
+  `install-ai-script <service>` per service before laying down the
+  fan-out dispatch scripts.
+* `_bin/skel_rag/agent.py:RagAgent.refactor_files` — the in-tree
+  LLM call.
+* `_bin/skel_rag/prompts.py` — `REFACTOR_SYSTEM_PROMPT`,
+  `REFACTOR_USER_PROMPT`, `build_query_for_refactor`.
+* `_bin/skel-test-ai-script` — cheap dispatch smoke (no Ollama;
+  generates a fastapi service, runs `./ai --no-llm`, asserts
+  scratch dir + history are populated).
+
+**Operator commands**:
+
+* `make sync-ai-runtime` — copy the canonical runtime into the
+  vendored slot. Run after editing
+  `_bin/dev_skel_refactor_runtime.py` so newly-generated services
+  pick up the changes.
+* `make test-ai-script` — dispatch smoke (no Ollama).
+* `make test-ai-upgrade` — `./ai upgrade` no-op + outdated paths
+  (no Ollama).
+* `make test-ai-fanout` — wrapper-level `./ai` fan-out default
+  across two services (no Ollama).
+
+**Skeleton versioning + `./ai upgrade`** (since 2026-04):
+
+* Each `_skels/<name>/` ships a `VERSION` file (semver) + a
+  `CHANGELOG.md` (Keep-a-Changelog format).
+* `install-ai-script` reads `<skel>/VERSION` and writes
+  `skeleton_version` into the service sidecar.
+* `_bin/skel-backport apply` bumps `<skel>/VERSION` (semver patch)
+  and prepends a `## [VERSION] - DATE` entry to
+  `<skel>/CHANGELOG.md` listing each backported file.
+* `./ai upgrade` reads `skeleton_version` from the sidecar,
+  compares to `<skel>/VERSION`, extracts the matching CHANGELOG
+  entries, and synthesises an AI request that asks the model to
+  apply those changes to the service. Dispatched through the
+  standard propose/apply flow so all safety machinery still
+  applies. Sidecar `skeleton_version` is rewritten on successful
+  apply.
+* Implementation: `_cmd_upgrade` + `_changelog_excerpt` /
+  `_semver_tuple` in `_bin/dev_skel_refactor_runtime.py`,
+  `_bump_skeleton_version` + `_bump_patch` in
+  `_bin/dev_skel_backport.py`, `FAN_OUT_SCRIPTS` in
+  `_skels/_common/common-wrapper.sh`.
+
+**Design doc**: `SERVICE_REFACTOR_COMMAND.md` (full spec —
+subcommands, fixtures, fix-loop strategy, security tests).
 
 ### `_skels/_common/manifests/` (AI generation manifests)
 

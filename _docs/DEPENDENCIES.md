@@ -1,19 +1,19 @@
 # Dependency Management
 
-This document describes the dependency installation system for dev_skel skeletons.
+Dev Skel has **three** layers of dependencies:
 
-## Overview
+1. **AI runtime** — Ollama + an instruction model (default
+   `gemma4:31b`). Required for `_bin/skel-gen-ai`, the per-service
+   `./ai`, and the `./ai upgrade` flow. The static fallback
+   (`_bin/skel-gen-static`) and the `./backport` flow do **not** need
+   Ollama.
+2. **Per-stack toolchains** — Python, Node, JDK, Rust, Flutter,
+   `make`. Installed via `./skel-deps`.
+3. **Per-project deps** — `pip install`, `npm install`, `mvn`,
+   `cargo build`, `flutter pub get`. Installed via the per-project
+   `install-deps` script that ships in every generated wrapper.
 
-The dev_skel project has two levels of dependency management:
-
-1. **System Dependencies** - Install framework tools (Node.js, Python, Java, Rust, etc.)
-   - Located in `_skels/*/deps` (for skeleton development)
-   - Managed by `./skel-deps` script at project root
-
-2. **Project Dependencies** - Install packages for a generated project
-   - Located in generated projects as `install-deps`
-   - Automatically included when you generate a new project
-   - Installs npm packages, pip packages, Maven dependencies, etc.
+This document covers all three.
 
 ## Supported Operating Systems
 
@@ -21,6 +21,69 @@ The dev_skel project has two levels of dependency management:
 - **Ubuntu/Debian** (via apt)
 - **Arch Linux** (via pacman)
 - **Fedora/RHEL** (via dnf)
+
+## AI runtime (Ollama + RAG)
+
+The AI generator (`_bin/skel-gen-ai`) and the per-service `./ai`
+runtime both call Ollama over HTTP. You need a running Ollama daemon
+and at least one instruction model pulled.
+
+### Install Ollama
+
+* macOS: `brew install ollama`
+* Linux: `curl -fsSL https://ollama.com/install.sh | sh`
+* Other: see [ollama.com](https://ollama.com)
+
+### Pull a model
+
+```bash
+ollama serve &                    # in another terminal (or as a service)
+ollama pull gemma4:31b            # default; ~19 GB; needs ~24 GB VRAM
+# Lighter alternatives for slower hardware:
+ollama pull qwen3-coder:30b
+ollama pull qwen2.5-coder:7b
+```
+
+### Tune via env vars
+
+| Variable | Default | Notes |
+| -------- | ------- | ----- |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Override for a remote Ollama. |
+| `OLLAMA_MODEL` | `gemma4:31b` | Use a smaller model on slower hardware. |
+| `OLLAMA_TIMEOUT` | `1800` (s) | Sized for a 30B-class cold load + multi-minute completions on a long file. |
+| `SKEL_REFACTOR_FIX_TIMEOUT_M` | `15` (min) | Fix-loop budget for `./ai apply`. |
+| `SKEL_REFACTOR_MAX_FILES` | `8` | Hard cap on files the LLM may edit per `./ai` run. |
+| `DEV_SKEL_ROOT` | unset | Force the in-service `./ai` into in-tree mode against a specific dev_skel checkout. |
+
+### Optional: in-tree FAISS dependencies
+
+In-tree mode (when a dev_skel checkout is reachable) uses a real RAG
+pipeline — tree-sitter chunker + FAISS index + sentence-transformers
+embedding model + LangChain Ollama chat. Install once:
+
+```bash
+make install-rag-deps
+```
+
+This adds `sentence-transformers`, `faiss-cpu`, `langchain-ollama`
+(plus their tree-sitter friends). The default embedding model is
+`BAAI/bge-small-en-v1.5`.
+
+The **out-of-tree** `./ai` mode (when a service is detached from any
+dev_skel checkout) does **not** need these — it uses ripgrep + a
+pathlib fallback for retrieval and a stdlib-only `urllib.request`
+call to Ollama. So you can ship a generated service to a colleague
+without dev_skel installed and `./ai` keeps working.
+
+### Verify the setup
+
+```bash
+curl -sf http://localhost:11434/api/tags > /dev/null && echo OK
+ollama list
+
+make test-ai-generators-dry      # always cheap; no LLM calls
+_bin/skel-gen-ai myproj --no-input --dry-run  # full dialog scripted, no writes
+```
 
 ## Usage
 
@@ -168,6 +231,19 @@ python manage.py runserver
 - **npm**
 
 **Installation:** Same as JavaScript skeleton
+
+### Flutter (`flutter-skel`)
+- **Flutter SDK** (3.0+)
+- **Dart** (bundled with Flutter)
+
+**Installation:**
+- All platforms: see [docs.flutter.dev/get-started/install](https://docs.flutter.dev/get-started/install)
+- macOS: `brew install --cask flutter`
+- Verify: `flutter doctor`
+
+`make test-flutter-django-bolt` and `make test-flutter-fastapi`
+auto-skip when the Flutter SDK is not on the PATH, so this dep is
+only required if you want to generate Flutter projects.
 
 ## Examples
 

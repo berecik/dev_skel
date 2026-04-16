@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""./ai — AI-driven refactoring for this service.
+
+Run from the service directory:
+
+    ./ai "extract a service layer between routes and adapters"
+    ./ai apply "extract a service layer ..."
+    ./ai upgrade
+    ./ai history
+    ./ai explain
+    ./ai undo
+    ./ai verify
+See `./ai --help` for the full surface area.
+
+This script bootstraps the runtime in this order:
+
+1. Prefer the in-tree dev_skel runtime at $DEV_SKEL_ROOT/_bin/.
+2. Walk up looking for `_skels/` + `_bin/skel-gen-ai`.
+3. Fall back to the vendored copy at `.ai_runtime.py` (materialised
+   by ``skel-gen`` so the service is self-contained even when
+   detached from a dev_skel checkout).
+4. If both fail, emit an actionable instruction and exit 1.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import os
+import sys
+from pathlib import Path
+
+SERVICE_DIR = Path(__file__).resolve().parent
+
+
+def _load_in_tree() -> object | None:
+    """Return the loaded `dev_skel_refactor_runtime` module, or None."""
+
+    devskel = os.environ.get("DEV_SKEL_ROOT", "").strip()
+    candidates: list[Path] = []
+    if devskel:
+        candidates.append(Path(devskel).expanduser() / "_bin")
+
+    cur = SERVICE_DIR
+    for _ in range(8):
+        if (cur / "_skels").is_dir() and (cur / "_bin" / "skel-gen-ai").is_file():
+            candidates.append(cur / "_bin")
+            break
+        if cur == cur.parent:
+            break
+        cur = cur.parent
+
+    for candidate in candidates:
+        runtime = candidate / "dev_skel_refactor_runtime.py"
+        if runtime.is_file():
+            sys.path.insert(0, str(candidate))
+            try:
+                import dev_skel_refactor_runtime as m  # type: ignore[import-not-found]
+            except ImportError:
+                continue
+            return m
+    return None
+
+
+def _load_vendored() -> object | None:
+    vendored = SERVICE_DIR / ".ai_runtime.py"
+    if not vendored.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location(
+        "_ai_runtime_vendored", vendored,
+    )
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+    except Exception as exc:
+        print(
+            f"ERROR: failed to load vendored .ai_runtime.py: {exc}",
+            file=sys.stderr,
+        )
+        return None
+    return module
+
+
+def _bootstrap() -> object:
+    runtime = _load_in_tree() or _load_vendored()
+    if runtime is None:
+        print(
+            "ERROR: dev_skel AI runtime not found.\n"
+            "  - Set $DEV_SKEL_ROOT to your dev_skel checkout, OR\n"
+            "  - Re-generate this service with the latest skel-gen "
+            "(it copies .ai_runtime.py automatically).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return runtime
+
+
+if __name__ == "__main__":
+    runtime = _bootstrap()
+    sys.exit(runtime.main(SERVICE_DIR, sys.argv[1:]))

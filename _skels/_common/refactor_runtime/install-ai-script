@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Install the wrapper-shared ./ai script + vendored runtime into a
+# generated service. Called once per gen by each skel's gen script
+# (right after the skel-specific overlay is merged):
+#
+#   bash "$COMMON_DIR/refactor_runtime/install-ai-script" "$PROJECT_DIR"
+#
+# The ./ai script is identical across every skel — the runtime
+# auto-detects the test command from `.skel_context.json` (or falls
+# back to ./test). Re-running gen against an existing project is
+# safe: the script + runtime are overwritten so the generated
+# service always picks up the latest version.
+
+if [[ $# -lt 1 ]]; then
+  echo "Usage: install-ai-script <service_dir>" >&2
+  exit 1
+fi
+
+SERVICE_DIR="$1"
+SOURCE_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+if [[ ! -d "$SERVICE_DIR" ]]; then
+  echo "ERROR: $SERVICE_DIR does not exist" >&2
+  exit 1
+fi
+
+# `./ai` — service-local AI refactoring (template + runtime).
+cp "$SOURCE_DIR/ai" "$SERVICE_DIR/ai"
+chmod +x "$SERVICE_DIR/ai"
+cp "$SOURCE_DIR/dev_skel_refactor_runtime.py" "$SERVICE_DIR/.ai_runtime.py"
+
+# `./backport` — service → skeleton backport shim. Pure-Python, no
+# vendored runtime needed (it forwards to the maintainer CLI inside
+# the dev_skel checkout when one is reachable).
+cp "$SOURCE_DIR/backport" "$SERVICE_DIR/backport"
+chmod +x "$SERVICE_DIR/backport"
+
+# `.skel_context.json` — sidecar that the AI runtime + the maintainer
+# `dev_skel_backport.py` CLI both read to know which skeleton this
+# service was generated from. Two optional positional args control
+# the writeback:
+#
+#   $2  Skeleton name (e.g. `python-fastapi-skel`). Optional —
+#       when absent we leave any existing sidecar alone (so a re-run
+#       against a wrapper with multiple services from different skels
+#       does not stomp on their sidecars with the most-recent gen's
+#       skel name). Falls back to the `$SKEL_NAME` env var if set.
+#   $3  Force-overwrite flag (`force` or empty). When `force`, any
+#       existing sidecar is overwritten — used by common-wrapper.sh
+#       for the just-generated service so its sidecar stays in sync
+#       even if the slot was previously a different skel.
+SKEL_NAME="${2:-${SKEL_NAME:-}}"
+FORCE="${3:-}"
+SIDECAR="$SERVICE_DIR/.skel_context.json"
+
+# Try to find the skeleton's version from the repository if possible,
+# or from the provided SKEL_NAME if we are inside a dev_skel checkout.
+SKEL_VERSION="0.1.0"
+if [[ -n "$SKEL_NAME" ]]; then
+  # Walk up from SOURCE_DIR to find _skels/
+  CUR="$SOURCE_DIR"
+  for i in {1..4}; do
+    if [[ -d "$CUR/_skels/$SKEL_NAME" ]]; then
+      if [[ -f "$CUR/_skels/$SKEL_NAME/VERSION" ]]; then
+        SKEL_VERSION=$(cat "$CUR/_skels/$SKEL_NAME/VERSION")
+      fi
+      break
+    fi
+    CUR="$(dirname "$CUR")"
+  done
+fi
+
+if [[ -n "$SKEL_NAME" ]]; then
+  if [[ ! -f "$SIDECAR" || "$FORCE" == "force" ]]; then
+    # `generated_at` is the wall-clock UTC ISO-8601 timestamp at gen
+    # time. ./ai upgrade uses it to pick a "since" anchor when the
+    # skeleton VERSION has been bumped multiple times after gen and
+    # we want to surface every CHANGELOG entry that landed since.
+    GEN_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")"
+    cat > "$SIDECAR" <<JSON
+{
+  "skeleton_name": "$SKEL_NAME",
+  "skeleton_path_rel": "_skels/$SKEL_NAME",
+  "skeleton_version": "$SKEL_VERSION",
+  "generated_at": "$GEN_AT"
+}
+JSON
+  fi
+fi
+
+# Append `.ai/` to the service `.gitignore` so scratch runs do not
+# pollute the user's git status. Idempotent — only appended when not
+# already present.
+GITIGNORE="$SERVICE_DIR/.gitignore"
+if [[ -f "$GITIGNORE" ]]; then
+  if ! grep -q -E '^\.ai/?$' "$GITIGNORE"; then
+    printf '\n# dev_skel ./ai scratch runs\n.ai/\n' >> "$GITIGNORE"
+  fi
+else
+  printf '# dev_skel ./ai scratch runs\n.ai/\n' > "$GITIGNORE"
+fi
+
+echo "[ai] Installed ./ai + .ai_runtime.py + ./backport into $SERVICE_DIR"

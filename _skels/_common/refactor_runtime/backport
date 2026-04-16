@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""./backport — propagate edits from this service back into its source skeleton.
+
+Run from inside a generated service directory:
+
+    ./backport             # default: dry-run propose (lists what would change)
+    ./backport propose     # alias of the default
+    ./backport apply       # write the changes back into the skeleton
+    ./backport --help      # full surface area
+
+Three discrete "AI-leverage surfaces" of dev_skel:
+
+  * `_bin/skel-gen-ai`    template → service   (writes the new service)
+  * `./ai`                service → service    (rewrites the service in place)
+  * `./backport`          service → template   (writes the skel back)
+
+The script is intentionally minimal — it forwards to the dev_skel
+maintainer CLI at ``_bin/dev_skel_backport.py`` after substituting the
+service path. It REQUIRES a reachable dev_skel checkout (the
+backport target lives under ``_skels/`` inside the checkout). When
+detached from a checkout, the script exits with an actionable error.
+
+Bootstrap order (mirrors `./ai`):
+
+1. Honour ``$DEV_SKEL_ROOT`` if set and valid.
+2. Walk up from the service directory looking for ``_skels/`` plus
+   ``_bin/skel-gen-ai`` (the canonical "this is dev_skel" markers).
+3. Search the common locations
+   (``$HOME/dev_skel``, ``$HOME/src/dev_skel``,
+   ``/opt/dev_skel``, ``/usr/local/share/dev_skel``).
+4. If still not found, exit 1 with an instruction to clone or set
+   ``$DEV_SKEL_ROOT``.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+SERVICE_DIR = Path(__file__).resolve().parent
+
+
+def _looks_like_devskel(p: Path) -> bool:
+    return (
+        p.is_dir()
+        and (p / "_skels").is_dir()
+        and (p / "_bin" / "skel-gen-ai").is_file()
+        and (p / "_bin" / "dev_skel_backport.py").is_file()
+    )
+
+
+def _detect_devskel() -> Path | None:
+    env = os.environ.get("DEV_SKEL_ROOT", "").strip()
+    if env:
+        candidate = Path(env).expanduser().resolve()
+        if _looks_like_devskel(candidate):
+            return candidate
+        print(
+            f"ERROR: $DEV_SKEL_ROOT={env!r} does not look like a dev_skel "
+            "checkout (missing _bin/skel-gen-ai or _skels/).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Walk up from the service directory.
+    cur = SERVICE_DIR
+    for _ in range(10):
+        if _looks_like_devskel(cur):
+            return cur
+        if cur == cur.parent:
+            break
+        cur = cur.parent
+
+    # Common locations.
+    for candidate in (
+        Path.home() / "dev_skel",
+        Path.home() / "src" / "dev_skel",
+        Path("/opt/dev_skel"),
+        Path("/usr/local/share/dev_skel"),
+    ):
+        if _looks_like_devskel(candidate):
+            return candidate
+
+    return None
+
+
+def _print_help_and_exit() -> None:
+    print(__doc__, file=sys.stderr)
+    sys.exit(0)
+
+
+def _normalise_subcommand(argv: list[str]) -> list[str]:
+    """Translate the ``./backport [propose|apply]`` shorthand into the
+    underlying CLI's positional argument order:
+    ``dev_skel_backport <command> <service-path>``.
+    """
+
+    if not argv:
+        return ["propose", str(SERVICE_DIR)]
+
+    first = argv[0]
+    if first in ("propose", "apply", "generate"):
+        rest = argv[1:]
+        if first == "generate":
+            # `generate` expects a skeleton name, not a service path.
+            # Forward unchanged so the user can still run
+            # `./backport generate <skel-name>` from inside a service
+            # (the underlying CLI will create a fresh wrapper under
+            # `_test_projects/`).
+            return [first, *rest]
+        return [first, str(SERVICE_DIR), *rest]
+
+    # Bare flags / unknown first arg → default to `propose <service>`.
+    return ["propose", str(SERVICE_DIR), *argv]
+
+
+def main() -> int:
+    if any(a in {"-h", "--help"} for a in sys.argv[1:]):
+        _print_help_and_exit()
+
+    devskel = _detect_devskel()
+    if devskel is None:
+        print(
+            "ERROR: dev_skel checkout not found.\n"
+            "  ./backport writes files BACK into the source skeleton, so it\n"
+            "  needs a writable dev_skel/ tree. Either:\n"
+            "    1. Set $DEV_SKEL_ROOT to your dev_skel checkout, or\n"
+            "    2. Clone https://github.com/.../dev_skel and re-run.\n"
+            "\n"
+            "  Searched: $DEV_SKEL_ROOT, walk-up from this service, "
+            "$HOME/dev_skel, $HOME/src/dev_skel, /opt/dev_skel, "
+            "/usr/local/share/dev_skel.",
+            file=sys.stderr,
+        )
+        return 1
+
+    backport_cli = devskel / "_bin" / "skel-backport"
+    if not backport_cli.is_file():
+        print(
+            f"ERROR: {backport_cli} missing from dev_skel checkout.\n"
+            "  The checkout is too old. Pull the latest dev_skel main.",
+            file=sys.stderr,
+        )
+        return 1
+
+    argv = _normalise_subcommand(sys.argv[1:])
+    print(f"[backport] dev_skel: {devskel}", file=sys.stderr)
+    print(f"[backport] service:  {SERVICE_DIR}", file=sys.stderr)
+    print(
+        f"[backport] forwarding: {backport_cli} {' '.join(argv)}",
+        file=sys.stderr,
+    )
+
+    # Exec the maintainer CLI with the substituted argv. Using
+    # `os.execvp` (rather than subprocess.run) preserves stdout/
+    # stderr/exit-code semantics 1:1 — `./backport` becomes a
+    # transparent shim with zero overhead.
+    os.execvp(sys.executable, [sys.executable, str(backport_cli), *argv])
+
+
+if __name__ == "__main__":
+    sys.exit(main())

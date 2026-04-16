@@ -107,40 +107,48 @@ class ItemListView extends StatelessWidget {
                 ),
               )
             else
-              Flexible(
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: visible.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (context, index) {
-                    final item = visible[index];
-                    return ListTile(
-                      title: Text(
-                        item.name,
-                        style: TextStyle(
-                          decoration: item.isCompleted
-                              ? TextDecoration.lineThrough
-                              : null,
-                        ),
+              // Bare `ListView.separated` (no `Flexible` / `Expanded`
+              // wrapper). HomeScreen mounts ItemListView inside a
+              // `SingleChildScrollView`, which gives this Column an
+              // unbounded vertical extent. `Flexible` requires a
+              // bounded parent and would explode with a layout error;
+              // `shrinkWrap: true` + `NeverScrollableScrollPhysics`
+              // lets the inner list size itself to its children and
+              // delegate the actual scrolling to the outer
+              // SingleChildScrollView.
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: visible.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final item = visible[index];
+                  return ListTile(
+                    title: Text(
+                      item.name,
+                      style: TextStyle(
+                        decoration: item.isCompleted
+                            ? TextDecoration.lineThrough
+                            : null,
                       ),
-                      subtitle: item.description == null
-                          ? Text('updated ${item.updatedAt}')
-                          : Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: <Widget>[
-                                Text(item.description!),
-                                Text('updated ${item.updatedAt}'),
-                              ],
-                            ),
-                      trailing: item.isCompleted
-                          ? const Chip(label: Text('✓ done'))
-                          : TextButton(
-                              onPressed: () => controller.complete(item.id),
-                              child: const Text('Mark complete'),
-                            ),
-                    );
-                  },
-                ),
+                    ),
+                    subtitle: item.description == null
+                        ? Text('updated ${item.updatedAt}')
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              Text(item.description!),
+                              Text('updated ${item.updatedAt}'),
+                            ],
+                          ),
+                    trailing: item.isCompleted
+                        ? const Chip(label: Text('✓ done'))
+                        : TextButton(
+                            onPressed: () => controller.complete(item.id),
+                            child: const Text('Mark complete'),
+                          ),
+                  );
+                },
               ),
           ],
         );

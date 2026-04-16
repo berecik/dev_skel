@@ -616,6 +616,68 @@ def _react_smoke(frontend_dir: Path, backend_url: str) -> None:
         print(f"     {line}")
 
 
+def _flutter_e2e(frontend_dir: Path, backend_url: str, port: int) -> None:
+    """Run the Flutter widget-driven E2E test against the live backend.
+
+    Equivalent to React's ``_react_e2e``: drives the full production
+    widget tree (`DevSkelApp` + `LoginScreen` + `HomeScreen` + form +
+    list + persistent filter) instead of just the ``ItemsClient`` and
+    ``StateApi`` pair the smoke test exercises.
+
+    The runner gates the test file with two env vars so a developer
+    running ``flutter test`` standalone never accidentally hits the
+    backend:
+
+      * ``RUN_CROSS_STACK_E2E=1`` — file-level gate.
+      * ``BACKEND_URL=...`` — live URL to register / auth / CRUD against.
+
+    We invoke ``flutter test`` (not ``flutter drive``) so no
+    chromedriver / browser install is needed; the widget tree runs in
+    the host VM via ``WidgetTester`` and makes real HTTP calls.
+    """
+
+    e2e_file = frontend_dir / "test" / "cross_stack_e2e_test.dart"
+    if not e2e_file.is_file():
+        raise RuntimeError(
+            f"Flutter E2E file missing at {e2e_file} — the merge "
+            "script needs an OVERWRITE_PATTERN entry for it."
+        )
+
+    env = os.environ.copy()
+    env["RUN_CROSS_STACK_E2E"] = "1"
+    env["BACKEND_URL"] = backend_url
+
+    started = time.monotonic()
+    result = subprocess.run(
+        [
+            "flutter",
+            "test",
+            "test/cross_stack_e2e_test.dart",
+            "--reporter",
+            "compact",
+        ],
+        cwd=frontend_dir,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    if result.returncode != 0:
+        tail = (result.stdout + result.stderr).strip()[-3000:]
+        raise AssertionError(
+            f"Flutter E2E (flutter test) failed (exit {result.returncode}):\n{tail}"
+        )
+    print(
+        f"  ✓ Flutter widget E2E passed in {time.monotonic() - started:.1f}s"
+    )
+    summary_lines = [
+        line for line in result.stdout.splitlines() if line.strip()
+    ][-4:]
+    for line in summary_lines:
+        print(f"     {line}")
+
+
 def _flutter_smoke(frontend_dir: Path, backend_url: str) -> None:
     """Run the Flutter smoke test that imports the real ItemsClient.
 
@@ -789,6 +851,7 @@ FLUTTER_FRONTEND = Frontend(
     build=_flutter_build,
     inspect_bundle=_flutter_inspect_bundle,
     frontend_smoke=_flutter_smoke,
+    e2e=_flutter_e2e,
 )
 
 

@@ -30,6 +30,17 @@ rule-affecting edits.
 
 ## 2. Project Purpose and Junie’s Role
 
+- **Dev Skel generates whole multi-service projects where every service
+  ships with its own in-service code agent.** Three AI surfaces:
+  1. `_bin/skel-gen-ai` — full-stack dialog → 5-phase Ollama pipeline
+     (per-target overlay × 2 → integration → test-and-fix → docs).
+     Backed by `_bin/skel_rag/` (FAISS RAG agent).
+  2. `./ai` — per-service code agent shipped in every generated
+     service (refactor / verify / undo / upgrade). Wrapper-level
+     `./ai` fans out by default.
+  3. `./backport` (service → template, with VERSION + CHANGELOG
+     bump) and `./ai upgrade` (template → service, replays the
+     changelog excerpt as a refactor request).
 - Makefile-based project generator managing multiple skeletons in
   `_skels/*-skel/`.
 - Each skeleton produces a framework-specific service within a wrapper

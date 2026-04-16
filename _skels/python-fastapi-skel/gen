@@ -44,7 +44,7 @@ fi
   if command -v uv >/dev/null 2>&1; then
     echo "[fastapi-ddd] Using uv for package management..."
     uv venv .venv
-    uv pip install -q -r requirements.txt
+    VIRTUAL_ENV=.venv uv pip install -q -r requirements.txt
   else
     echo "[fastapi-ddd] uv not found, falling back to pip..."
     python3 -m venv .venv
@@ -55,6 +55,7 @@ fi
 )
 
 # Create wrapper-level README, Makefile, and thin scripts
+export SKEL_NAME="$(basename "$SKEL_DIR")"
 bash "$COMMON_DIR/common-wrapper.sh" "$MAIN_DIR" "$PROJECT_SUBDIR" "FastAPI DDD Backend"
 
 echo "[fastapi-ddd] Done."

@@ -63,6 +63,7 @@ bash "$SKEL_DIR/merge" "$SKEL_DIR" "$PROJECT_DIR"
 )
 
 # Create wrapper-level README, Makefile, and thin scripts
+export SKEL_NAME="$(basename "$SKEL_DIR")"
 bash "$COMMON_DIR/common-wrapper.sh" "$MAIN_DIR" "$PROJECT_SUBDIR" "Django-Bolt Backend"
 
 echo "[django-bolt] Done."

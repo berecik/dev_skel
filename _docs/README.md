@@ -1,212 +1,173 @@
-# Developer Projects – Multi‑Service Skeleton Generator
+# Dev Skel Documentation
 
-A Makefile-based project generator system that creates **multi‑service projects** from reusable skeleton templates.
+This directory is the reference manual for Dev Skel — the multi-service
+project generator that **ships every generated service with its own
+in-service code agent**. The top-level [`README.md`](../README.md) is
+the one-page overview; the files here go into depth per topic.
 
-You can start a project with a backend (Java Spring, FastAPI, or Django) and then add more services into the **same wrapper directory** – for example a React frontend, a Rust Actix service as an authorisation layer, a Rust Axum extra‑fast API, or a Flutter mobile/desktop application – without overwriting existing code. The `_bin/skel-gen` tool takes care of creating unique service subdirectories (like `backend-1/`, `frontend-1/`, `service-1/`, …) inside one project.
+If you're new here, start with [`../README.md`](../README.md) →
+[Generator](#1-the-generator-skel-gen-ai) →
+[In-service agent](#2-the-in-service-code-agent-ai) →
+[Template ↔ service sync](#3-template--service-sync-backport--ai-upgrade).
 
-## Directory Structure
+---
+
+## The three AI surfaces (cheat sheet)
 
 ```
-.
-├── Makefile              # Main orchestration Makefile
-├── skel-deps             # Dependency installer for all skeletons
-├── maintenance           # One-shot maintenance test runner (make clean-test, make test-generators, ./test)
-├── test                  # Root script that runs all skeleton e2e tests
-├── _bin/                 # Helper tools
-├── _skels/               # Skeleton templates directory
-│   ├── python-fastapi-skel/
-│   ├── python-flask-skel/
-│   ├── python-django-skel/
-│   ├── python-django-bolt-skel/
-│   ├── ts-react-skel/
-│   ├── js-skel/
-│   ├── java-spring-skel/
-│   ├── rust-actix-skel/
-│   └── rust-axum-skel/
-├── _docs/                # Documentation
-│   ├── README.md         # This file
-│   ├── DEPENDENCIES.md   # Dependency installation guide
-│   ├── MAKEFILE.md       # Main Makefile documentation
-│   ├── SKELETONS.md      # Skeleton details
-│   └── LLM-MAINTENANCE.md # LLM maintenance guide
-└── _test_projects/       # Generated test projects (gitignored)
+                   _bin/skel-gen-ai
+  dev_skel  ─────────────────────────────►  <project>/
+  checkout       (full-stack dialog,            │
+                  5-phase Ollama run)           │
+                                                │
+                      ◄──────── ./backport ─────┤
+                                (promote          │
+                                 service→template)│
+                                                  │
+                      ────────► ./ai upgrade ─────┤
+                                (pull template    │
+                                 →service)        │
+                                                  │
+                                                  ▼
+                                        ┌─────────────────────┐
+                                        │  <service>/         │
+                                        │    ./ai             │
+                                        │    .ai_runtime.py   │
+                                        │    .skel_context.json│
+                                        │    .ai/memory.jsonl │
+                                        └─────────────────────┘
 ```
 
-## Quick Start
+Wrapper-level `./ai` (auto-generated at `<project>/ai`) **fans out by
+default**, so a single request at the project root lands in every
+service.
 
-### Install System Dependencies
+---
 
-Install required dependencies for all frameworks or specific ones:
+## Documentation index
+
+### 1. The generator (`skel-gen-ai`)
+
+* [**LLM-MAINTENANCE.md**](LLM-MAINTENANCE.md) — the complete reference
+  for the AI pipeline. Manifests, the RAG agent (`_bin/skel_rag/`),
+  the five-phase orchestrator, the fix-loop, the sibling discovery
+  format, prompt placeholders. **Start here** when extending
+  `skel-gen-ai`, adding a manifest, or debugging a generation.
+* [**SKELETONS.md**](SKELETONS.md) — per-skeleton summary: what AI
+  manifest each skel ships, what entity slots it exposes
+  (`{item_class}`, `{items_plural}`, `{backend_extra}` …), items API
+  contract status, service-directory conventions.
+* Per-skeleton deep-dives — [`python-fastapi-skel.md`](python-fastapi-skel.md),
+  [`python-django-bolt-skel.md`](python-django-bolt-skel.md),
+  [`ts-react-skel.md`](ts-react-skel.md),
+  [`flutter-skel.md`](flutter-skel.md),
+  [`java-spring-skel.md`](java-spring-skel.md),
+  [`rust-actix-skel.md`](rust-actix-skel.md),
+  [`rust-axum-skel.md`](rust-axum-skel.md),
+  [`python-django-skel.md`](python-django-skel.md),
+  [`python-flask-skel.md`](python-flask-skel.md),
+  [`js-skel.md`](js-skel.md).
+
+### 2. The in-service code agent (`./ai`)
+
+* [**LLM-MAINTENANCE.md § `./ai`**](LLM-MAINTENANCE.md#ai-service-local-ai-refactoring)
+  — the full agent reference. Subcommands (`propose`, `apply`,
+  `verify`, `explain`, `history`, `undo`, `upgrade`), the in-tree vs
+  out-of-tree dispatch modes, the safety contract (git stash, path
+  traversal rejection, per-service lock), the cross-call memory JSONL
+  format.
+* [**`../SERVICE_REFACTOR_COMMAND.md`**](../SERVICE_REFACTOR_COMMAND.md)
+  — the original design doc for `./ai`. Canonical source for the
+  runtime's internal invariants.
+
+### 3. Template ↔ service sync (`./backport`, `./ai upgrade`)
+
+* [**LLM-MAINTENANCE.md § `./backport`**](LLM-MAINTENANCE.md#backport-service-edits--template)
+  — propose/apply CLI, the VERSION bump + CHANGELOG append on apply.
+* [**LLM-MAINTENANCE.md § `./ai upgrade`**](LLM-MAINTENANCE.md#skeleton-versioning--ai-upgrade-since-2026-04)
+  — sidecar layout, version comparison rules, changelog excerpt
+  extraction, propose/apply dispatch.
+* [**`../SKEL_BACKPORT_COMMAND.md`**](../SKEL_BACKPORT_COMMAND.md) —
+  original design doc for `./backport`.
+* [**`../UPDATE_SKEL_REFACTOR.md`**](../UPDATE_SKEL_REFACTOR.md) —
+  original design doc for `./ai upgrade`.
+
+### 4. Operator reference
+
+* [**MAKEFILE.md**](MAKEFILE.md) — every Make target grouped by
+  purpose (gen, test, AI smokes, cross-stack HTTP tests, sync).
+* [**DEPENDENCIES.md**](DEPENDENCIES.md) — per-stack toolchains,
+  Ollama setup, optional FAISS/RAG deps.
+* [**JUNIE-RULES.md**](JUNIE-RULES.md) — project-authoritative
+  behavior rules (what every agent must / must not do).
+* [**`../AGENTS.md`**](../AGENTS.md) — cross-agent baseline (applies
+  to Claude Code, Cursor, Aider, Junie, etc.).
+* [**`../CLAUDE.md`**](../CLAUDE.md) — Claude Code-specific
+  conventions (Plan/Task tooling, memory hygiene).
+
+---
+
+## Quick tour
 
 ```bash
-# List all available skeletons
-./skel-deps --list
-
-# Install all dependencies
+# 0) Toolchains (one-time)
 ./skel-deps --all
+ollama serve &
+ollama pull gemma4:31b
 
-# Install for specific framework
-./skel-deps java-spring-skel
-./skel-deps python-django
+# 1) Generate a whole project via a single dialog
+_bin/skel-gen-ai myproj
+
+# 2) Every generated service ships ./ai, ./backport, and a VERSION sidecar
+cd myproj
+./services                          # items_api  web_ui  _shared
+ls items_api/ai                     # per-service AI script
+cat items_api/.skel_context.json    # { "skeleton_name": "…", "skeleton_version": "0.1.0" }
+
+# 3) Fan-out ./ai at the project root
+./ai "rename Item to Ticket"        # hits items_api AND web_ui
+./ai items_api "fix the 404 path"   # scope to one service
+
+# 4) Service ↔ template flow
+./backport               # propose: service → template diff
+./backport apply         # writes upstream; bumps skel VERSION; appends CHANGELOG
+./ai upgrade             # pull skeleton changes back down
 ```
 
-Supported: macOS (Homebrew), Ubuntu/Debian (apt), Arch Linux (pacman), Fedora/RHEL (dnf)
+---
 
-See [DEPENDENCIES.md](DEPENDENCIES.md) for detailed information.
+## What's NOT in this directory
 
-### Generate a New Project (Wrapper + Services)
+* **Scratch/test artefacts** live under `_test_projects/` (gitignored).
+  Regenerate with `make clean-test && make test-generators`.
+* **AI manifests** live under
+  [`../_skels/_common/manifests/<skel>.py`](../_skels/_common/manifests/)
+  — documented at the top of
+  [`../_bin/skel_ai_lib.py`](../_bin/skel_ai_lib.py).
+* **Per-service AI memory** lives under
+  `<wrapper>/.ai/memory.jsonl` and `<service>/.ai/memory.jsonl` in
+  generated projects, not in this repo.
 
-There are two equivalent ways to generate services:
+---
 
-1. From the repo root via the main Makefile targets.
-2. From anywhere using the relocatable `_bin/skel-gen` tool.
+## Maintenance workflow
 
-```bash
-# First backend service in a new wrapper (FastAPI)
-make gen-fastapi NAME=myproj
+Running `./maintenance` (or the `make clean-test && make test-generators
+&& ./test` triplet) is the canonical pre-commit check. The GitHub
+Actions workflow `.github/workflows/maintenance.yml` runs the same
+triplet on every push to `master`.
 
-# First backend service in a new wrapper (Django)
-make gen-django NAME=myproj
+For AI-pipeline changes specifically:
 
-# Add a second backend service to the *same* wrapper
-make gen-fastapi NAME=myproj
+* `make test-ai-generators-dry` — always cheap (verifies dispatch +
+  base scaffolding without calling Ollama).
+* `make test-ai-generators` — slow (~30 min), requires a running
+  Ollama. Exits with code `2` (skipped) when Ollama is unreachable so
+  it's safe to call from longer scripts.
+* `make test-ai-script` / `test-ai-memory` / `test-ai-upgrade` /
+  `test-ai-fanout` / `test-backport-script` — fast no-LLM smokes that
+  exercise the per-service agent, the memory plumbing, the upgrade
+  paths, the wrapper fan-out, and the backport round trip.
 
-# Add a React frontend service to the same wrapper
-make gen-react NAME=myproj
-
-# Add a Rust Actix quick API to the same wrapper
-make gen-actix NAME=myproj
-```
-
-2) With the generator tool (relocatable) from anywhere
-
-```bash
-_bin/skel-gen <skel_type> <proj_name> [service_in_proj_name]
-
-# Create a new project wrapper with its first FastAPI backend
-_bin/skel-gen python-fastapi-skel myproj           # → $PWD/myproj/backend-1/...
-
-# Add another backend service into the same wrapper
-_bin/skel-gen python-fastapi-skel myproj           # → $PWD/myproj/backend-2/...
-
-# Add a React frontend service
-_bin/skel-gen ts-react-skel myproj                 # → $PWD/myproj/frontend-1/...
-
-# Add a Rust Actix quick API service
-_bin/skel-gen rust-actix-skel myproj               # → $PWD/myproj/service-1/...
-```
-
-Parameters:
-
-- `skel_type` – skeleton directory name under `_skels/` (for example `python-fastapi-skel`, `ts-react-skel`).
-- `proj_name` – **leaf** wrapper directory name (no `/`), created under the current working directory.
-- `service_in_proj_name` – optional **service directory base name** inside the wrapper. If omitted, a generic base is used per skeleton (`backend`, `frontend`, or `service`). Dev Skel automatically appends numeric suffixes (`-1`, `-2`, …) so that service directory names are unique.
-
-### Generated Project Layout
-
-Every generator treats the user-provided path as a **wrapper directory** (`main_dir`) and creates the real framework-specific project inside one or more **service subdirectories** (`project_dir`) inside `main_dir`.
-
-Typical service directories:
-
-- Python backends (FastAPI, Flask, Django): `backend-1/`, `backend-2/`, …
-- React frontend (ts-react-skel): `frontend-1/`, `frontend-2/`, …
-- Node.js (js-skel): `service-1/` or `app-1/`
-- Java Spring / Rust services: `service-1/`, `service-2/`, …
-
-Example (FastAPI + React + Actix):
-
-```text
-myproj/
-  README.md      # generic wrapper README
-  Makefile       # generic wrapper Makefile
-  run test ...   # thin wrapper scripts (forward into a chosen service)
-  backend-1/     # real FastAPI backend
-  frontend-1/    # real React frontend
-  service-1/     # real Rust Actix quick API
-```
-
-Wrapper-level scripts like `./run`, `./test`, `./build`, `./stop` live in `main_dir` and **forward all arguments** to the scripts in a selected `project_dir`.
-
-### Install Project Dependencies
-
-After generating a project, install its dependencies using the included `install-deps` script from the wrapper directory:
-
-```bash
-# Generate a project
-make gen-fastapi NAME=myapp
-cd myapp
-
-# Install project dependencies (delegates into backend/install-deps)
-./install-deps
-
-# For Python projects, activate the virtual environment from project_dir
-cd backend
-source .venv/bin/activate
-
-# Start development
-uvicorn app.main:app --reload
-```
-
-Each generated project includes an `install-deps` script (in `project_dir`, plus a wrapper in `main_dir`) that:
-- **Python projects**: Creates virtual environment, installs from requirements.txt
-- **Node.js projects**: Runs npm install
-- **Java projects**: Runs Maven dependency resolution and installation
-- **Rust projects**: Runs cargo fetch and build
-
-See [DEPENDENCIES.md](DEPENDENCIES.md) for more information.
-
-### Test All Generators
-
-```bash
-make test-generators
-```
-
-This creates wrapper+inner projects under `_test_projects/` and performs basic import/build checks inside the appropriate `project_dir` (for example, `backend/`, `frontend/`, `service/`).
-
-### Run Skeleton E2E Tests and Maintenance Suite
-
-- Run all skeleton E2E tests:
-
-  ```bash
-  ./test
-  ```
-
-  This calls each skeleton's `test_skel` script, which generates a temporary project using the wrapper layout and runs its tests plus Docker build checks.
-
-- Run the full maintenance workflow (used by CI):
-
-  ```bash
-  ./maintenance
-  ```
-
-  This executes:
-  - `make clean-test`
-  - `make test-generators`
-  - `./test`
-
-  The GitHub Actions workflow `.github/workflows/maintenance.yml` runs this same script on pushes and pull requests to `master`.
-
-### Show Available Commands
-
-```bash
-make help
-```
-
-## Documentation Index
-
-- [Dependencies](DEPENDENCIES.md) - System dependency installation guide for all platforms
-- [Makefile Reference](MAKEFILE.md) - Detailed documentation of the main Makefile
-- [Skeleton Templates](SKELETONS.md) - Details about each skeleton template
-- [LLM Maintenance Guide](LLM-MAINTENANCE.md) - Instructions for AI assistants maintaining this project
-
-## Requirements
-
-Each framework has specific requirements. Use `./skel-deps` to install them automatically:
-
-- **Python**: Python 3.10+ with pip and venv
-- **Node.js**: Node.js 20+ with npm
-- **Java**: JDK 21+ with Maven
-- **Rust**: Stable Rust with Cargo (via rustup)
-- **Make**: GNU Make 4.0+
-
-Run `./skel-deps --all` to install all dependencies. See [DEPENDENCIES.md](DEPENDENCIES.md) for details.
+See [MAKEFILE.md § AI targets](MAKEFILE.md#ai-pipeline-targets) for
+the complete list.

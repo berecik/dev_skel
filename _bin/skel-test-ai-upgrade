@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""Smoke test for the ``./ai upgrade`` subcommand.
+
+Exercises both terminating branches without touching Ollama:
+
+  1. **No-op** — generate a service, leave the skeleton alone, run
+     ``./ai upgrade``. Asserts exit 0 and the "nothing to upgrade"
+     marker.
+  2. **Outdated** — bump the skeleton's VERSION and prepend a
+     CHANGELOG.md entry, then re-run ``./ai upgrade --no-llm``.
+     Asserts exit 0, the synthesised "vX → vY" line, the propose
+     scratch dir, and that the sidecar version is **not** mutated
+     (only ``upgrade --apply`` writes back).
+
+Real LLM coverage of the apply path lives under
+``_bin/skel_rag/tests/`` and depends on a running Ollama daemon.
+
+Usage:
+
+    _bin/skel-test-ai-upgrade
+    _bin/skel-test-ai-upgrade --skel python-fastapi-skel --keep
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+TEST_OUTPUT = REPO_ROOT / "_test_projects"
+SKELS_ROOT = REPO_ROOT / "_skels"
+
+EXIT_OK = 0
+EXIT_FAIL = 1
+
+DEFAULT_SKEL = "python-fastapi-skel"
+
+
+def _run(argv, **kwargs):
+    return subprocess.run(argv, capture_output=True, text=True, **kwargs)
+
+
+def _restore(path: Path, fallback: str) -> None:
+    """Hard-revert ``path`` via git checkout, falling back to a rewrite
+    when the file is currently untracked.
+    """
+
+    proc = _run(["git", "checkout", "--", str(path)], cwd=REPO_ROOT)
+    if proc.returncode == 0:
+        return
+    path.write_text(fallback, encoding="utf-8")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--skel", default=DEFAULT_SKEL)
+    parser.add_argument("--service-name", default="Items API")
+    parser.add_argument("--keep", action="store_true")
+    args = parser.parse_args()
+
+    project = (
+        f"test-ai-upgrade-"
+        f"{args.skel.replace('python-', '').replace('-skel', '')}"
+    )
+    wrapper = TEST_OUTPUT / project
+    if wrapper.exists():
+        shutil.rmtree(wrapper)
+
+    print(f"[up-smoke] Generating {args.skel} into {wrapper}")
+    gen = _run(
+        [str(REPO_ROOT / "_bin" / "skel-gen-static"),
+         project, args.skel, args.service_name],
+        cwd=TEST_OUTPUT,
+    )
+    if gen.returncode != 0:
+        print(gen.stdout); print(gen.stderr, file=sys.stderr)
+        return EXIT_FAIL
+
+    services = [
+        p for p in wrapper.iterdir()
+        if p.is_dir() and p.name != "_shared" and not p.name.startswith(".")
+    ]
+    if not services:
+        print(f"[up-smoke] FAIL: no service dir under {wrapper}")
+        return EXIT_FAIL
+    service_dir = services[0]
+    print(f"[up-smoke] Service dir: {service_dir.relative_to(REPO_ROOT)}")
+
+    sidecar_path = service_dir / ".skel_context.json"
+    if not sidecar_path.is_file():
+        print(f"[up-smoke] FAIL: missing sidecar {sidecar_path}")
+        return EXIT_FAIL
+    sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    starting_version = (sidecar.get("skeleton_version") or "").strip()
+    if not starting_version:
+        print(
+            "[up-smoke] FAIL: sidecar has no skeleton_version "
+            "(install-ai-script regression?)"
+        )
+        return EXIT_FAIL
+    print(f"[up-smoke] Sidecar skeleton_version: {starting_version} ✓")
+
+    # 1) No-op upgrade — skeleton matches sidecar.
+    noop = _run(["./ai", "upgrade"], cwd=service_dir)
+    combined = noop.stdout + noop.stderr
+    if noop.returncode != 0 or "nothing to upgrade" not in combined:
+        print(
+            "[up-smoke] FAIL: no-op upgrade did not return clean.\n"
+            f"  rc={noop.returncode}\n"
+            f"  stdout: {noop.stdout!r}\n"
+            f"  stderr: {noop.stderr!r}"
+        )
+        return EXIT_FAIL
+    print("[up-smoke] ./ai upgrade (no-op) reports nothing to upgrade ✓")
+
+    # 2) Outdated upgrade — bump the skeleton.
+    version_path = SKELS_ROOT / args.skel / "VERSION"
+    changelog_path = SKELS_ROOT / args.skel / "CHANGELOG.md"
+    original_version = version_path.read_text(encoding="utf-8")
+    original_changelog = (
+        changelog_path.read_text(encoding="utf-8")
+        if changelog_path.is_file() else ""
+    )
+
+    try:
+        version_path.write_text("0.2.0\n", encoding="utf-8")
+        changelog_path.write_text(
+            "# Changelog\n\n"
+            "## [0.2.0] - 2026-04-16\n\n"
+            "- Synthetic upgrade entry for ./ai upgrade smoke test.\n\n"
+            + original_changelog.split("\n", 1)[1]
+            if original_changelog.startswith("# Changelog")
+            else original_changelog,
+            encoding="utf-8",
+        )
+
+        outdated = _run(
+            ["./ai", "upgrade", "--no-llm"], cwd=service_dir,
+        )
+        combined = outdated.stdout + outdated.stderr
+        marker = f"v{starting_version} → v0.2.0"
+        if outdated.returncode != 0 or marker not in combined:
+            print(
+                "[up-smoke] FAIL: outdated upgrade missing transition "
+                f"marker {marker!r}.\n"
+                f"  rc={outdated.returncode}\n"
+                f"  stderr: {outdated.stderr!r}"
+            )
+            return EXIT_FAIL
+        if "Synthetic upgrade entry" not in combined:
+            print(
+                "[up-smoke] FAIL: outdated upgrade did not surface the "
+                "CHANGELOG excerpt.\n"
+                f"  stderr: {outdated.stderr!r}"
+            )
+            return EXIT_FAIL
+        print(
+            f"[up-smoke] ./ai upgrade (outdated) surfaced {marker} "
+            "+ excerpt ✓"
+        )
+
+        # Sidecar must NOT be bumped — propose-only run.
+        sidecar_after = json.loads(
+            sidecar_path.read_text(encoding="utf-8")
+        )
+        if (sidecar_after.get("skeleton_version") or "") != starting_version:
+            print(
+                "[up-smoke] FAIL: dry-run upgrade mutated sidecar "
+                f"(was {starting_version!r}, "
+                f"now {sidecar_after.get('skeleton_version')!r})"
+            )
+            return EXIT_FAIL
+        print("[up-smoke] dry-run upgrade left sidecar untouched ✓")
+    finally:
+        _restore(version_path, original_version)
+        _restore(changelog_path, original_changelog)
+
+    if not args.keep:
+        shutil.rmtree(wrapper)
+    print("[up-smoke] OK — ./ai upgrade no-op + outdated paths verified.")
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())

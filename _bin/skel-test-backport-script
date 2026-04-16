@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""Smoke test for the per-service ./backport script.
+
+End-to-end exercise:
+
+  1. Generate a fastapi service via skel-gen-static (writes the
+     `.skel_context.json` sidecar via the install-ai-script hook).
+  2. Verify ``./backport`` lands and ``--help`` works.
+  3. Verify ``./backport propose`` reports "no backportable changes
+     found" against an unmodified service.
+  4. Modify a service file, run ``./backport propose`` and assert
+     that path appears in the output.
+  5. Run ``./backport apply`` and assert the skeleton template was
+     updated to match the service's new content.
+  6. Restore the skeleton template via ``git checkout`` so the
+     repo stays clean.
+  7. Tear down the test wrapper.
+
+This runner intentionally does NOT touch Ollama (backport is purely
+file-diff-based, no LLM involvement). Mirrors the shape of
+``_bin/skel-test-ai-script``.
+
+Usage:
+
+    _bin/skel-test-backport-script                          # default fastapi
+    _bin/skel-test-backport-script --skel python-flask-skel
+    _bin/skel-test-backport-script --keep                   # leave on disk
+"""
+
+from __future__ import annotations
+
+import argparse
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+TEST_OUTPUT = REPO_ROOT / "_test_projects"
+SKELS_ROOT = REPO_ROOT / "_skels"
+
+EXIT_OK = 0
+EXIT_FAIL = 1
+
+DEFAULT_SKEL = "python-fastapi-skel"
+
+
+def _run(argv, **kwargs):
+    return subprocess.run(argv, capture_output=True, text=True, **kwargs)
+
+
+def _restore_skel_file(rel_path: Path, skel_name: str) -> None:
+    """Hard-revert ``_skels/<skel_name>/<rel_path>`` via git checkout.
+
+    Falls back to a manual rewrite when the file is currently
+    untracked (true for the seed VERSION/CHANGELOG.md while the
+    versioning rollout is still in flight).
+    """
+
+    target = (SKELS_ROOT / skel_name / rel_path).resolve()
+    proc = _run(["git", "checkout", "--", str(target)], cwd=REPO_ROOT)
+    if proc.returncode == 0:
+        return
+    rel = rel_path.as_posix()
+    if rel == "VERSION":
+        target.write_text("0.1.0\n", encoding="utf-8")
+    elif rel == "CHANGELOG.md":
+        target.write_text(
+            "# Changelog\n\n"
+            "## [0.1.0] - 2026-04-16\n"
+            "- Initial version with versioning support.\n\n",
+            encoding="utf-8",
+        )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--skel", default=DEFAULT_SKEL,
+        help=f"Skeleton to test against (default: {DEFAULT_SKEL}).")
+    parser.add_argument("--service-name", default="Items API")
+    parser.add_argument("--keep", action="store_true",
+        help="Leave the generated wrapper on disk after the test.")
+    args = parser.parse_args()
+
+    project = f"test-backport-script-{args.skel.replace('python-', '').replace('-skel', '')}"
+    wrapper = TEST_OUTPUT / project
+    if wrapper.exists():
+        shutil.rmtree(wrapper)
+
+    skel_target_rel = Path("app") / "__init__.py" if args.skel.startswith("python-") else None
+    if skel_target_rel is None:
+        print(f"[bp-smoke] FAIL: no canned target for {args.skel}", file=sys.stderr)
+        return EXIT_FAIL
+
+    print(f"[bp-smoke] Generating {args.skel} into {wrapper}")
+    gen = _run(
+        [str(REPO_ROOT / "_bin" / "skel-gen-static"),
+         project, args.skel, args.service_name],
+        cwd=TEST_OUTPUT,
+    )
+    if gen.returncode != 0:
+        print(gen.stdout); print(gen.stderr, file=sys.stderr)
+        return EXIT_FAIL
+
+    services = [
+        p for p in wrapper.iterdir()
+        if p.is_dir() and p.name != "_shared" and not p.name.startswith(".")
+    ]
+    if not services:
+        print(f"[bp-smoke] FAIL: no service dir under {wrapper}", file=sys.stderr)
+        return EXIT_FAIL
+    service_dir = services[0]
+    print(f"[bp-smoke] Service dir: {service_dir.relative_to(REPO_ROOT)}")
+
+    backport = service_dir / "backport"
+    sidecar = service_dir / ".skel_context.json"
+    if not backport.is_file() or not sidecar.is_file():
+        print(
+            f"[bp-smoke] FAIL: missing ./backport or sidecar "
+            f"(backport={backport.is_file()}, sidecar={sidecar.is_file()})",
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+    print("[bp-smoke] ./backport + .skel_context.json shipped ✓")
+
+    # `./backport --help` must exit 0 and not require dev_skel detection.
+    help_proc = _run(["./backport", "--help"], cwd=service_dir)
+    if help_proc.returncode != 0:
+        print(help_proc.stdout); print(help_proc.stderr, file=sys.stderr)
+        return EXIT_FAIL
+    print("[bp-smoke] ./backport --help OK ✓")
+
+    # `./backport propose` on a clean tree → no candidates.
+    clean = _run(["./backport", "propose"], cwd=service_dir)
+    if clean.returncode != 0:
+        print(clean.stdout); print(clean.stderr, file=sys.stderr)
+        print("[bp-smoke] FAIL: clean propose exited non-zero")
+        return EXIT_FAIL
+    if "no backportable changes" not in clean.stderr + clean.stdout:
+        print(
+            f"[bp-smoke] FAIL: clean propose missing 'no backportable "
+            f"changes' marker\n  stderr: {clean.stderr!r}",
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+    print("[bp-smoke] ./backport propose (clean) reports no changes ✓")
+
+    # Modify a file in the service.
+    target_file = service_dir / skel_target_rel
+    skel_file = SKELS_ROOT / args.skel / skel_target_rel
+    if not target_file.is_file() or not skel_file.is_file():
+        print(
+            f"[bp-smoke] FAIL: target file missing "
+            f"(service={target_file.is_file()}, skel={skel_file.is_file()})",
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+
+    marker_line = f"# bp-smoke marker {wrapper.name}\n"
+    target_file.write_text(
+        target_file.read_text(encoding="utf-8") + marker_line,
+        encoding="utf-8",
+    )
+
+    # Propose should now list the modified file.
+    dirty = _run(["./backport", "propose"], cwd=service_dir)
+    combined_dirty = dirty.stdout + dirty.stderr
+    if dirty.returncode != 0 or skel_target_rel.as_posix() not in combined_dirty:
+        print(
+            f"[bp-smoke] FAIL: dirty propose missing {skel_target_rel}\n"
+            f"  stdout: {dirty.stdout!r}\n  stderr: {dirty.stderr!r}",
+            file=sys.stderr,
+        )
+        _restore_skel_file(skel_target_rel, args.skel)
+        return EXIT_FAIL
+    print(f"[bp-smoke] ./backport propose detected {skel_target_rel} ✓")
+
+    # Snapshot VERSION/CHANGELOG so we can confirm the bump landed.
+    version_path = SKELS_ROOT / args.skel / "VERSION"
+    changelog_path = SKELS_ROOT / args.skel / "CHANGELOG.md"
+    old_version = (
+        version_path.read_text(encoding="utf-8").strip()
+        if version_path.is_file()
+        else ""
+    )
+    old_changelog = (
+        changelog_path.read_text(encoding="utf-8")
+        if changelog_path.is_file()
+        else ""
+    )
+
+    # Apply the change.
+    try:
+        applied = _run(["./backport", "apply"], cwd=service_dir)
+        if applied.returncode != 0:
+            print(applied.stdout); print(applied.stderr, file=sys.stderr)
+            print("[bp-smoke] FAIL: apply exited non-zero")
+            return EXIT_FAIL
+
+        # The skel template should now contain our marker line.
+        if marker_line.strip() not in skel_file.read_text(encoding="utf-8"):
+            print(
+                f"[bp-smoke] FAIL: skel template not updated\n"
+                f"  expected to find: {marker_line.strip()}\n"
+                f"  in: {skel_file}",
+                file=sys.stderr,
+            )
+            return EXIT_FAIL
+        print(
+            f"[bp-smoke] ./backport apply updated {skel_target_rel} "
+            "in skel template ✓"
+        )
+
+        # VERSION must have bumped (patch by default).
+        new_version = (
+            version_path.read_text(encoding="utf-8").strip()
+            if version_path.is_file()
+            else ""
+        )
+        if not new_version or new_version == old_version:
+            print(
+                f"[bp-smoke] FAIL: VERSION did not bump "
+                f"(was {old_version!r}, now {new_version!r})",
+                file=sys.stderr,
+            )
+            return EXIT_FAIL
+        print(
+            f"[bp-smoke] VERSION bumped {old_version} → {new_version} ✓"
+        )
+
+        # CHANGELOG must have a fresh entry mentioning the file.
+        new_changelog = (
+            changelog_path.read_text(encoding="utf-8")
+            if changelog_path.is_file()
+            else ""
+        )
+        marker = f"## [{new_version}]"
+        if marker not in new_changelog or skel_target_rel.as_posix() not in new_changelog:
+            print(
+                f"[bp-smoke] FAIL: CHANGELOG.md missing entry for "
+                f"{new_version} / {skel_target_rel.as_posix()}\n"
+                f"  body:\n{new_changelog}",
+                file=sys.stderr,
+            )
+            return EXIT_FAIL
+        print(f"[bp-smoke] CHANGELOG.md gained {marker} entry ✓")
+    finally:
+        # Always restore the skel — even on test failure — so the
+        # repo never carries a stray "bp-smoke marker" line, a
+        # ratchetted VERSION, or a phantom CHANGELOG entry.
+        _restore_skel_file(skel_target_rel, args.skel)
+        _restore_skel_file(Path("VERSION"), args.skel)
+        _restore_skel_file(Path("CHANGELOG.md"), args.skel)
+
+    if not args.keep:
+        shutil.rmtree(wrapper)
+    print("[bp-smoke] OK — ./backport propose + apply verified end-to-end.")
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())

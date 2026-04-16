@@ -441,6 +441,8 @@ def generate_project(
     skel_name: str,
     proj_name: str,
     service_name: Optional[str] = None,
+    *,
+    existing_project: bool = False,
 ) -> str:
     """Generate a service inside ``proj_name`` (the wrapper directory).
 
@@ -457,6 +459,10 @@ def generate_project(
     to the per-skeleton default base (``backend``, ``frontend``, ``service``)
     so existing tooling that does not know about service names — including
     the static ``make gen-<name> NAME=...`` Makefile targets — keeps working.
+
+    ``existing_project=True`` switches the function into **add-service** mode:
+    the wrapper directory must already exist and we keep allocating the next
+    available service slug inside it.
 
     Returns the actual subdirectory name that was created (which may have a
     numeric suffix appended if the slug already existed in the wrapper).
@@ -477,6 +483,12 @@ def generate_project(
     main_dir = target
 
     ensure_dir(target.parent)
+
+    if existing_project and not target.is_dir():
+        raise SystemExit(
+            f"Error: existing project directory not found: {target}. "
+            "Create it first with skel-gen or point skel-add at a wrapper that already exists."
+        )
 
     if service_name:
         base = slugify_service_name(service_name)

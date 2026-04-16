@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""Smoke test for wrapper-level ``./ai`` fan-out default.
+
+Scenario: user runs ``./ai "REQUEST"`` from the project root with two
+generated services inside the wrapper. Expectation (set by the user
+in 2026-04): it should dispatch to BOTH services by default. Scoping
+to a single service still works via ``./ai <slug> "REQUEST"``.
+
+No LLM is involved — we rely on ``./ai --no-llm "..."`` which walks
+the propose scaffolding without making a network call.
+
+Usage:
+
+    _bin/skel-test-ai-fanout
+    _bin/skel-test-ai-fanout --skel python-fastapi-skel --keep
+"""
+
+from __future__ import annotations
+
+import argparse
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+TEST_OUTPUT = REPO_ROOT / "_test_projects"
+
+EXIT_OK = 0
+EXIT_FAIL = 1
+
+DEFAULT_SKEL = "python-fastapi-skel"
+
+
+def _run(argv, **kwargs):
+    return subprocess.run(argv, capture_output=True, text=True, **kwargs)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--skel", default=DEFAULT_SKEL)
+    parser.add_argument("--keep", action="store_true")
+    args = parser.parse_args()
+
+    project = (
+        f"test-ai-fanout-"
+        f"{args.skel.replace('python-', '').replace('-skel', '')}"
+    )
+    wrapper = TEST_OUTPUT / project
+    if wrapper.exists():
+        shutil.rmtree(wrapper)
+
+    print(f"[fo-smoke] Generating two {args.skel} services into {wrapper}")
+    for svc_name in ("Items API", "Orders API"):
+        gen = _run(
+            [str(REPO_ROOT / "_bin" / "skel-gen-static"),
+             project, args.skel, svc_name],
+            cwd=TEST_OUTPUT,
+        )
+        if gen.returncode != 0:
+            print(gen.stdout); print(gen.stderr, file=sys.stderr)
+            return EXIT_FAIL
+
+    services = sorted(
+        p.name for p in wrapper.iterdir()
+        if p.is_dir() and p.name != "_shared" and not p.name.startswith(".")
+    )
+    if len(services) < 2:
+        print(
+            f"[fo-smoke] FAIL: expected 2 services, got {services}",
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+    print(f"[fo-smoke] Services: {services}")
+
+    wrapper_ai = wrapper / "ai"
+    if not wrapper_ai.is_file():
+        print(f"[fo-smoke] FAIL: wrapper ./ai missing at {wrapper_ai}")
+        return EXIT_FAIL
+
+    # 1) Bare wrapper-level ./ai must fan out to BOTH services.
+    fan = _run(["./ai", "--no-llm", "fanout smoke"], cwd=wrapper)
+    combined = fan.stdout + fan.stderr
+    if fan.returncode != 0:
+        print(combined, file=sys.stderr)
+        return EXIT_FAIL
+    for svc in services:
+        if f"[ai] >>> {svc}" not in combined:
+            print(
+                "[fo-smoke] FAIL: wrapper ./ai did not fan out to "
+                f"{svc}\n  output: {combined!r}",
+                file=sys.stderr,
+            )
+            return EXIT_FAIL
+    print(
+        f"[fo-smoke] bare ./ai fan-out hit all {len(services)} services ✓"
+    )
+
+    # 2) ./ai <slug> must still scope to a single service.
+    single_target = services[0]
+    single = _run(
+        ["./ai", single_target, "--no-llm", "single-target smoke"],
+        cwd=wrapper,
+    )
+    combined = single.stdout + single.stderr
+    if single.returncode != 0:
+        print(combined, file=sys.stderr)
+        return EXIT_FAIL
+    if f"[ai] >>> {single_target}" not in combined:
+        print(
+            "[fo-smoke] FAIL: scoped ./ai did not dispatch to "
+            f"{single_target}\n  output: {combined!r}",
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+    for svc in services[1:]:
+        if f"[ai] >>> {svc}" in combined:
+            print(
+                "[fo-smoke] FAIL: scoped ./ai leaked into "
+                f"{svc}\n  output: {combined!r}",
+                file=sys.stderr,
+            )
+            return EXIT_FAIL
+    print(f"[fo-smoke] ./ai {single_target} stayed scoped to one service ✓")
+
+    # 3) ./ai upgrade (no-op) at wrapper level fans out as well.
+    upgrade = _run(["./ai", "upgrade"], cwd=wrapper)
+    combined = upgrade.stdout + upgrade.stderr
+    if upgrade.returncode != 0:
+        print(combined, file=sys.stderr)
+        return EXIT_FAIL
+    noop_hits = combined.count("nothing to upgrade")
+    if noop_hits < len(services):
+        print(
+            "[fo-smoke] FAIL: wrapper ./ai upgrade did not reach every "
+            f"service (nothing-to-upgrade hits={noop_hits}, "
+            f"services={len(services)}).\n  output: {combined!r}",
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+    print(
+        f"[fo-smoke] ./ai upgrade (no-op) fan-out hit {noop_hits} "
+        "services ✓"
+    )
+
+    if not args.keep:
+        shutil.rmtree(wrapper)
+    print("[fo-smoke] OK — wrapper ./ai fan-out default verified.")
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())

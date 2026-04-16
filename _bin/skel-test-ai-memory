@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""Smoke test for project-wide ./ai memory + wrapper-level dispatch.
+
+Three end-to-end checks (all without an LLM):
+
+  1. **Wrapper ./ai exists and dispatches.** Generate a service,
+     verify the wrapper-level ``./ai`` script was created by
+     common-wrapper.sh, run ``<wrapper>/ai --no-llm "smoke"`` and
+     assert it forwards into the per-service ``./ai`` and writes
+     a scratch dir.
+
+  2. **Memory writes round-trip.** Synthesise a memory entry by
+     calling ``_record_apply_to_memory`` directly (the ``--no-llm``
+     dispatch path doesn't go through apply, so we drive memory
+     through the runtime's exposed surface). Assert both the
+     wrapper-level ``<wrapper>/.ai/memory.jsonl`` AND the per-service
+     ``<service>/.ai/memory.jsonl`` get the JSONL entry.
+
+  3. **Memory surfaces in the next prompt.** Call
+     ``_load_project_memory_block`` and assert the block contains
+     the synthesised entry's request text — proving the next
+     ``./ai`` invocation would see continuity from the previous run.
+
+  4. **Wrapper-level history aggregates.** Call ``./ai history``
+     against the per-service script and assert the project-memory
+     section appears with the synthesised entry.
+
+This runner mirrors ``_bin/skel-test-ai-script``'s shape but never
+touches Ollama. Real LLM-driven memory continuity would require the
+full apply path to converge, which means a real backend, real fix
+loop, real latency — covered by the in-tree end-to-end tests in
+``_bin/skel_rag/tests/`` (out of scope here).
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import shutil
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from types import SimpleNamespace
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+TEST_OUTPUT = REPO_ROOT / "_test_projects"
+RUNTIME_PATH = REPO_ROOT / "_bin" / "dev_skel_refactor_runtime.py"
+
+EXIT_OK = 0
+EXIT_FAIL = 1
+
+DEFAULT_SKEL = "python-fastapi-skel"
+
+
+def _load_runtime():
+    # Add the _bin/ directory to sys.path so the runtime imports
+    # cleanly via its package name. Bare `spec_from_file_location`
+    # does not register the module in `sys.modules`, which trips up
+    # `@dataclass` evaluation under Python 3.14 (it walks
+    # `sys.modules[cls.__module__].__dict__`).
+    sys.path.insert(0, str(REPO_ROOT / "_bin"))
+    import importlib
+
+    return importlib.import_module("dev_skel_refactor_runtime")
+
+
+def _run(argv, **kwargs):
+    return subprocess.run(argv, capture_output=True, text=True, **kwargs)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--skel", default=DEFAULT_SKEL)
+    parser.add_argument("--service-name", default="Items API")
+    parser.add_argument("--keep", action="store_true")
+    args = parser.parse_args()
+
+    project = f"test-ai-memory-{args.skel.replace('python-', '').replace('-skel', '')}"
+    wrapper = TEST_OUTPUT / project
+    if wrapper.exists():
+        shutil.rmtree(wrapper)
+
+    print(f"[mem-smoke] Generating {args.skel} into {wrapper}")
+    gen = _run(
+        [str(REPO_ROOT / "_bin" / "skel-gen-static"),
+         project, args.skel, args.service_name],
+        cwd=TEST_OUTPUT,
+    )
+    if gen.returncode != 0:
+        print(gen.stdout); print(gen.stderr, file=sys.stderr)
+        return EXIT_FAIL
+
+    services = [
+        p for p in wrapper.iterdir()
+        if p.is_dir() and p.name != "_shared" and not p.name.startswith(".")
+    ]
+    if not services:
+        print(f"[mem-smoke] FAIL: no service dir under {wrapper}", file=sys.stderr)
+        return EXIT_FAIL
+    service_dir = services[0]
+    print(f"[mem-smoke] Service dir: {service_dir.relative_to(REPO_ROOT)}")
+
+    # --- Check 1: wrapper-level ./ai dispatches into per-service ./ai
+    wrapper_ai = wrapper / "ai"
+    if not wrapper_ai.is_file():
+        print(
+            f"[mem-smoke] FAIL: wrapper-level ./ai missing at {wrapper_ai}\n"
+            "  common-wrapper.sh should have auto-generated this dispatcher.",
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+    proc = _run(["./ai", "--no-llm", "wrapper smoke"], cwd=wrapper)
+    combined = proc.stdout + proc.stderr
+    if proc.returncode != 0:
+        print(combined, file=sys.stderr)
+        return EXIT_FAIL
+    if f"[ai] >>> {service_dir.name}" not in combined:
+        print(
+            f"[mem-smoke] FAIL: wrapper ./ai did not dispatch to "
+            f"{service_dir.name}\n  output: {combined!r}",
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+    print("[mem-smoke] wrapper-level ./ai dispatched to per-service ./ai ✓")
+
+    # --- Check 2: memory writes round-trip
+    runtime = _load_runtime()
+    if not _try_clear_global_state(runtime):
+        return EXIT_FAIL
+
+    fake_ctx = SimpleNamespace(
+        service_dir=service_dir,
+        request="smoke: test memory plumbing",
+    )
+    fake_applied = SimpleNamespace(
+        written=[(service_dir / "app" / "__init__.py")],
+    )
+    fake_test_result = SimpleNamespace(
+        passed=True,
+        returncode=0,
+    )
+    runtime._record_apply_to_memory(
+        fake_ctx, fake_applied, fake_test_result,
+        "Smoke rationale — proves end-to-end plumbing.",
+    )
+
+    wrapper_memory = wrapper / ".ai" / "memory.jsonl"
+    service_memory = service_dir / ".ai" / "memory.jsonl"
+    for name, path in (("wrapper", wrapper_memory), ("service", service_memory)):
+        if not path.is_file():
+            print(
+                f"[mem-smoke] FAIL: {name} memory file not written: {path}",
+                file=sys.stderr,
+            )
+            return EXIT_FAIL
+        first_line = path.read_text(encoding="utf-8").splitlines()[0]
+        try:
+            entry = json.loads(first_line)
+        except json.JSONDecodeError as exc:
+            print(
+                f"[mem-smoke] FAIL: {name} memory line is not valid JSON: {exc}",
+                file=sys.stderr,
+            )
+            return EXIT_FAIL
+        if entry.get("request") != fake_ctx.request:
+            print(
+                f"[mem-smoke] FAIL: {name} memory request mismatch:\n"
+                f"  expected: {fake_ctx.request!r}\n"
+                f"  got:      {entry.get('request')!r}",
+                file=sys.stderr,
+            )
+            return EXIT_FAIL
+    print("[mem-smoke] memory round-trip via _record_apply_to_memory ✓")
+
+    # --- Check 3: memory surfaces in the next prompt
+    block = runtime._load_project_memory_block(service_dir)
+    if not block or "smoke: test memory plumbing" not in block:
+        print(
+            "[mem-smoke] FAIL: memory block does not contain synthesised "
+            f"request:\n  block: {block!r}",
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+    print("[mem-smoke] memory block surfaces in next prompt ✓")
+
+    # --- Check 4: ./ai history aggregates project + local
+    hist = _run(["./ai", "history"], cwd=service_dir)
+    if hist.returncode != 0:
+        print(hist.stdout); print(hist.stderr, file=sys.stderr)
+        return EXIT_FAIL
+    if "Project memory" not in hist.stdout:
+        print(
+            f"[mem-smoke] FAIL: ./ai history did not show 'Project memory' "
+            f"section:\n  stdout: {hist.stdout!r}",
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+    if "smoke: test memory plumbing" not in hist.stdout:
+        print(
+            f"[mem-smoke] FAIL: ./ai history missing synthesised request:\n"
+            f"  stdout: {hist.stdout!r}",
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+    print("[mem-smoke] ./ai history shows aggregated project + local runs ✓")
+
+    if not args.keep:
+        shutil.rmtree(wrapper)
+    print("[mem-smoke] OK — wrapper dispatch + project-wide memory verified.")
+    return EXIT_OK
+
+
+def _try_clear_global_state(_runtime) -> bool:
+    """Defensive no-op stub — the runtime is stateless across imports.
+
+    Placeholder for future work that may need to reset module-level
+    caches (the FAISS retriever cache lives on a `RagAgent` instance,
+    not the module, so currently nothing needs clearing).
+    """
+
+    return True
+
+
+if __name__ == "__main__":
+    sys.exit(main())
