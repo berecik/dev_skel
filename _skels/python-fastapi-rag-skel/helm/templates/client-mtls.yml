@@ -1,0 +1,23 @@
+{{- if .Values.cluster }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.name }}-mtls
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.name }}
+    app.kubernetes.io/part-of: example-project
+    app.kubernetes.io/component: mtls
+    app.kubernetes.io/version: '{{ .Values.image.tag }}'
+spec:
+  # Secret names are always required.
+  secretName: {{ .Values.mtls.exampleproject_client_secret }}
+  commonName: {{ .Values.name}}.app.{{ .Values.cluster.type }}.{{ .Values.cluster.environment }}.{{ .Values.business_domain }}
+  usages:
+    - client auth
+  issuerRef:
+    name: vault-issuer-exampleproject
+    kind: ClusterIssuer
+    group: cert-manager.io
+{{- end }}

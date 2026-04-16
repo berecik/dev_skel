@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Skeleton test script — generates a project and runs smoke tests
+
+SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SKEL_DIR/../.." && pwd)"
+TEST_PROJECTS_DIR="$REPO_ROOT/_test_projects"
+TARGET_NAME="test-fastapi-rag-app"
+TARGET="$TEST_PROJECTS_DIR/$TARGET_NAME"
+
+mkdir -p "$TEST_PROJECTS_DIR"
+
+cleanup() {
+  if [[ -d "$TARGET" ]]; then
+    (cd "$TARGET" && ./stop 2>/dev/null || true)
+  fi
+}
+trap cleanup EXIT
+
+echo "[test_skel] Generating FastAPI RAG project in $TARGET..."
+rm -rf "$TARGET"
+"$SKEL_DIR/gen" "$TARGET"
+
+MAIN_DIR="$TARGET"
+PROJECT_DIR="$MAIN_DIR/backend"
+
+cd "$PROJECT_DIR"
+
+. .venv/bin/activate
+
+echo ""
+echo "[test_skel] Verifying imports..."
+python - <<'PY'
+import importlib
+import sys
+
+modules = [
+    'app',
+    'core',
+    'core.repository',
+    'core.unit_of_work',
+    'app.rag.config',
+    'app.rag.embeddings',
+    'app.rag.vectorstore',
+    'app.rag.llm',
+    'app.rag.chain',
+    'app.rag.ingestion',
+    'app.documents.models',
+    'app.chat.models',
+    'app.chat.history',
+]
+failed = []
+
+for mod in modules:
+    try:
+        importlib.import_module(mod)
+        print(f'  OK: {mod}')
+    except Exception as e:
+        print(f'  FAIL: {mod} - {e}')
+        failed.append(mod)
+
+if failed:
+    print(f'\nERROR: Failed to import: {failed}')
+    sys.exit(1)
+
+print('\n  All imports succeeded')
+PY
+
+echo ""
+echo "[test_skel] Verifying FastAPI app..."
+python - <<'PY'
+from fastapi.testclient import TestClient
+from main import app
+
+client = TestClient(app)
+
+# Test readiness probe
+response = client.get("/health/readiness")
+if response.status_code != 200:
+    print(f'  ERROR: Readiness check failed with status {response.status_code}')
+    exit(1)
+print('  OK: FastAPI readiness check passed')
+
+# Test liveness probe
+response = client.get("/health/liveness")
+if response.status_code != 200:
+    print(f'  ERROR: Liveness check failed with status {response.status_code}')
+    exit(1)
+print('  OK: FastAPI liveness check passed')
+PY
+
+echo ""
+echo "[test_skel] Testing document upload + search flow..."
+python - <<'PY'
+import tempfile, os
+from pathlib import Path
+from fastapi.testclient import TestClient
+from main import app
+
+client = TestClient(app)
+
+# Create a test document
+with tempfile.NamedTemporaryFile(suffix=".txt", mode="w", delete=False) as f:
+    f.write("The quick brown fox jumps over the lazy dog. "
+            "This is a test document about animals and their activities.")
+    tmp_path = f.name
+
+try:
+    # Upload document
+    with open(tmp_path, "rb") as f:
+        response = client.post(
+            "/api/v1/documents/",
+            files={"file": ("test.txt", f, "text/plain")},
+        )
+    if response.status_code != 201:
+        print(f'  ERROR: Document upload failed: {response.status_code} {response.text}')
+        exit(1)
+    doc = response.json()
+    print(f'  OK: Document uploaded (id={doc["id"]}, chunks={doc["chunk_count"]})')
+
+    # List documents
+    response = client.get("/api/v1/documents/")
+    if response.status_code != 200:
+        print(f'  ERROR: List documents failed: {response.status_code}')
+        exit(1)
+    docs = response.json()
+    print(f'  OK: Listed {len(docs)} document(s)')
+
+    # Search (embeddings only, no LLM needed)
+    response = client.post("/api/v1/search", json={"query": "fox", "top_k": 3})
+    if response.status_code != 200:
+        print(f'  ERROR: Search failed: {response.status_code} {response.text}')
+        exit(1)
+    results = response.json()
+    print(f'  OK: Search returned {len(results["results"])} result(s)')
+
+    # Delete document
+    response = client.delete(f'/api/v1/documents/{doc["id"]}')
+    if response.status_code != 200:
+        print(f'  ERROR: Delete failed: {response.status_code}')
+        exit(1)
+    print('  OK: Document deleted')
+
+finally:
+    os.unlink(tmp_path)
+
+print('\n  Document + search flow passed')
+PY
+
+echo ""
+echo "[test_skel] Building Docker image via ./build script (wrapper in main dir)..."
+cd "$MAIN_DIR"
+./build --tag=fastapi-rag-test:latest
+
+echo ""
+echo "[test_skel] Cleaning up Docker image..."
+docker rmi fastapi-rag-test:latest 2>/dev/null || true
+
+echo ""
+echo "[test_skel] FastAPI RAG skeleton tests passed!"

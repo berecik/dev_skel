@@ -369,6 +369,7 @@ _SERVICE_KIND_BY_TECH: Dict[str, str] = {
     "python-django-skel": "backend",
     "python-django-bolt-skel": "backend",
     "python-fastapi-skel": "backend",
+    "python-fastapi-rag-skel": "backend",
     "python-flask-skel": "backend",
     "java-spring-skel": "backend",
     "rust-actix-skel": "backend",

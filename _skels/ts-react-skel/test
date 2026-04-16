@@ -17,26 +17,26 @@ case "$PM" in
   pnpm)
     pnpm install
     pnpm build
-    if pnpm -s run | grep -q "test"; then pnpm test -- --run || true; fi
-    if pnpm -s run | grep -q "lint"; then pnpm lint || true; fi
+    if pnpm -s run | grep -q "test"; then pnpm test -- --run; fi
+    if pnpm -s run | grep -q "lint"; then pnpm lint; fi
     ;;
   yarn)
     yarn install
     yarn build
-    if yarn -s run | grep -q "test"; then yarn test --run || true; fi
-    if yarn -s run | grep -q "lint"; then yarn lint || true; fi
+    if yarn -s run | grep -q "test"; then yarn test --run; fi
+    if yarn -s run | grep -q "lint"; then yarn lint; fi
     ;;
   bun)
     bun install
     bun run build
-    if bun run | grep -q "test"; then bun run test --run || true; fi
-    if bun run | grep -q "lint"; then bun run lint || true; fi
+    if bun run | grep -q "test"; then bun run test --run; fi
+    if bun run | grep -q "lint"; then bun run lint; fi
     ;;
   npm|*)
     if [[ -f package-lock.json ]]; then npm ci; else npm install; fi
     npm run build
-    if npm run | grep -q "test"; then npm run test -- --run || true; fi
-    if npm run | grep -q "lint"; then npm run lint || true; fi
+    if npm run | grep -q "test"; then npm run test -- --run; fi
+    if npm run | grep -q "lint"; then npm run lint; fi
     ;;
 esac
 

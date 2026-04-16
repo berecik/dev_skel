@@ -427,6 +427,7 @@ def default_service_base(skel_name: str) -> str:
 
     mapping = {
         "python-fastapi-skel": "backend",
+        "python-fastapi-rag-skel": "backend",
         "python-django-skel": "backend",
         "python-django-bolt-skel": "backend",
         "python-flask-skel": "backend",

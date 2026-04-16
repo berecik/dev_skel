@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build script for local development using Poetry
+# Poetry creates virtual environment in .venv directory
+# Usage: ./build-dev
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+echo "Building for local development..."
+
+# Generate .env if not exists
+if [[ ! -f ".env" ]] && [[ -f ".env.example" ]]; then
+    echo "Creating .env from .env.example..."
+    cp .env.example .env
+fi
+
+# Generate requirements.txt from pyproject.toml
+echo "Generating requirements from pyproject.toml..."
+./gen-requirements --dev -o requirements.txt
+
+# Install Poetry if not available
+if ! command -v poetry &> /dev/null; then
+    echo "Installing Poetry..."
+    pip install --upgrade pip
+    pip install poetry
+fi
+
+# Configure Poetry to create virtualenv in project directory
+poetry config virtualenvs.in-project true
+
+# Install dependencies with Poetry
+echo "Installing dependencies with Poetry..."
+poetry install --with dev
+
+echo ""
+echo "Build complete."
+echo "  Virtual environment: .venv"
+echo "  Requirements: requirements.txt"
+echo ""
+echo "Run './run-dev' to start the server."

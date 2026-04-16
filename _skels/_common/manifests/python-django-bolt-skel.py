@@ -522,9 +522,11 @@ Required tests (every test must use `@pytest.mark.django_db`):
    `state.value == {{"some": "data"}}`.
 
 3. `test_{items_plural}_endpoint_uses_jwt` — register a user via
-   `AuthService.register_user(...)`, mint a JWT via
-   `AuthService.authenticate_user(...)`, then assert the result
-   contains an `"access"` key with a non-empty string value.
+   `AuthService.register_user("testuser", "test@example.com", "testpass123")`,
+   (signature is `register_user(username, email, password)` — all 3 required),
+   then mint a JWT via `AuthService.authenticate_user("testuser", "testpass123")`,
+   and assert the result is not None, contains an `"access"` key with a
+   non-empty string value.
 
 4. `test_jwt_secret_is_wrapper_shared` — assert that
    `settings.JWT_SECRET == os.environ.get("JWT_SECRET", settings.JWT_SECRET)`.

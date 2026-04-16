@@ -2,8 +2,8 @@
 # Generate, test, and run projects across all skeleton templates
 
 .PHONY: help list test test-all run info info-all clean clean-all status \
-        gen-fastapi gen-flask gen-django gen-django-bolt gen-react gen-flutter gen-js gen-spring gen-actix gen-axum \
-        test-fastapi test-flask test-django test-django-bolt test-react test-flutter test-js test-spring test-actix test-axum \
+        gen-fastapi gen-fastapi-rag gen-flask gen-django gen-django-bolt gen-react gen-flutter gen-js gen-spring gen-actix gen-axum \
+        test-fastapi test-fastapi-rag test-flask test-django test-django-bolt test-react test-flutter test-js test-spring test-actix test-axum \
         test-ai-generators test-ai-generators-dry \
         test-gen-ai-fastapi test-gen-ai-django test-gen-ai-django-bolt test-gen-ai-flask \
         test-gen-ai-spring test-gen-ai-actix test-gen-ai-axum test-gen-ai-js test-gen-ai-react test-gen-ai-flutter \
@@ -27,9 +27,10 @@ JS_SKEL := $(SKEL_DIR)/js-skel
 SPRING_SKEL := $(SKEL_DIR)/java-spring-skel
 ACTIX_SKEL := $(SKEL_DIR)/rust-actix-skel
 AXUM_SKEL := $(SKEL_DIR)/rust-axum-skel
+FASTAPI_RAG_SKEL := $(SKEL_DIR)/python-fastapi-rag-skel
 
 # All skeletons
-SKELETONS := $(FASTAPI_SKEL) $(FLASK_SKEL) $(DJANGO_SKEL) $(DJANGO_BOLT_SKEL) $(REACT_SKEL) $(FLUTTER_SKEL) $(JS_SKEL) $(SPRING_SKEL) $(ACTIX_SKEL) $(AXUM_SKEL)
+SKELETONS := $(FASTAPI_SKEL) $(FLASK_SKEL) $(DJANGO_SKEL) $(DJANGO_BOLT_SKEL) $(REACT_SKEL) $(FLUTTER_SKEL) $(JS_SKEL) $(SPRING_SKEL) $(ACTIX_SKEL) $(AXUM_SKEL) $(FASTAPI_RAG_SKEL)
 
 # Test output directory
 TEST_OUTPUT := _test_projects
@@ -68,6 +69,9 @@ list: ## List all skeleton projects
 #
 gen-fastapi: ## Generate FastAPI project (NAME=myapp [SERVICE="display name"])
 	@$(MAKE) -C $(FASTAPI_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
+
+gen-fastapi-rag: ## Generate FastAPI RAG project (NAME=myapp [SERVICE="display name"])
+	@$(MAKE) -C $(FASTAPI_RAG_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
 
 gen-flask: ## Generate Flask project (NAME=myapp [SERVICE="display name"])
 	@$(MAKE) -C $(FLASK_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
@@ -385,6 +389,10 @@ test-all: ## Alias for 'test'
 test-fastapi: ## Run FastAPI skeleton tests
 	@echo "$(GREEN)Running FastAPI tests...$(NC)"
 	$(MAKE) -C $(FASTAPI_SKEL) test
+
+test-fastapi-rag: ## Run FastAPI RAG skeleton tests
+	@echo "$(GREEN)Running FastAPI RAG tests...$(NC)"
+	$(MAKE) -C $(FASTAPI_RAG_SKEL) test
 
 test-flask: ## Run Flask skeleton tests
 	@echo "$(GREEN)Running Flask tests...$(NC)"

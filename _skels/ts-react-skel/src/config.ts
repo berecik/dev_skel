@@ -45,8 +45,7 @@ function readEnv(key: string, fallback = ''): string {
   // `import.meta.env` is statically replaced at build time, so the
   // bracket access is type-safe even though TypeScript cannot see the
   // dynamic keys defined by `vite.config.ts`.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const value = (import.meta.env as any)[key];
+  const value = (import.meta.env as Record<string, unknown>)[key];
   return typeof value === 'string' && value.length > 0 ? value : fallback;
 }
 
@@ -59,8 +58,7 @@ function readEnvInt(key: string, fallback: number): number {
 
 function collectServiceUrls(): Record<string, string> {
   const out: Record<string, string> = {};
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const env = import.meta.env as Record<string, any>;
+  const env = import.meta.env as Record<string, unknown>;
   for (const key of Object.keys(env)) {
     if (!key.startsWith('VITE_WRAPPER_SERVICE_URL_')) continue;
     const slug = key

@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+COMMON_DIR="$SKEL_DIR/../_common"
+# shellcheck disable=SC1091
+. "$COMMON_DIR/slug.sh"
+
+MAIN_DIR="${1:-}"
+SERVICE_NAME_RAW="${2:-}"
+
+if [[ -z "$MAIN_DIR" ]]; then
+  echo "Usage: $(basename "$0") <main-dir> [service-name]" >&2
+  exit 1
+fi
+
+PROJECT_SUBDIR_OVERRIDE=""
+if [[ -n "$SERVICE_NAME_RAW" ]]; then
+  PROJECT_SUBDIR_OVERRIDE="$(slugify_service_name "$SERVICE_NAME_RAW")"
+fi
+
+PROJECT_SUBDIR="${PROJECT_SUBDIR_OVERRIDE:-backend}"
+PROJECT_DIR="$MAIN_DIR/$PROJECT_SUBDIR"
+
+echo "[fastapi-rag] Generating into: $MAIN_DIR (project dir: $PROJECT_SUBDIR)"
+mkdir -p "$PROJECT_DIR"
+
+# Merge skeleton files into inner project directory
+bash "$SKEL_DIR/merge" "$SKEL_DIR" "$PROJECT_DIR"
+
+# Generate .env from example if not exists
+if [[ ! -f "$PROJECT_DIR/.env" && -f "$PROJECT_DIR/.env.example" ]]; then
+  cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
+fi
+
+# Create Python environment and install deps using uv
+(
+  cd "$PROJECT_DIR"
+
+  if command -v uv >/dev/null 2>&1; then
+    echo "[fastapi-rag] Using uv for package management..."
+    uv venv --python 3.12 .venv
+    VIRTUAL_ENV=.venv uv pip install -q -r requirements.txt
+  else
+    echo "[fastapi-rag] uv not found, falling back to pip..."
+    python3.12 -m venv .venv || python3 -m venv .venv
+    . .venv/bin/activate
+    pip install -q --upgrade pip
+    pip install -q -r requirements.txt
+  fi
+)
+
+# Create wrapper-level README, Makefile, and thin scripts
+bash "$COMMON_DIR/common-wrapper.sh" "$MAIN_DIR" "$PROJECT_SUBDIR" "FastAPI RAG Backend"
+
+echo "[fastapi-rag] Done."

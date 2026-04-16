@@ -1,0 +1,28 @@
+{{ if and (not .Values.production) (not .Values.cluster) }}
+---
+# Source: cloudauth-api/templates/ingress.yml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.name }}-redoc-ingress
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.name }}
+    app.kubernetes.io/part-of: example-project
+    app.kubernetes.io/component: ingress
+  annotations:
+     nginx.ingress.kubernetes.io/app-root: /redoc
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: redoc.{{ .Values.ingress.domain }}
+    http:
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: {{ .Values.name }}-svc
+              port:
+                number: 8000
+{{ end }}
