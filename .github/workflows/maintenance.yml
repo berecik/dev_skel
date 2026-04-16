@@ -25,7 +25,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -35,6 +35,11 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
 
       - name: Install system dependencies
         run: |
@@ -57,6 +62,7 @@ jobs:
           mvn -version
           rustc --version
           cargo --version
+          go version
           uv --version || echo "uv not in path yet"
 
       - name: Run maintenance test suite

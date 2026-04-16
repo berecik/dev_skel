@@ -234,3 +234,24 @@ in-service `./ai` machinery.
    auto-discovers it.
 7. Run `make test-generators` (no Ollama) and
    `make test-ai-generators-dry` to verify dispatch.
+
+---
+
+## GitHub CI/CD pipeline targets
+
+The repository ships `.github/workflows/maintenance.yml` — a single
+workflow that runs `./maintenance` (the `make clean-test && make
+test-generators && ./test` triplet) on every push / PR to `master`,
+with Python 3.11, Node 20, JDK 21, Rust stable, and uv pre-installed.
+
+Three Make targets wrap the GitHub CLI (`gh`) for local inspection:
+
+| Target | What it does |
+| ------ | ------------ |
+| `make ci-status` | List the 10 most recent CI runs (`gh run list`). Shows workflow name, branch, status, conclusion, duration. |
+| `make ci-watch` | Tail the latest CI run in real time (`gh run watch`). Blocks until the run finishes — useful after pushing. |
+| `make ci-log` | Dump the full log of the most recent CI run (`gh run view --log`). Useful for debugging failures without opening a browser. |
+
+**Prerequisites**: `gh` installed (`brew install gh`) and authenticated
+(`gh auth login`). Each target checks both conditions and prints an
+actionable error when either is missing.

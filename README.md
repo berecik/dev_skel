@@ -522,6 +522,27 @@ unreachable).
 
 ---
 
+## GitHub CI/CD pipeline
+
+The repository ships a single GitHub Actions workflow
+(`.github/workflows/maintenance.yml`) that runs the full maintenance
+suite on every push / PR to `master`: Python 3.11, Node 20, JDK 21,
+Rust stable, uv — then `./maintenance` (which is `make clean-test &&
+make test-generators && ./test`).
+
+Three Make targets expose the pipeline status locally via `gh`:
+
+```bash
+make ci-status   # list recent runs (last 10)
+make ci-watch    # tail the latest run in real time (blocks until done)
+make ci-log      # dump the full log of the most recent run
+```
+
+All three require the GitHub CLI (`brew install gh`) and a one-time
+`gh auth login`. They print actionable errors when either is missing.
+
+---
+
 ## License
 
 This repo is the skeleton generator. Generated projects inherit each

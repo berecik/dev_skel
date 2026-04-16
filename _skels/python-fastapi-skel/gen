@@ -40,6 +40,13 @@ fi
 (
   cd "$PROJECT_DIR"
 
+  # requirements.txt is generated from pyproject.toml and gitignored.
+  # Regenerate it when missing (e.g. fresh CI checkout).
+  if [[ ! -f requirements.txt && -f gen-requirements && -f pyproject.toml ]]; then
+    echo "[fastapi-ddd] Generating requirements.txt from pyproject.toml..."
+    bash gen-requirements --dev -o requirements.txt
+  fi
+
   # Check if uv is available
   if command -v uv >/dev/null 2>&1; then
     echo "[fastapi-ddd] Using uv for package management..."

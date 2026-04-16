@@ -552,3 +552,5 @@ Before declaring a task done, verify the relevant subset of:
 - [ ] When you change a manifest or the AI library, run
       `make test-ai-generators-dry` (always cheap) and, if Ollama is
       available, `make test-ai-generators` (slow, ~30+ min total).
+- [ ] After pushing, check CI status with `make ci-status` or
+      `make ci-watch` (requires `gh auth login` once).

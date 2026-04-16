@@ -155,7 +155,17 @@ cat items_api/.skel_context.json    # { "skeleton_name": "…", "skeleton_versio
 Running `./maintenance` (or the `make clean-test && make test-generators
 && ./test` triplet) is the canonical pre-commit check. The GitHub
 Actions workflow `.github/workflows/maintenance.yml` runs the same
-triplet on every push to `master`.
+triplet on every push / PR to `master`.
+
+After pushing, inspect the pipeline from your terminal:
+
+```bash
+make ci-status   # list recent runs (last 10)
+make ci-watch    # tail the latest run in real time
+make ci-log      # dump the full log of the most recent run
+```
+
+All three require `gh` (`brew install gh`) and `gh auth login` (once).
 
 For AI-pipeline changes specifically:
 

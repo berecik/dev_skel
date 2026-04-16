@@ -2,6 +2,7 @@
 # Generate, test, and run projects across all skeleton templates
 
 .PHONY: help list test test-all run info info-all clean clean-all status \
+        ci-status ci-watch ci-log \
         gen-fastapi gen-fastapi-rag gen-flask gen-django gen-django-bolt gen-react gen-flutter gen-js gen-spring gen-actix gen-axum gen-go \
         test-fastapi test-fastapi-rag test-flask test-django test-django-bolt test-react test-flutter test-js test-spring test-actix test-axum test-go \
         test-ai-generators test-ai-generators-dry \
@@ -613,3 +614,51 @@ status: ## Show status of all skeleton directories
 			echo "  $(RED)✗$(NC) $$skel (missing)"; \
 		fi \
 	done
+
+#
+# === GITHUB CI/CD PIPELINE ===
+#
+# These targets use the GitHub CLI (`gh`) to inspect the CI/CD pipeline
+# for the current repository. Requires `gh auth login` once.
+#
+# Targets:
+#   ci-status    Show the status of the most recent CI runs (last 10).
+#   ci-watch     Watch the latest CI run in real time (blocks until done).
+#   ci-log       Show the full log of the most recent CI run.
+#
+
+ci-status: ## Show status of recent GitHub Actions runs (requires `gh auth login`)
+	@if ! command -v gh >/dev/null 2>&1; then \
+		echo "$(RED)Error: GitHub CLI (gh) not installed. Install via: brew install gh$(NC)"; \
+		exit 1; \
+	fi
+	@if ! gh auth status >/dev/null 2>&1; then \
+		echo "$(RED)Error: Not authenticated. Run: gh auth login$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)=== GitHub Actions — recent runs ===$(NC)"
+	@gh run list --limit 10
+
+ci-watch: ## Watch the latest CI run in real time (requires `gh auth login`)
+	@if ! command -v gh >/dev/null 2>&1; then \
+		echo "$(RED)Error: GitHub CLI (gh) not installed. Install via: brew install gh$(NC)"; \
+		exit 1; \
+	fi
+	@if ! gh auth status >/dev/null 2>&1; then \
+		echo "$(RED)Error: Not authenticated. Run: gh auth login$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)=== Watching latest CI run ===$(NC)"
+	@gh run watch
+
+ci-log: ## Show full log of the most recent CI run (requires `gh auth login`)
+	@if ! command -v gh >/dev/null 2>&1; then \
+		echo "$(RED)Error: GitHub CLI (gh) not installed. Install via: brew install gh$(NC)"; \
+		exit 1; \
+	fi
+	@if ! gh auth status >/dev/null 2>&1; then \
+		echo "$(RED)Error: Not authenticated. Run: gh auth login$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)=== Latest CI run log ===$(NC)"
+	@gh run view --log $$(gh run list --limit 1 --json databaseId --jq '.[0].databaseId')

@@ -85,6 +85,21 @@ make test-ai-generators-dry      # always cheap; no LLM calls
 _bin/skel-gen-ai myproj --no-input --dry-run  # full dialog scripted, no writes
 ```
 
+## GitHub CLI (optional — for `make ci-status` / `ci-watch` / `ci-log`)
+
+The CI inspection targets use the **GitHub CLI** (`gh`):
+
+```bash
+brew install gh          # macOS
+# or: https://cli.github.com/ for other platforms
+gh auth login            # one-time authentication
+```
+
+Not required for generation, testing, or the AI surfaces — only for
+viewing CI run status from your terminal.
+
+---
+
 ## Usage
 
 ### Install Dependencies for All Skeletons

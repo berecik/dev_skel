@@ -323,7 +323,18 @@
       "Bash(_bin/skel-test-ai-memory)",
       "Bash(_bin/skel-test-ai-fanout)",
       "Bash(make -n test-ai-upgrade test-ai-fanout)",
-      "Bash(_bin/skel-test-ai-script)"
+      "Bash(_bin/skel-test-ai-script)",
+      "Bash(uv pip:*)",
+      "Bash(read f:*)",
+      "Bash(_bin/skel-gen-static test-fastapi-genfix:*)",
+      "Bash(gh --version)",
+      "Bash(gh auth:*)",
+      "Bash(make -n ci-status)",
+      "Bash(make -n ci-watch)",
+      "Bash(make -n ci-log)",
+      "Bash(make -n ci-status ci-watch ci-log)",
+      "Bash(make ci-status:*)",
+      "Bash(gh run:*)"
     ],
     "deny": [],
     "ask": []

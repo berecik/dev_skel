@@ -410,3 +410,5 @@ Design doc: `SERVICE_REFACTOR_COMMAND.md`.
   tests and regeneration of `_test_projects/` as needed.
 - Confirm documentation/rules are consistent with the implemented behaviour.
 - Leave `_test_projects/` untouched except via regeneration.
+- After pushing, check CI status with `make ci-status` or `make ci-watch`
+  (requires `gh auth login`).

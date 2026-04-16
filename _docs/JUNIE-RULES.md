@@ -211,3 +211,5 @@ skeleton-specific rules in each skeleton’s `JUNIE-RULES.md`.
   tests and regeneration of `_test_projects/` as required.
 - Confirm docs/rules align with implemented behaviour.
 - Ensure `_test_projects/` remains untouched except via regeneration.
+- After pushing, check CI with `make ci-status` / `make ci-watch`
+  (requires `gh auth login`).

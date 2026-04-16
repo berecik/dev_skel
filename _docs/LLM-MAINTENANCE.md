@@ -105,6 +105,12 @@ requests a different order:
      python-fastapi-skel"), you may restrict testing and rule/doc updates to
      that skeleton plus any global rules that must change as a result.
 
+5. **Check CI after pushing** — `make ci-status` lists recent runs,
+   `make ci-watch` tails the latest in real time, `make ci-log` dumps
+   the full log. All three require `gh auth login` (one-time). The
+   GitHub Actions workflow (`.github/workflows/maintenance.yml`) runs
+   the same `./maintenance` triplet on every push / PR to `master`.
+
 ## Key Files to Understand
 
 Before making changes, read these files:
