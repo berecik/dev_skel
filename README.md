@@ -386,6 +386,83 @@ via `skel-gen-ai --skip-base`.
 
 ---
 
+## Install dev_skel locally (`~/dev`)
+
+Dev Skel keeps **two** copies of itself on your machine:
+
+| Path | Role |
+| ---- | ---- |
+| `~/dev_skel` (`SKEL_DIR`) | The git checkout — what you `git pull` and edit. |
+| `~/dev` (`DEV_DIR`) | The installed copy you run from. `_bin/skel-install` rsyncs the checkout here so generators / scripts land on a stable, edit-free path. |
+
+Both defaults can be overridden via env vars or `~/.dev_skel.conf`.
+
+### First-time install
+
+```bash
+git clone https://github.com/<you>/dev_skel ~/dev_skel
+cd ~/dev_skel
+
+# Copy the checkout into ~/dev (creates the directory if missing)
+_bin/skel-install
+# > Installing dev skeleton to /Users/you/dev...
+# > Install complete!
+```
+
+After this you can run dev_skel from either location. `~/dev` is the
+"production" copy; you typically `cd ~/dev` to generate projects, and
+edit the templates from `~/dev_skel`.
+
+### Pull updates
+
+When you `git pull` in `~/dev_skel`, mirror the changes into `~/dev`:
+
+```bash
+cd ~/dev_skel
+git pull
+_bin/skel-update
+# rsync -av --progress  ~/dev_skel/ → ~/dev/
+```
+
+`skel-update` requires `~/dev` to already exist (run `skel-install`
+first if it doesn't). The rsync honors two exclude lists
+(`_bin/rsync-common-excludes.txt` for build artefacts,
+`_bin/rsync-update-excludes.txt` for files you want to keep across
+updates) so it never clobbers `~/dev/.dev_skel.conf`, your
+`_test_projects/`, or any other live state.
+
+### Override the defaults
+
+```bash
+# Per-shell — use a different install location
+DEV_DIR=~/projects/dev_skel_runtime _bin/skel-install
+
+# Pointing at a different checkout (e.g. a fork)
+SKEL_DIR=~/code/dev_skel-fork _bin/skel-install
+
+# Persist via ~/.dev_skel.conf (shell-style)
+cat > ~/.dev_skel.conf <<'EOF'
+SKEL_DIR=$HOME/code/dev_skel
+DEV_DIR=$HOME/projects/dev_skel_runtime
+EOF
+_bin/skel-install            # uses the conf values from now on
+```
+
+The complete list of env vars / conf keys lives in
+`_bin/dev_skel_lib.py::_default_env`.
+
+### Optional: sync to a remote host
+
+```bash
+SYNC_SSH_HOST=devbox SYNC_DEST_DIR=/srv/dev_skel _bin/skel-sync
+# rsync -az --delete --progress -e ssh ~/dev_sync/ → devbox:/srv/dev_skel/
+```
+
+Useful for keeping a remote dev box in lockstep with your local
+checkout.
+
+---
+
 ## Requirements
 
 * **Python 3.10+** (the CLIs and the in-service runtime)
@@ -418,7 +495,8 @@ is only needed when running from inside a dev_skel checkout.
 | Drive `skel-gen-ai`, `./ai`, `./backport`, `./ai upgrade` | [`AGENTS.md`](AGENTS.md) (cross-agent) and [`CLAUDE.md`](CLAUDE.md) (Claude-specific) |
 | Maintain or extend the AI pipeline (manifests, RAG agent, fix loop) | [`_docs/LLM-MAINTENANCE.md`](_docs/LLM-MAINTENANCE.md) |
 | Look up Make targets (gen, test, AI smokes, sync) | [`_docs/MAKEFILE.md`](_docs/MAKEFILE.md) |
-| Survey the 10 skeletons + their AI manifests | [`_docs/SKELETONS.md`](_docs/SKELETONS.md) |
+| Survey the 12 skeletons + their AI manifests | [`_docs/SKELETONS.md`](_docs/SKELETONS.md) |
+| Install dev_skel into `~/dev` (or anywhere) | this section above + [`_docs/DEPENDENCIES.md`](_docs/DEPENDENCIES.md) |
 | Install per-stack toolchains + Ollama | [`_docs/DEPENDENCIES.md`](_docs/DEPENDENCIES.md) |
 | Project-authoritative behavior rules | [`_docs/JUNIE-RULES.md`](_docs/JUNIE-RULES.md) |
 | Per-skeleton deep-dive | [`_docs/<skel>.md`](_docs/) |
