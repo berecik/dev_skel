@@ -124,6 +124,86 @@ def test_full_items_flow(client):
 
 
 @pytest.mark.django_db
+def test_full_categories_flow(client):
+    register = _register(client, "frank")
+    token = register.json()["access"]
+    auth = {"HTTP_AUTHORIZATION": f"Bearer {token}"}
+
+    listed = client.get("/api/categories", **auth)
+    assert listed.status_code == 200
+    assert listed.json() == []
+
+    created = client.post(
+        "/api/categories",
+        data=json.dumps({"name": "Work", "description": "Work items"}),
+        content_type="application/json",
+        **auth,
+    )
+    assert created.status_code == 201, created.content
+    cat = created.json()
+    assert cat["name"] == "Work"
+    assert cat["description"] == "Work items"
+    assert "id" in cat
+    assert "created_at" in cat
+    assert "updated_at" in cat
+
+    fetched = client.get(f"/api/categories/{cat['id']}", **auth)
+    assert fetched.status_code == 200
+    assert fetched.json()["name"] == "Work"
+
+    updated = client.put(
+        f"/api/categories/{cat['id']}",
+        data=json.dumps({"name": "Personal", "description": "Personal items"}),
+        content_type="application/json",
+        **auth,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "Personal"
+
+    deleted = client.delete(f"/api/categories/{cat['id']}", **auth)
+    assert deleted.status_code == 204
+
+
+@pytest.mark.django_db
+def test_categories_require_jwt(client):
+    response = client.get("/api/categories")
+    assert response.status_code == 401
+
+
+@pytest.mark.django_db
+def test_item_with_category(client):
+    register = _register(client, "grace")
+    token = register.json()["access"]
+    auth = {"HTTP_AUTHORIZATION": f"Bearer {token}"}
+
+    cat = client.post(
+        "/api/categories",
+        data=json.dumps({"name": "Errands"}),
+        content_type="application/json",
+        **auth,
+    )
+    cat_id = cat.json()["id"]
+
+    created = client.post(
+        "/api/items",
+        data=json.dumps({"name": "Buy milk", "category_id": cat_id}),
+        content_type="application/json",
+        **auth,
+    )
+    assert created.status_code == 201, created.content
+    assert created.json()["category_id"] == cat_id
+
+    created_no_cat = client.post(
+        "/api/items",
+        data=json.dumps({"name": "Standalone"}),
+        content_type="application/json",
+        **auth,
+    )
+    assert created_no_cat.status_code == 201
+    assert created_no_cat.json()["category_id"] is None
+
+
+@pytest.mark.django_db
 def test_state_roundtrip(client):
     register = _register(client, "eve")
     token = register.json()["access"]

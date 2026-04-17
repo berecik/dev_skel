@@ -11,12 +11,32 @@ from django.contrib.auth.models import User
 from django.db import models
 
 
+class Category(models.Model):
+    """Wrapper-shared category resource."""
+
+    name = models.CharField(max_length=255, unique=True)
+    description = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "categories"
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class Item(models.Model):
     """Wrapper-shared CRUD resource consumed by React via ``/api/items``."""
 
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
     is_completed = models.BooleanField(default=False)
+    category = models.ForeignKey(
+        "Category", null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="items",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

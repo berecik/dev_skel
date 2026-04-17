@@ -30,6 +30,7 @@ export interface Item {
   name: string;
   description: string | null;
   is_completed: boolean;
+  category_id: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -38,6 +39,7 @@ export interface NewItem {
   name: string;
   description?: string | null;
   is_completed?: boolean;
+  category_id?: number | null;
 }
 
 export interface RequestOptions {

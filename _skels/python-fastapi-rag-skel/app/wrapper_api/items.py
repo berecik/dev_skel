@@ -27,6 +27,7 @@ def _to_read(item: Item) -> ItemRead:
         name=item.name,
         description=item.description or "",
         is_completed=bool(item.is_completed),
+        category_id=item.category_id,
         created_at=item.created_at,
         updated_at=item.updated_at,
     )
@@ -55,6 +56,7 @@ def create_item(
         name=payload.name,
         description=payload.description or "",
         is_completed=bool(payload.is_completed),
+        category_id=payload.category_id,
     )
     session.add(item)
     session.commit()

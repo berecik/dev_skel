@@ -6,6 +6,8 @@
 //   - GET  /health                    → health check
 //   - POST /api/auth/register         → 201 {user, access, refresh}
 //   - POST /api/auth/login            → 200 {access, refresh, user_id, username}
+//   - GET/POST      /api/categories   → JWT-protected CRUD
+//   - GET/PUT/DELETE /api/categories/{id}
 //   - GET/POST  /api/items            → JWT-protected CRUD
 //   - GET  /api/items/{id}            → JWT-protected
 //   - POST /api/items/{id}/complete   → JWT-protected idempotent flip
@@ -37,8 +39,8 @@ type Deps struct {
 }
 
 // Register attaches every wrapper-shared route to mux. The JWT
-// middleware fronts /api/items and /api/state; /api/auth/* and the
-// root routes are intentionally unauthenticated.
+// middleware fronts /api/categories, /api/items, and /api/state;
+// /api/auth/* and the root routes are intentionally unauthenticated.
 func Register(mux *http.ServeMux, d Deps) {
 	mux.Handle("GET /", http.HandlerFunc(d.handleIndex))
 	mux.Handle("GET /health", http.HandlerFunc(d.handleHealth))
@@ -47,6 +49,12 @@ func Register(mux *http.ServeMux, d Deps) {
 	mux.Handle("POST /api/auth/login", http.HandlerFunc(d.handleLogin))
 
 	jwt := auth.Middleware(d.Cfg, d.DB)
+	mux.Handle("GET /api/categories", jwt(http.HandlerFunc(d.handleListCategories)))
+	mux.Handle("POST /api/categories", jwt(http.HandlerFunc(d.handleCreateCategory)))
+	mux.Handle("GET /api/categories/{id}", jwt(http.HandlerFunc(d.handleGetCategory)))
+	mux.Handle("PUT /api/categories/{id}", jwt(http.HandlerFunc(d.handleUpdateCategory)))
+	mux.Handle("DELETE /api/categories/{id}", jwt(http.HandlerFunc(d.handleDeleteCategory)))
+
 	mux.Handle("GET /api/items", jwt(http.HandlerFunc(d.handleListItems)))
 	mux.Handle("POST /api/items", jwt(http.HandlerFunc(d.handleCreateItem)))
 	mux.Handle("GET /api/items/{id}", jwt(http.HandlerFunc(d.handleGetItem)))
@@ -207,6 +215,175 @@ func (d Deps) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // --------------------------------------------------------------------------- //
+//  /api/categories/*
+// --------------------------------------------------------------------------- //
+
+type categoryRow struct {
+	ID          int64   `json:"id"`
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   string  `json:"updated_at"`
+}
+
+type createCategoryPayload struct {
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+}
+
+func (d Deps) handleListCategories(w http.ResponseWriter, r *http.Request) {
+	rows, err := d.DB.QueryContext(r.Context(),
+		`SELECT id, name, description, created_at, updated_at
+		   FROM categories ORDER BY id`)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list categories failed: "+err.Error())
+		return
+	}
+	defer rows.Close()
+	out := []categoryRow{}
+	for rows.Next() {
+		var c categoryRow
+		if err := rows.Scan(&c.ID, &c.Name, &c.Description, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			writeError(w, http.StatusInternalServerError, "scan category failed: "+err.Error())
+			return
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "rows.Err: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (d Deps) handleCreateCategory(w http.ResponseWriter, r *http.Request) {
+	var body createCategoryPayload
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "malformed request body")
+		return
+	}
+	if strings.TrimSpace(body.Name) == "" {
+		writeError(w, http.StatusBadRequest, "category name cannot be empty")
+		return
+	}
+	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	res, err := d.DB.ExecContext(r.Context(),
+		`INSERT INTO categories (name, description, created_at, updated_at)
+		 VALUES (?, ?, ?, ?)`,
+		body.Name, body.Description, now, now,
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			writeError(w, http.StatusConflict, "category with name '"+body.Name+"' already exists")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "insert category failed: "+err.Error())
+		return
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not read new category id")
+		return
+	}
+	writeJSON(w, http.StatusCreated, categoryRow{
+		ID:          id,
+		Name:        body.Name,
+		Description: body.Description,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	})
+}
+
+func (d Deps) handleGetCategory(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var c categoryRow
+	err = d.DB.QueryRowContext(r.Context(),
+		`SELECT id, name, description, created_at, updated_at
+		   FROM categories WHERE id = ?`, id,
+	).Scan(&c.ID, &c.Name, &c.Description, &c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "category not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "fetch category failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
+}
+
+func (d Deps) handleUpdateCategory(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var body createCategoryPayload
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "malformed request body")
+		return
+	}
+	if strings.TrimSpace(body.Name) == "" {
+		writeError(w, http.StatusBadRequest, "category name cannot be empty")
+		return
+	}
+	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	res, err := d.DB.ExecContext(r.Context(),
+		`UPDATE categories SET name = ?, description = ?, updated_at = ?
+		   WHERE id = ?`,
+		body.Name, body.Description, now, id,
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			writeError(w, http.StatusConflict, "category with name '"+body.Name+"' already exists")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "update category failed: "+err.Error())
+		return
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		writeError(w, http.StatusNotFound, "category not found")
+		return
+	}
+	var c categoryRow
+	err = d.DB.QueryRowContext(r.Context(),
+		`SELECT id, name, description, created_at, updated_at
+		   FROM categories WHERE id = ?`, id,
+	).Scan(&c.ID, &c.Name, &c.Description, &c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "refetch category failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
+}
+
+func (d Deps) handleDeleteCategory(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	res, err := d.DB.ExecContext(r.Context(),
+		`DELETE FROM categories WHERE id = ?`, id,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "delete category failed: "+err.Error())
+		return
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		writeError(w, http.StatusNotFound, "category not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --------------------------------------------------------------------------- //
 //  /api/items/*
 // --------------------------------------------------------------------------- //
 
@@ -215,6 +392,7 @@ type itemRow struct {
 	Name        string  `json:"name"`
 	Description *string `json:"description"`
 	IsCompleted bool    `json:"is_completed"`
+	CategoryID  *int64  `json:"category_id"`
 	CreatedAt   string  `json:"created_at"`
 	UpdatedAt   string  `json:"updated_at"`
 }
@@ -223,11 +401,12 @@ type createItemPayload struct {
 	Name        string  `json:"name"`
 	Description *string `json:"description"`
 	IsCompleted bool    `json:"is_completed"`
+	CategoryID  *int64  `json:"category_id"`
 }
 
 func (d Deps) handleListItems(w http.ResponseWriter, r *http.Request) {
 	rows, err := d.DB.QueryContext(r.Context(),
-		`SELECT id, name, description, is_completed, created_at, updated_at
+		`SELECT id, name, description, is_completed, category_id, created_at, updated_at
 		   FROM items ORDER BY created_at DESC, id DESC`)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list items failed: "+err.Error())
@@ -238,7 +417,7 @@ func (d Deps) handleListItems(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var it itemRow
 		var completed int
-		if err := rows.Scan(&it.ID, &it.Name, &it.Description, &completed, &it.CreatedAt, &it.UpdatedAt); err != nil {
+		if err := rows.Scan(&it.ID, &it.Name, &it.Description, &completed, &it.CategoryID, &it.CreatedAt, &it.UpdatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan item failed: "+err.Error())
 			return
 		}
@@ -268,9 +447,9 @@ func (d Deps) handleCreateItem(w http.ResponseWriter, r *http.Request) {
 		completedInt = 1
 	}
 	res, err := d.DB.ExecContext(r.Context(),
-		`INSERT INTO items (name, description, is_completed, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?)`,
-		body.Name, body.Description, completedInt, now, now,
+		`INSERT INTO items (name, description, is_completed, category_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		body.Name, body.Description, completedInt, body.CategoryID, now, now,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "insert item failed: "+err.Error())
@@ -286,6 +465,7 @@ func (d Deps) handleCreateItem(w http.ResponseWriter, r *http.Request) {
 		Name:        body.Name,
 		Description: body.Description,
 		IsCompleted: body.IsCompleted,
+		CategoryID:  body.CategoryID,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	})
@@ -341,9 +521,9 @@ func (d Deps) fetchItem(r *http.Request, id int64) (itemRow, error) {
 	var it itemRow
 	var completed int
 	err := d.DB.QueryRowContext(r.Context(),
-		`SELECT id, name, description, is_completed, created_at, updated_at
+		`SELECT id, name, description, is_completed, category_id, created_at, updated_at
 		   FROM items WHERE id = ?`, id,
-	).Scan(&it.ID, &it.Name, &it.Description, &completed, &it.CreatedAt, &it.UpdatedAt)
+	).Scan(&it.ID, &it.Name, &it.Description, &completed, &it.CategoryID, &it.CreatedAt, &it.UpdatedAt)
 	if err != nil {
 		return it, err
 	}

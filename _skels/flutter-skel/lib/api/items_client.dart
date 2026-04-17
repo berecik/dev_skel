@@ -34,6 +34,7 @@ class Item {
     required this.isCompleted,
     required this.createdAt,
     required this.updatedAt,
+    this.categoryId,
   });
 
   final int id;
@@ -42,6 +43,7 @@ class Item {
   final bool isCompleted;
   final String createdAt;
   final String updatedAt;
+  final int? categoryId;
 
   factory Item.fromJson(Map<String, dynamic> json) {
     return Item(
@@ -51,6 +53,7 @@ class Item {
       isCompleted: (json['is_completed'] ?? false) as bool,
       createdAt: (json['created_at'] ?? '') as String,
       updatedAt: (json['updated_at'] ?? '') as String,
+      categoryId: json['category_id'] as int?,
     );
   }
 }
@@ -60,16 +63,19 @@ class NewItem {
     required this.name,
     this.description,
     this.isCompleted,
+    this.categoryId,
   });
 
   final String name;
   final String? description;
   final bool? isCompleted;
+  final int? categoryId;
 
   Map<String, dynamic> toJson() {
     final out = <String, dynamic>{'name': name};
     if (description != null) out['description'] = description;
     if (isCompleted != null) out['is_completed'] = isCompleted;
+    if (categoryId != null) out['category_id'] = categoryId;
     return out;
   }
 }

@@ -7,11 +7,17 @@ calls send an opaque `username` field. Keeping the table separate lets
 the wrapper-shared API stay schema-compatible with the django-bolt
 skel without rewriting the `core.users` machinery.
 
+The `Category` table stores shared categories that items can optionally
+belong to. Categories are not per-user — any authenticated user may
+create/edit/delete them. The `name` column has a unique constraint.
+
 The `Item` table uses ``__tablename__ = "items"`` (matching the
 django-bolt skel's `Item` model) so the same wrapper-shared SQLite file
 remains usable across stacks. The columns mirror the django-bolt schema
 verbatim — `name`, `description`, `is_completed`, `created_at`,
-`updated_at` — see `_docs/SHARED-DATABASE-CONVENTIONS.md`.
+`updated_at` — see `_docs/SHARED-DATABASE-CONVENTIONS.md`. Items carry
+an optional ``category_id`` FK to the ``categories`` table (ON DELETE
+SET NULL).
 
 The `react_state` table backs the `/api/state` endpoints the React
 state-management layer calls. Per-user JSON key/value entries.
@@ -22,7 +28,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Iterator, Optional
 
-from sqlalchemy import UniqueConstraint, create_engine
+from sqlalchemy import Column, ForeignKey, Integer, UniqueConstraint, create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import Field, Session, SQLModel
 
@@ -41,6 +47,18 @@ class WrapperUser(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class Category(SQLModel, table=True):
+    """Shared categories table — not per-user."""
+
+    __tablename__ = "categories"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(max_length=255, sa_column_kwargs={"unique": True})
+    description: str = Field(default="")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Item(SQLModel, table=True):
     """Wrapper-shared `items` table — shape mirrors django-bolt's `Item`."""
 
@@ -50,6 +68,10 @@ class Item(SQLModel, table=True):
     name: str = Field(max_length=255)
     description: str = Field(default="")
     is_completed: bool = Field(default=False)
+    category_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(Integer, ForeignKey("categories.id", ondelete="SET NULL"), nullable=True),
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -73,14 +95,25 @@ class ReactState(SQLModel, table=True):
 # will pick them up automatically. We also create the tables eagerly
 # here so the first HTTP request does not race with the schema being
 # materialised on disk.
+def _enable_sqlite_fks(dbapi_connection, _connection_record):
+    """Enable SQLite foreign key enforcement (required for ON DELETE SET NULL)."""
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys = ON")
+    cursor.close()
+
+
 _engine = create_engine(
     config.SQLALCHEMY_DATABASE_URI,
     connect_args={"check_same_thread": False}
     if config.SQLALCHEMY_DATABASE_URI.startswith("sqlite")
     else {},
 )
+if config.SQLALCHEMY_DATABASE_URI.startswith("sqlite"):
+    from sqlalchemy import event
+    event.listen(_engine, "connect", _enable_sqlite_fks)
 SQLModel.metadata.create_all(_engine, tables=[
     WrapperUser.__table__,
+    Category.__table__,
     Item.__table__,
     ReactState.__table__,
 ])

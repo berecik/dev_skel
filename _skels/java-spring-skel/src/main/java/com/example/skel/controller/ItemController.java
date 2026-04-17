@@ -45,7 +45,7 @@ public class ItemController {
             throw new ApiException(HttpStatus.BAD_REQUEST, "item name cannot be empty");
         }
         boolean isCompleted = body.isCompleted() != null && body.isCompleted();
-        return items.create(body.name(), body.description(), isCompleted);
+        return items.create(body.name(), body.description(), isCompleted, body.categoryId());
     }
 
     @GetMapping("/{id}")
@@ -72,7 +72,7 @@ public class ItemController {
      * because of the global {@code SNAKE_CASE} naming strategy in
      * {@code application.properties}.
      */
-    public record CreateItemRequest(String name, String description, Boolean isCompleted) {
+    public record CreateItemRequest(String name, String description, Boolean isCompleted, Long categoryId) {
     }
 
     /**

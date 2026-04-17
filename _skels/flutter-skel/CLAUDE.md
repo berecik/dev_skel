@@ -59,11 +59,22 @@ Claude-specific complement to `_skels/flutter-skel/AGENTS.md` and
     hitting `${config.backendUrl}/api/items` with an automatic
     Bearer header from the token store and a custom `AuthError` for
     401 responses.
+  - `lib/api/categories_client.dart` — typed HTTP client
+    (`listCategories`, `getCategory`, `createCategory`,
+    `updateCategory`, `deleteCategory`) hitting
+    `${config.backendUrl}/api/categories` with the same auth
+    pattern as the items client. Reuses `AuthError` from
+    `items_client.dart`.
   - `lib/controllers/items_controller.dart` — `ChangeNotifier`-based
     view-model wrapping the client. Mirror of React's `useItems`
     hook: re-fetches when the token flips, surfaces 401s via the
     `unauthorized` flag, optimistically merges new items into the
     local cache.
+  - `lib/controllers/categories_controller.dart` —
+    `ChangeNotifier`-based view-model for categories. Same pattern
+    as `ItemsController`: auto-refreshes on auth changes, holds a
+    typed list with loading/error/unauthorized flags, supports
+    create/update/delete with optimistic local cache updates.
   - `lib/state/` — wrapper-shared **Flutter state management layer**:
     - `app_state_store.dart` — `ChangeNotifier` with per-slice
       listeners for arbitrary JSON-serializable values.

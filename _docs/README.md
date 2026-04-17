@@ -113,7 +113,7 @@ service.
 # 0) Toolchains (one-time)
 ./skel-deps --all
 ollama serve &
-ollama pull gemma4:31b
+ollama pull qwen3-coder:30b
 
 # 1) Generate a whole project via a single dialog
 _bin/skel-gen-ai myproj

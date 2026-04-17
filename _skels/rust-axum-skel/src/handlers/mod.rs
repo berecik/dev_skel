@@ -4,6 +4,7 @@
 //! main entrypoint can stay focused on bind / serve concerns.
 
 pub mod auth;
+pub mod categories;
 pub mod items;
 pub mod state;
 
@@ -18,13 +19,24 @@ use crate::AppState;
 
 /// Build the wrapper-shared `/api/*` router. Mounted at `/` by
 /// `main.rs` so URLs end up at `/api/auth/login`, `/api/items/{id}`,
-/// `/api/state/{key}`, etc. — the contract every dev_skel backend
-/// honours.
+/// `/api/categories/{id}`, `/api/state/{key}`, etc. — the contract
+/// every dev_skel backend honours.
 pub fn wrapper_router() -> Router<Arc<AppState>> {
     Router::new()
         // Auth
         .route("/api/auth/register", post(auth::register_handler))
         .route("/api/auth/login", post(auth::login_handler))
+        // Categories
+        .route(
+            "/api/categories",
+            get(categories::list_categories).post(categories::create_category),
+        )
+        .route(
+            "/api/categories/:id",
+            get(categories::get_category)
+                .put(categories::update_category)
+                .delete(categories::delete_category),
+        )
         // Items
         .route("/api/items", get(items::list_items).post(items::create_item))
         .route("/api/items/:id", get(items::get_item))

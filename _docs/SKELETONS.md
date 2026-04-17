@@ -90,25 +90,27 @@ single-service scoping.
 | Skeleton | Kind | AI manifest | Default slug | Items API contract | Marker file (sibling discovery) |
 | -------- | ---- | ----------- | ------------ | ------------------ | ------------------------------- |
 | [`python-fastapi-skel`](python-fastapi-skel.md) | backend | ✓ | `backend/` | **server** | `core/config.py` |
-| `python-fastapi-rag-skel` | backend | — | `backend/` | partial | `app/__init__.py` |
-| [`python-django-skel`](python-django-skel.md) | backend | ✓ | `backend/` | — | `myproject/settings.py` |
+| `python-fastapi-rag-skel` | backend | — | `backend/` | **server** | `app/__init__.py` |
+| [`python-django-skel`](python-django-skel.md) | backend | ✓ | `backend/` | **server** | `myproject/settings.py` |
 | [`python-django-bolt-skel`](python-django-bolt-skel.md) | backend | ✓ | `backend/` | **server** | `app/api.py` |
-| [`python-flask-skel`](python-flask-skel.md) | backend | ✓ | `backend/` | — | `app/config.py` |
-| [`java-spring-skel`](java-spring-skel.md) | backend | ✓ | `service/` | — | `src/main/resources/application.properties` |
-| [`rust-actix-skel`](rust-actix-skel.md) | backend | ✓ | `service/` | — | `src/config.rs` |
-| [`rust-axum-skel`](rust-axum-skel.md) | backend | ✓ | `service/` | — | `src/config.rs` |
-| `go-skel` | backend | — | `service/` | — | `internal/config/config.go` |
+| [`python-flask-skel`](python-flask-skel.md) | backend | ✓ | `backend/` | **server** | `app/config.py` |
+| [`java-spring-skel`](java-spring-skel.md) | backend | ✓ | `service/` | **server** | `src/main/resources/application.properties` |
+| [`rust-actix-skel`](rust-actix-skel.md) | backend | ✓ | `service/` | **server** | `src/config.rs` |
+| [`rust-axum-skel`](rust-axum-skel.md) | backend | ✓ | `service/` | **server** | `src/config.rs` |
+| `go-skel` | backend | — | `service/` | **server** | `internal/config/config.go` |
 | [`next-js-skel`](next-js-skel.md) | backend | ✓ | `app/` | **server** | `next.config.js` |
 | [`ts-react-skel`](ts-react-skel.md) | frontend | ✓ | `frontend/` | **client** | `vite.config.ts` |
 | [`flutter-skel`](flutter-skel.md) | frontend | ✓ | `frontend/` | **client** | `pubspec.yaml` |
 
 Backends marked **server** ship the wrapper-shared `/api/items` +
-`/api/auth/login` + `/api/state` contract. Frontends marked **client**
-ship a typed call layer that targets that contract via `BACKEND_URL`.
-Pair any **server** with any **client** for a working full-stack pair
-out of the box; pair a non-server backend with a client and the
-frontend will get 404s until you hand-wire the routes (the dialog
-warns on this combination).
+`/api/categories` + `/api/auth` + `/api/state` contract. Frontends
+marked **client** ship typed call layers (React: `src/api/items.ts` +
+`src/api/categories.ts`; Flutter: `lib/api/items_client.dart` +
+`lib/api/categories_client.dart`) that target those endpoints via
+`BACKEND_URL`. Pair any **server** with any **client** for a working
+full-stack pair out of the box; pair a non-server backend with a
+client and the frontend will get 404s until you hand-wire the routes
+(the dialog warns on this combination).
 
 ---
 

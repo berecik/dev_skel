@@ -15,9 +15,10 @@ import java.util.List;
  * controllers can declare {@code AuthUser} parameters.
  *
  * <p>The interceptor only fires for the JWT-protected resource paths
- * — {@code /api/items/**} and {@code /api/state/**} — so the
- * unauthenticated {@code /api/auth/register} and {@code /api/auth/login}
- * endpoints stay reachable without a token.
+ * — {@code /api/items/**}, {@code /api/categories/**}, and
+ * {@code /api/state/**} — so the unauthenticated
+ * {@code /api/auth/register} and {@code /api/auth/login} endpoints
+ * stay reachable without a token.
  */
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
@@ -34,7 +35,11 @@ public class WebMvcConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(jwtAuthInterceptor)
-            .addPathPatterns("/api/items", "/api/items/**", "/api/state", "/api/state/**");
+            .addPathPatterns(
+                "/api/items", "/api/items/**",
+                "/api/categories", "/api/categories/**",
+                "/api/state", "/api/state/**"
+            );
     }
 
     @Override

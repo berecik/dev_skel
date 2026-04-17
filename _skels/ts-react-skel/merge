@@ -31,7 +31,7 @@ EXCLUDE_DIRS=(
 #   directories ship the supporting modules. The merge script copies
 #   anything not already present, so we only need explicit overwrite
 #   entries for files vite already wrote at the same path.
-OVERWRITE_PATTERN="^/(vite\.config\.ts|tsconfig\.json|index\.html|playwright\.config\.ts|eslint\.config\.js|src/App\.tsx|src/App\.css|src/App\.test\.tsx|src/setupTests\.ts|src/main\.tsx|src/config\.ts|src/cross-stack\.smoke\.test\.ts|src/api/auth\.ts|src/api/items\.ts|src/auth/token-store\.ts|src/auth/use-auth-token\.ts|src/hooks/use-items\.ts|src/state/app-state-store\.ts|src/state/state-api\.ts|src/state/use-app-state\.ts|src/state/AppStateProvider\.tsx|src/components/LoginForm\.tsx|src/components/LoginForm\.test\.tsx|src/components/ItemForm\.tsx|src/components/ItemForm\.test\.tsx|src/components/ItemList\.tsx|src/components/ItemList\.test\.tsx|e2e/items-e2e\.spec\.ts)$"
+OVERWRITE_PATTERN="^/(vite\.config\.ts|tsconfig\.json|index\.html|playwright\.config\.ts|eslint\.config\.js|src/App\.tsx|src/App\.css|src/App\.test\.tsx|src/setupTests\.ts|src/main\.tsx|src/config\.ts|src/cross-stack\.smoke\.test\.ts|src/api/auth\.ts|src/api/items\.ts|src/api/categories\.ts|src/auth/token-store\.ts|src/auth/use-auth-token\.ts|src/hooks/use-items\.ts|src/hooks/use-categories\.ts|src/state/app-state-store\.ts|src/state/state-api\.ts|src/state/use-app-state\.ts|src/state/AppStateProvider\.tsx|src/components/LoginForm\.tsx|src/components/LoginForm\.test\.tsx|src/components/ItemForm\.tsx|src/components/ItemForm\.test\.tsx|src/components/ItemList\.tsx|src/components/ItemList\.test\.tsx|e2e/items-e2e\.spec\.ts)$"
 
 while IFS= read -r -d '' src; do
   rel="${src#"$SKEL_DIR"}"

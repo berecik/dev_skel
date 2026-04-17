@@ -91,9 +91,9 @@ make test-generators
    - `pubspec.yaml`, `analysis_options.yaml`
    - `lib/main.dart`, `lib/config.dart`
    - `lib/auth/{token_store.dart, auth_scope.dart}`
-   - `lib/api/items_client.dart`
+   - `lib/api/{items_client.dart, categories_client.dart}`
    - `lib/state/{app_state_store.dart, state_api.dart, app_state_scope.dart}`
-   - `lib/controllers/items_controller.dart`
+   - `lib/controllers/{items_controller.dart, categories_controller.dart}`
    - `lib/screens/{login_screen.dart, home_screen.dart, item_form.dart, item_list.dart}`
    - `test/widget_test.dart`
    Whenever you add or rename one of these files, **also update**

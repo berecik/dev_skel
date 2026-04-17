@@ -3,7 +3,7 @@
 Dev Skel has **three** layers of dependencies:
 
 1. **AI runtime** — Ollama + an instruction model (default
-   `gemma4:31b`). Required for `_bin/skel-gen-ai`, the per-service
+   `qwen3-coder:30b`). Required for `_bin/skel-gen-ai`, the per-service
    `./ai`, and the `./ai upgrade` flow. The static fallback
    (`_bin/skel-gen-static`) and the `./backport` flow do **not** need
    Ollama.
@@ -38,7 +38,7 @@ and at least one instruction model pulled.
 
 ```bash
 ollama serve &                    # in another terminal (or as a service)
-ollama pull gemma4:31b            # default; ~19 GB; needs ~24 GB VRAM
+ollama pull qwen3-coder:30b            # default; ~19 GB; needs ~24 GB VRAM
 # Lighter alternatives for slower hardware:
 ollama pull qwen3-coder:30b
 ollama pull qwen2.5-coder:7b
@@ -49,7 +49,7 @@ ollama pull qwen2.5-coder:7b
 | Variable | Default | Notes |
 | -------- | ------- | ----- |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Override for a remote Ollama. |
-| `OLLAMA_MODEL` | `gemma4:31b` | Use a smaller model on slower hardware. |
+| `OLLAMA_MODEL` | `qwen3-coder:30b` | Use a smaller model on slower hardware. |
 | `OLLAMA_TIMEOUT` | `1800` (s) | Sized for a 30B-class cold load + multi-minute completions on a long file. |
 | `SKEL_REFACTOR_FIX_TIMEOUT_M` | `15` (min) | Fix-loop budget for `./ai apply`. |
 | `SKEL_REFACTOR_MAX_FILES` | `8` | Hard cap on files the LLM may edit per `./ai` run. |

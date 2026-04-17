@@ -4,6 +4,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from app.views import (
+    CategoryViewSet,
     ItemViewSet,
     LoginView,
     RegisterView,
@@ -12,6 +13,7 @@ from app.views import (
 )
 
 router = DefaultRouter(trailing_slash=False)
+router.register(r"categories", CategoryViewSet, basename="categories")
 router.register(r"items", ItemViewSet, basename="items")
 
 urlpatterns = [

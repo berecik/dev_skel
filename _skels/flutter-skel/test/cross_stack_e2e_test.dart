@@ -48,9 +48,11 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_skel/api/items_client.dart';
+import 'package:flutter_skel/api/categories_client.dart';
 import 'package:flutter_skel/auth/token_store.dart';
 import 'package:flutter_skel/config.dart';
 import 'package:flutter_skel/controllers/items_controller.dart';
+import 'package:flutter_skel/controllers/categories_controller.dart';
 import 'package:flutter_skel/main.dart';
 import 'package:flutter_skel/state/app_state_store.dart';
 import 'package:flutter_skel/state/state_api.dart';
@@ -88,6 +90,7 @@ Future<void> _registerUser(String backendUrl) async {
   TokenStore tokenStore,
   ItemsClient itemsClient,
   ItemsController itemsController,
+  CategoriesController categoriesController,
   AppStateStore appStateStore,
   StateApi stateApi,
 }) _buildTree(String backendUrl) {
@@ -109,11 +112,17 @@ Future<void> _registerUser(String backendUrl) async {
     client: itemsClient,
     tokenStore: tokenStore,
   );
+  final categoriesClient = CategoriesClient(config: config, tokenStore: tokenStore);
+  final categoriesController = CategoriesController(
+    client: categoriesClient,
+    tokenStore: tokenStore,
+  );
   return (
     config: config,
     tokenStore: tokenStore,
     itemsClient: itemsClient,
     itemsController: itemsController,
+    categoriesController: categoriesController,
     appStateStore: appStateStore,
     stateApi: stateApi,
   );
@@ -192,6 +201,7 @@ void main() {
           tokenStore: tree.tokenStore,
           itemsClient: tree.itemsClient,
           itemsController: tree.itemsController,
+          categoriesController: tree.categoriesController,
           appStateStore: tree.appStateStore,
           stateApi: tree.stateApi,
         ),

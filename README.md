@@ -42,7 +42,7 @@ service by default** (`./ai "REQUEST"`); pass a slug (`./ai web_ui
 ```bash
 # 0) One-time setup
 ollama serve &                # in another terminal
-ollama pull gemma4:31b        # ~19 GB; default model
+ollama pull qwen3-coder:30b        # ~19 GB; default model
 
 # 1) Generate a full-stack project from a single dialog
 _bin/skel-gen-ai myproj
@@ -161,7 +161,7 @@ Skip individual phases with `--no-integrate`, `--no-test-fix`,
 | Env | Default | Notes |
 | --- | ------- | ----- |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | |
-| `OLLAMA_MODEL` | `gemma4:31b` | drop to `qwen2.5-coder:7b` on slow hardware |
+| `OLLAMA_MODEL` | `qwen3-coder:30b` | drop to `qwen2.5-coder:7b` on slow hardware |
 | `OLLAMA_TIMEOUT` | `1800` (s) | sized for a 30 B-class model + cold load |
 
 CLI overrides: `--ollama-url`, `--ollama-model`, `--fix-timeout-m`,
@@ -312,13 +312,13 @@ keep the contracts aligned without you re-explaining.
 | -------- | ---- | ----------- | ------------------ | ----- |
 | `python-fastapi-skel` | backend | ✓ | server | DDD layout, async SQLAlchemy, OpenAPI |
 | `python-fastapi-rag-skel` | backend | — | partial | FastAPI variant with chroma + RAG endpoints |
-| `python-django-skel` | backend | ✓ | — | Classic Django |
+| `python-django-skel` | backend | ✓ | server | Classic Django |
 | `python-django-bolt-skel` | backend | ✓ | server | Django + Rust HTTP layer (~60k RPS) |
-| `python-flask-skel` | backend | ✓ | — | Lightweight WSGI |
-| `java-spring-skel` | backend | ✓ | — | Spring Boot 3 + JwtProperties bean |
-| `rust-actix-skel` | backend | ✓ | — | Actix-web + AppState env wiring |
-| `rust-axum-skel` | backend | ✓ | — | Axum + Tokio |
-| `go-skel` | backend | — | — | net/http + sqlite + JWT |
+| `python-flask-skel` | backend | ✓ | server | Lightweight WSGI |
+| `java-spring-skel` | backend | ✓ | server | Spring Boot 3 + JwtProperties bean |
+| `rust-actix-skel` | backend | ✓ | server | Actix-web + AppState env wiring |
+| `rust-axum-skel` | backend | ✓ | server | Axum + Tokio |
+| `go-skel` | backend | — | server | net/http + sqlite + JWT |
 | `next-js-skel` | backend | ✓ | server | Next.js 15 App Router + better-sqlite3 + jose JWT |
 | `ts-react-skel` | frontend | ✓ | client | React 19 + Vite + typed `src/api/items.ts` |
 | `flutter-skel` | frontend | ✓ | client | Flutter Material 3 + `flutter_secure_storage` + `flutter_dotenv` |
@@ -331,7 +331,8 @@ the model after they exist) plus a `VERSION` + `CHANGELOG.md` (so
 extensions, Postgres backing service, port forwarding), and a
 **.dockerignore**. Frontend skeletons (React, Flutter) ship an
 `nginx.conf` for SPA routing in production. Backends marked **server**
-ship the wrapper-shared `/api/items` + `/api/auth/login` contract;
+ship the wrapper-shared `/api/items` + `/api/categories` +
+`/api/auth` + `/api/state` contract;
 both frontends call that contract out of the box.
 
 ---
@@ -471,7 +472,7 @@ checkout.
 ## Requirements
 
 * **Python 3.10+** (the CLIs and the in-service runtime)
-* **[Ollama](https://ollama.ai/)** + a model (default `gemma4:31b`)
+* **[Ollama](https://ollama.ai/)** + a model (default `qwen3-coder:30b`)
 * **Per-stack toolchains** — installed via `./skel-deps`:
   * Python 3.10+ (pip + venv)
   * Node 20+ (npm)
@@ -505,6 +506,7 @@ is only needed when running from inside a dev_skel checkout.
 | Install per-stack toolchains + Ollama | [`_docs/DEPENDENCIES.md`](_docs/DEPENDENCIES.md) |
 | Project-authoritative behavior rules | [`_docs/JUNIE-RULES.md`](_docs/JUNIE-RULES.md) |
 | Per-skeleton deep-dive | [`_docs/<skel>.md`](_docs/) |
+| Create or update a skeleton | [`_docs/SKELETON-DESIGN-GUIDE.md`](_docs/SKELETON-DESIGN-GUIDE.md) |
 | Design specs (originals) | [`SERVICE_REFACTOR_COMMAND.md`](SERVICE_REFACTOR_COMMAND.md), [`SKEL_BACKPORT_COMMAND.md`](SKEL_BACKPORT_COMMAND.md), [`UPDATE_SKEL_REFACTOR.md`](UPDATE_SKEL_REFACTOR.md) |
 
 ---

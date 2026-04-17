@@ -306,3 +306,190 @@ ambiguous, do NOT copy verbatim):
         },
     ],
 }
+
+
+# --------------------------------------------------------------------------- #
+#  Integration manifest (second Ollama session)
+# --------------------------------------------------------------------------- #
+#
+# After the per-target MANIFEST above generates the new Flutter service,
+# ``_bin/skel-gen-ai`` runs a SECOND Ollama pass against the block below.
+# The integration phase has access to a snapshot of every sibling service
+# in the wrapper via the ``{wrapper_snapshot}`` placeholder so the model
+# can ground its rewrites in real code.
+#
+# Targets here are *additive* — they create new files (sibling info,
+# integration tests) without overwriting anything from the first phase.
+# Each target's prompt receives the same template variables as the
+# main MANIFEST plus:
+#
+#   - ``{wrapper_snapshot}`` — Markdown rendering of every sibling
+#     service (slug, kind, tech, key files).
+#   - ``{sibling_count}`` — number of siblings discovered.
+#   - ``{sibling_slugs}`` — comma-separated list of sibling slugs (or
+#     ``"(none)"`` when the new service is the only one in the wrapper).
+#
+# This is a **frontend** skeleton — there is no backend server to test
+# against at integration time. Integration testing means verifying that
+# the typed clients can be constructed, the `AppConfig` loads with the
+# expected env vars, and the API client classes export the expected
+# interface.
+#
+# After the integration files are written, the test-and-fix loop runs
+# the ``test_command`` via `flutter test`. On failure, it asks Ollama
+# to repair each integration file in turn, capped at ``fix_timeout_m``
+# minutes.
+
+
+INTEGRATION_SYSTEM_PROMPT = """\
+You are a senior Flutter / Dart engineer integrating a freshly generated
+frontend service into an existing dev_skel multi-service wrapper.
+
+The new service is `{service_label}` (slug `{service_slug}`, tech
+`flutter-skel`). It already ships:
+- A typed `lib/api/items_client.dart` HTTP client with JWT bearer auth.
+- A typed `lib/api/categories_client.dart` client (wrapper-shared).
+- The wrapper-shared `lib/config.dart` (`AppConfig`) loaded at startup
+  via `flutter_dotenv` from the bundled `.env` asset.
+- The wrapper-shared `lib/state/` layer (`app_state_store.dart`,
+  `state_api.dart`, `app_state_scope.dart`).
+- The wrapper-shared `lib/auth/` layer (`token_store.dart`,
+  `auth_scope.dart`).
+
+This is a **frontend app** — it does NOT run its own HTTP server.
+Integration testing here means:
+- Verifying that `AppConfig` loads with a non-empty `backendUrl`.
+- Verifying that the typed API client classes (`ItemsClient`,
+  `CategoriesClient`, `StateApi`) can be constructed without errors.
+- When sibling services exist in the wrapper, verifying that their
+  URLs are present in the `AppConfig.services` map.
+- All assertions are unit-level — NO live HTTP calls.
+
+Sibling services already in the wrapper (snapshot of their key files
+follows so you can ground your code in real signatures, not guesses):
+
+{wrapper_snapshot}
+
+Coding rules:
+- Strict Dart — every public function has explicit parameter and
+  return types. Prefer `final` for locals.
+- Flutter null safety — use `?` for nullable types and `late` only
+  when truly needed.
+- 2-space indentation, single quotes, trailing commas in widget
+  trees and parameter lists. Match the existing files exactly.
+- Use the `http` package for HTTP — no `dio`, no `retrofit`.
+- Use `flutter_test` for all tests (`import 'package:flutter_test/
+  flutter_test.dart';`).
+- Output ONLY the file's contents. No markdown fences, no commentary.
+- When `{sibling_count}` is 0 the integration tests should still
+  exercise the config shape and API client constructors. Do not
+  assume sibling services exist; gracefully degrade.
+
+User-supplied integration instructions (free-form, take with the same
+weight as the rules above):
+{integration_extra}
+
+User-supplied frontend instructions (already applied during the
+per-target phase, repeated here so the integration code stays
+consistent):
+{frontend_extra}
+"""
+
+
+INTEGRATION_MANIFEST = {
+    "system_prompt": INTEGRATION_SYSTEM_PROMPT,
+    "notes": (
+        "Integration phase: writes lib/integration/sibling_info.dart "
+        "and test/integration_test.dart, then runs the test-and-fix "
+        "loop via `flutter test`."
+    ),
+    "test_command": "flutter test test/integration_test.dart",
+    "fix_timeout_m": 60,
+    "targets": [
+        {
+            "path": "lib/integration/sibling_info.dart",
+            "language": "dart",
+            "description": "lib/integration/sibling_info.dart — typed map of sibling service URLs",
+            "prompt": """\
+Write `lib/integration/sibling_info.dart`. The module reads sibling
+URLs from `AppConfig.services` and exports a typed map of sibling
+service URLs.
+
+Wrapper snapshot (sibling services discovered, {sibling_count} total):
+---
+{wrapper_snapshot}
+---
+
+Required structure:
+
+- Import `AppConfig` from `'package:{service_slug}/config.dart'`.
+- Define a `Map<String, String> getSiblingServices(AppConfig config)`
+  function that reads `config.services` and returns a map of slug →
+  URL for every sibling whose URL is defined and non-empty.
+- When `{sibling_count}` is 0, the function must still be valid and
+  return an empty `<String, String>{{}}`.
+- Use strict Dart with explicit types on every public function.
+- 2-space indentation, single quotes, trailing commas.
+
+Output the full file contents only.
+""",
+        },
+        {
+            "path": "test/integration_test.dart",
+            "language": "dart",
+            "description": "test/integration_test.dart — Dart integration checks",
+            "prompt": """\
+Write `test/integration_test.dart`. Dart tests that verify the
+frontend's typed clients can be constructed and the `AppConfig`
+contains the expected wrapper-shared values.
+
+Wrapper snapshot:
+---
+{wrapper_snapshot}
+---
+
+Required tests (use `group` / `test` / `expect` from
+`package:flutter_test/flutter_test.dart`):
+
+1. `AppConfig` group:
+   - Load `AppConfig` via `await AppConfig.load()` (or construct
+     with test values if `load()` requires the bundled `.env`).
+   - Assert `config.backendUrl` is non-empty.
+
+2. `ItemsClient` group:
+   - Construct `{item_class}sClient(config: config)` (pass a test
+     `AppConfig` instance).
+   - Assert the client is not null (i.e. it constructed without
+     throwing).
+
+3. `CategoriesClient` group:
+   - Construct `CategoriesClient(config: config)`.
+   - Assert the client is not null.
+
+4. `StateApi` group:
+   - Construct `StateApi(config: config)`.
+   - Assert the client is not null.
+
+5. **When `{sibling_count}` > 0**: add a `sibling URLs` group that:
+   - Imports `getSiblingServices` from
+     `'package:{service_slug}/integration/sibling_info.dart'`.
+   - Asserts the returned map has at least one entry.
+   - For each known sibling slug, asserts the corresponding URL is
+     a non-empty string starting with `'http'`.
+
+6. **When `{sibling_count}` is 0**: do NOT add any sibling URL test.
+
+Imports:
+- `import 'package:flutter_test/flutter_test.dart';`
+- `import 'package:{service_slug}/config.dart';`
+- `import 'package:{service_slug}/api/{items_plural}_client.dart';`
+- `import 'package:{service_slug}/api/categories_client.dart';`
+- `import 'package:{service_slug}/state/state_api.dart';`
+- Other imports as needed per group.
+
+Use 2-space indentation, single quotes, trailing commas.
+Output the full file contents only.
+""",
+        },
+    ],
+}

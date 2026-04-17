@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from app.models import Item
+from app.models import Category, Item
 
 
 class UserOutSerializer(serializers.ModelSerializer):
@@ -53,21 +53,43 @@ class RegisterSerializer(serializers.Serializer):
         )
 
 
+class CategorySerializer(serializers.ModelSerializer):
+    """Wrapper-shared category resource."""
+
+    class Meta:
+        model = Category
+        fields = ("id", "name", "description", "created_at", "updated_at")
+        read_only_fields = ("id", "created_at", "updated_at")
+
+
+class CategoryCreateSerializer(serializers.ModelSerializer):
+    """Payload for ``POST /api/categories`` and ``PUT /api/categories/{id}``."""
+
+    class Meta:
+        model = Category
+        fields = ("name", "description")
+        extra_kwargs = {
+            "description": {"required": False, "allow_null": True, "allow_blank": True},
+        }
+
+
 class ItemSerializer(serializers.ModelSerializer):
     """Snake_case JSON for the React frontend."""
 
     class Meta:
         model = Item
-        fields = ("id", "name", "description", "is_completed", "created_at", "updated_at")
+        fields = ("id", "name", "description", "is_completed", "category_id", "created_at", "updated_at")
         read_only_fields = ("id", "created_at", "updated_at")
 
 
 class ItemCreateSerializer(serializers.ModelSerializer):
     """Loose validation for create — `is_completed` defaults to False."""
 
+    category_id = serializers.IntegerField(required=False, allow_null=True, default=None)
+
     class Meta:
         model = Item
-        fields = ("name", "description", "is_completed")
+        fields = ("name", "description", "is_completed", "category_id")
         extra_kwargs = {
             "description": {"required": False, "allow_null": True, "allow_blank": True},
             "is_completed": {"required": False, "default": False},

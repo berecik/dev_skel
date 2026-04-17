@@ -30,8 +30,8 @@ public class ItemService {
         return items.findById(id);
     }
 
-    public Item create(String name, String description, boolean isCompleted) {
-        return items.insert(name, description, isCompleted);
+    public Item create(String name, String description, boolean isCompleted, Long categoryId) {
+        return items.insert(name, description, isCompleted, categoryId);
     }
 
     public Optional<Item> complete(long id) {

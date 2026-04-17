@@ -83,6 +83,8 @@ TEST_PASSWORD = "react-integration-pw-12345"
 TEST_EMAIL = "react-test@example.com"
 TEST_ITEM_NAME = "react-integration-test-item"
 TEST_ITEM_DESCRIPTION = "Created by the cross-stack integration test"
+TEST_CATEGORY_NAME = "react-integration-test-category"
+TEST_CATEGORY_DESCRIPTION = "Category created by the cross-stack integration test"
 
 
 # --------------------------------------------------------------------------- #
@@ -412,6 +414,7 @@ def _react_inspect_bundle(
     expected: Dict[str, str] = {
         "BACKEND_URL value": backend_url,
         "items endpoint path": "/api/items",
+        "categories endpoint path": "/api/categories",
         "auth login path": "/api/auth/login",
         "Bearer header": "Bearer",
         "JWT issuer (devskel)": "devskel",
@@ -527,6 +530,8 @@ def _flutter_inspect_bundle(
         "auth login path": "/api/auth/login",
         "Bearer header": "Bearer",
     }
+    # Categories check — only when the Flutter frontend ships the client
+    # (will be added when flutter-skel gains categories_client.dart).
     if extra:
         expected.update(extra)
     missing = [
@@ -860,8 +865,101 @@ FLUTTER_FRONTEND = Frontend(
 # --------------------------------------------------------------------------- #
 
 
+def exercise_categories_api(
+    backend_url: str,
+    auth_headers: Dict[str, str],
+) -> int:
+    """Exercise the /api/categories CRUD lifecycle.
+
+    Returns the id of a category created during the exercise (used by
+    the caller to create an item WITH a category_id and verify the FK
+    round-trips).
+    """
+
+    print()
+    print("Exercising the categories API flow...")
+
+    # C1: create a category
+    status, body = http_request(
+        "POST",
+        f"{backend_url}/api/categories",
+        body={
+            "name": TEST_CATEGORY_NAME,
+            "description": TEST_CATEGORY_DESCRIPTION,
+        },
+        headers=auth_headers,
+    )
+    assert status == 201, (
+        f"POST /api/categories expected 201, got {status}: {body}"
+    )
+    cat_id = body.get("id") if isinstance(body, dict) else None
+    assert cat_id, f"create category response missing id: {body}"
+    assert body.get("name") == TEST_CATEGORY_NAME
+    print(
+        f"  ✓ POST /api/categories → 201 (id={cat_id}, "
+        f"name='{body.get('name')}')"
+    )
+
+    # C2: list categories
+    status, body = http_request(
+        "GET",
+        f"{backend_url}/api/categories",
+        headers=auth_headers,
+    )
+    assert status == 200
+    cats = body if isinstance(body, list) else (
+        body.get("results", []) if isinstance(body, dict) else []
+    )
+    cat_names = [c.get("name") for c in cats if isinstance(c, dict)]
+    assert TEST_CATEGORY_NAME in cat_names, (
+        f"new category not in list: {cat_names}"
+    )
+    print(f"  ✓ GET /api/categories → 200 (count={len(cats)})")
+
+    # C3: retrieve by id
+    status, body = http_request(
+        "GET",
+        f"{backend_url}/api/categories/{cat_id}",
+        headers=auth_headers,
+    )
+    assert status == 200
+    assert body.get("id") == cat_id
+    assert body.get("name") == TEST_CATEGORY_NAME
+    print(f"  ✓ GET /api/categories/{cat_id} → 200 (round-trip OK)")
+
+    # C4: update
+    status, body = http_request(
+        "PUT",
+        f"{backend_url}/api/categories/{cat_id}",
+        body={
+            "name": TEST_CATEGORY_NAME + "-updated",
+            "description": "Updated by integration test",
+        },
+        headers=auth_headers,
+    )
+    assert status == 200, (
+        f"PUT /api/categories/{cat_id} expected 200, got {status}: {body}"
+    )
+    assert body.get("name") == TEST_CATEGORY_NAME + "-updated"
+    print(f"  ✓ PUT /api/categories/{cat_id} → 200 (updated)")
+
+    # C5: anonymous request rejected
+    status, _body = http_request(
+        "GET", f"{backend_url}/api/categories",
+    )
+    assert status in (401, 403), (
+        f"anonymous GET /api/categories expected 401/403, got {status}"
+    )
+    print(
+        f"  ✓ GET /api/categories without token → {status} "
+        f"(JWT enforcement works)"
+    )
+
+    return cat_id
+
+
 def exercise_items_api(backend_url: str) -> None:
-    """Run the canonical register → login → CRUD → reject flow.
+    """Run the canonical register → login → CRUD → categories → reject flow.
 
     Every per-backend test calls this against its own running backend.
     Raises :class:`AssertionError` on any sub-step failure so the
@@ -995,6 +1093,166 @@ def exercise_items_api(backend_url: str) -> None:
     print(
         f"  ✓ POST /api/items/{new_id}/complete → {status} "
         f"(is_completed=True)"
+    )
+
+    # Sub-step 7a: probe whether this backend ships /api/categories
+    # A real categories endpoint returns 200 with a JSON array. Some
+    # backends without categories may return 200 from a catch-all
+    # route, so we also check that the body is actually a list.
+    probe_status, probe_body = http_request(
+        "GET",
+        f"{backend_url}/api/categories",
+        headers=auth_headers,
+    )
+    has_categories = probe_status == 200 and isinstance(probe_body, list)
+
+    if has_categories:
+        # Sub-step 7b: exercise the categories API
+        cat_id = exercise_categories_api(backend_url, auth_headers)
+
+        # Sub-step 7c: create an item WITH a category_id
+        print()
+        print("Exercising items + categories FK...")
+        status, body = http_request(
+            "POST",
+            f"{backend_url}/api/items",
+            body={
+                "name": "item-with-category",
+                "description": "Item linked to a category",
+                "is_completed": False,
+                "category_id": cat_id,
+            },
+            headers=auth_headers,
+        )
+        assert status == 201, (
+            f"POST /api/items (with category) expected 201, got {status}: {body}"
+        )
+        cat_item_id = body.get("id")
+        assert body.get("category_id") == cat_id, (
+            f"item should have category_id={cat_id}: {body}"
+        )
+        print(
+            f"  ✓ POST /api/items → 201 (id={cat_item_id}, "
+            f"category_id={cat_id})"
+        )
+
+        # Sub-step 7d: retrieve the categorized item and verify FK
+        status, body = http_request(
+            "GET",
+            f"{backend_url}/api/items/{cat_item_id}",
+            headers=auth_headers,
+        )
+        assert status == 200
+        assert body.get("category_id") == cat_id, (
+            f"retrieved item should have category_id={cat_id}: {body}"
+        )
+        print(
+            f"  ✓ GET /api/items/{cat_item_id} → 200 "
+            f"(category_id={cat_id} round-trip OK)"
+        )
+
+        # Sub-step 7e: delete the category, verify item's category_id becomes null
+        status, _body = http_request(
+            "DELETE",
+            f"{backend_url}/api/categories/{cat_id}",
+            headers=auth_headers,
+        )
+        assert status in (200, 204), (
+            f"DELETE /api/categories/{cat_id} expected 200/204, got {status}"
+        )
+        print(f"  ✓ DELETE /api/categories/{cat_id} → {status}")
+
+        status, body = http_request(
+            "GET",
+            f"{backend_url}/api/items/{cat_item_id}",
+            headers=auth_headers,
+        )
+        assert status == 200
+        assert body.get("category_id") is None, (
+            f"after category delete, item category_id should be null: {body}"
+        )
+        print(
+            f"  ✓ GET /api/items/{cat_item_id} → 200 "
+            f"(category_id=None after category delete — SET_NULL works)"
+        )
+    else:
+        print()
+        print(
+            "  · skipping categories exercise "
+            "(backend does not ship /api/categories yet)"
+        )
+
+    # Sub-step S: state API — save, load, delete roundtrip.
+    # Exercises the /api/state endpoints that the persistent UI filter
+    # (React: useAppState, Flutter: readAppState) uses under the hood.
+    print()
+    print("Exercising the state API flow...")
+
+    state_key = "integration.testFlag"
+    state_value = '{"flag":true,"ts":12345}'
+
+    # S1: save a state slice
+    status, body = http_request(
+        "PUT",
+        f"{backend_url}/api/state/{state_key}",
+        body={"value": state_value},
+        headers=auth_headers,
+    )
+    assert status == 200, (
+        f"PUT /api/state/{state_key} expected 200, got {status}: {body}"
+    )
+    print(f"  ✓ PUT /api/state/{state_key} → 200 (saved)")
+
+    # S2: load all state — the saved key must be present
+    status, body = http_request(
+        "GET",
+        f"{backend_url}/api/state",
+        headers=auth_headers,
+    )
+    assert status == 200, (
+        f"GET /api/state expected 200, got {status}: {body}"
+    )
+    assert isinstance(body, dict), f"state response should be dict: {body}"
+    assert state_key in body, (
+        f"saved key {state_key!r} not in state response: {body}"
+    )
+    print(
+        f"  ✓ GET /api/state → 200 (contains {state_key!r})"
+    )
+
+    # S3: delete the state slice
+    status, _body = http_request(
+        "DELETE",
+        f"{backend_url}/api/state/{state_key}",
+        headers=auth_headers,
+    )
+    assert status in (200, 204), (
+        f"DELETE /api/state/{state_key} expected 200/204, got {status}"
+    )
+    print(f"  ✓ DELETE /api/state/{state_key} → {status}")
+
+    # S4: verify the slice is gone
+    status, body = http_request(
+        "GET",
+        f"{backend_url}/api/state",
+        headers=auth_headers,
+    )
+    assert status == 200
+    assert state_key not in body, (
+        f"deleted key {state_key!r} still in state response: {body}"
+    )
+    print(
+        f"  ✓ GET /api/state → 200 ({state_key!r} removed after delete)"
+    )
+
+    # S5: anonymous state access must be rejected
+    status, _body = http_request("GET", f"{backend_url}/api/state")
+    assert status in (401, 403), (
+        f"anonymous GET /api/state expected 401/403, got {status}"
+    )
+    print(
+        f"  ✓ GET /api/state without token → {status} "
+        f"(JWT enforcement works)"
     )
 
     # Sub-step 8: anonymous request must be rejected

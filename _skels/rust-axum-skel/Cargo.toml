@@ -24,10 +24,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dotenvy = "0.15"
 
 # Wrapper-shared backend stack so the React frontend's `/api/auth/*`,
-# `/api/items`, and `/api/state` calls Just Work against this service
-# out of the box. SQLite is the default backing store (matches the
-# wrapper-shared `_shared/db.sqlite3`); switch to Postgres by changing
-# DATABASE_URL — sqlx auto-detects the driver.
+# `/api/categories`, `/api/items`, and `/api/state` calls Just Work
+# against this service out of the box. SQLite is the default backing
+# store (matches the wrapper-shared `_shared/db.sqlite3`); switch to
+# Postgres by changing DATABASE_URL — sqlx auto-detects the driver.
 sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio-rustls",
     "sqlite",

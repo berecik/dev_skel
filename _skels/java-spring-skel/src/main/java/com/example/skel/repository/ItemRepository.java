@@ -28,14 +28,19 @@ public class ItemRepository {
     private static final DateTimeFormatter ISO =
         DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
 
-    private static final RowMapper<Item> MAPPER = (rs, _row) -> new Item(
-        rs.getLong("id"),
-        rs.getString("name"),
-        rs.getString("description"),
-        rs.getBoolean("is_completed"),
-        rs.getString("created_at"),
-        rs.getString("updated_at")
-    );
+    private static final RowMapper<Item> MAPPER = (rs, _row) -> {
+        long catId = rs.getLong("category_id");
+        Long categoryId = rs.wasNull() ? null : catId;
+        return new Item(
+            rs.getLong("id"),
+            rs.getString("name"),
+            rs.getString("description"),
+            rs.getBoolean("is_completed"),
+            categoryId,
+            rs.getString("created_at"),
+            rs.getString("updated_at")
+        );
+    };
 
     private final JdbcTemplate jdbc;
     private final JdbcClient client;
@@ -47,7 +52,7 @@ public class ItemRepository {
 
     public List<Item> findAll() {
         return client
-            .sql("SELECT id, name, description, is_completed, created_at, updated_at "
+            .sql("SELECT id, name, description, is_completed, category_id, created_at, updated_at "
                 + "FROM items ORDER BY created_at DESC, id DESC")
             .query(MAPPER)
             .list();
@@ -57,7 +62,7 @@ public class ItemRepository {
         try {
             return Optional.of(
                 client
-                    .sql("SELECT id, name, description, is_completed, created_at, updated_at "
+                    .sql("SELECT id, name, description, is_completed, category_id, created_at, updated_at "
                         + "FROM items WHERE id = ?")
                     .param(id)
                     .query(MAPPER)
@@ -74,7 +79,7 @@ public class ItemRepository {
      * because SQLite + H2 + Postgres all support it via JDBC, unlike
      * {@code RETURNING ...} which has divergent dialects.
      */
-    public Item insert(String name, String description, boolean isCompleted) {
+    public Item insert(String name, String description, boolean isCompleted, Long categoryId) {
         String now = nowIso();
         var keyHolder = new org.springframework.jdbc.support.GeneratedKeyHolder();
         jdbc.update(connection -> {
@@ -85,19 +90,24 @@ public class ItemRepository {
             // about a multi-column result. Naming `id` explicitly
             // works for SQLite, H2, and Postgres.
             PreparedStatement ps = connection.prepareStatement(
-                "INSERT INTO items (name, description, is_completed, created_at, updated_at) "
-                    + "VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO items (name, description, is_completed, category_id, created_at, updated_at) "
+                    + "VALUES (?, ?, ?, ?, ?, ?)",
                 new String[]{"id"}
             );
             ps.setString(1, name);
             ps.setString(2, description);
             ps.setBoolean(3, isCompleted);
-            ps.setString(4, now);
+            if (categoryId != null) {
+                ps.setLong(4, categoryId);
+            } else {
+                ps.setNull(4, java.sql.Types.BIGINT);
+            }
             ps.setString(5, now);
+            ps.setString(6, now);
             return ps;
         }, keyHolder);
         Number key = Objects.requireNonNull(keyHolder.getKey(), "INSERT did not return a generated key");
-        return new Item(key.longValue(), name, description, isCompleted, now, now);
+        return new Item(key.longValue(), name, description, isCompleted, categoryId, now, now);
     }
 
     /**

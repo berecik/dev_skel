@@ -1,7 +1,7 @@
 // Package db opens the SQLite (or other JDBC-style) connection and
 // runs idempotent CREATE TABLE IF NOT EXISTS for the wrapper-shared
-// `users`, `items`, and `react_state` tables. Schema mirrors the
-// django-bolt skeleton's `app/models.py` so a single
+// `users`, `categories`, `items`, and `react_state` tables. Schema
+// mirrors the django-bolt skeleton's `app/models.py` so a single
 // `_shared/db.sqlite3` is interchangeable across every dev_skel
 // backend.
 package db
@@ -25,6 +25,11 @@ func Open(path string) (*sql.DB, error) {
 	// MaxOpenConns to 1 also avoids `database is locked` flakes
 	// during the cross-stack test which fires concurrent requests.
 	conn.SetMaxOpenConns(1)
+	// Enable foreign key enforcement — SQLite defaults to OFF.
+	if _, err := conn.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
 	if err := initSchema(conn); err != nil {
 		_ = conn.Close()
 		return nil, err
@@ -41,11 +46,19 @@ func initSchema(conn *sql.DB) error {
 			password_hash TEXT NOT NULL,
 			created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,
+		`CREATE TABLE IF NOT EXISTS categories (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			name        TEXT NOT NULL UNIQUE,
+			description TEXT,
+			created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);`,
 		`CREATE TABLE IF NOT EXISTS items (
 			id            INTEGER PRIMARY KEY AUTOINCREMENT,
 			name          TEXT NOT NULL,
 			description   TEXT,
 			is_completed  INTEGER NOT NULL DEFAULT 0,
+			category_id   INTEGER REFERENCES categories(id) ON DELETE SET NULL,
 			created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,

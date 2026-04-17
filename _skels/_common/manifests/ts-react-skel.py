@@ -251,3 +251,185 @@ REFERENCE (`src/App.tsx`):
         },
     ],
 }
+
+
+# --------------------------------------------------------------------------- #
+#  Integration manifest (second Ollama session)
+# --------------------------------------------------------------------------- #
+#
+# After the per-target MANIFEST above generates the new React service,
+# ``_bin/skel-gen-ai`` runs a SECOND Ollama pass against the block below.
+# The integration phase has access to a snapshot of every sibling service
+# in the wrapper via the ``{wrapper_snapshot}`` placeholder so the model
+# can ground its rewrites in real code.
+#
+# Targets here are *additive* — they create new files (sibling info,
+# integration tests) without overwriting anything from the first phase.
+# Each target's prompt receives the same template variables as the
+# main MANIFEST plus:
+#
+#   - ``{wrapper_snapshot}`` — Markdown rendering of every sibling
+#     service (slug, kind, tech, key files).
+#   - ``{sibling_count}`` — number of siblings discovered.
+#   - ``{sibling_slugs}`` — comma-separated list of sibling slugs (or
+#     ``"(none)"`` when the new service is the only one in the wrapper).
+#
+# This is a **frontend** skeleton — there is no backend server to test
+# against at integration time. Integration testing means verifying that
+# the typed clients compile, the Vite-baked bundle contains the expected
+# env vars, and the API client modules export the expected symbols.
+#
+# After the integration files are written, the test-and-fix loop runs
+# the ``test_command`` via vitest. On failure, it asks Ollama to repair
+# each integration file in turn, capped at ``fix_timeout_m`` minutes.
+
+
+INTEGRATION_SYSTEM_PROMPT = """\
+You are a senior React 19 + TypeScript engineer integrating a freshly
+generated frontend service into an existing dev_skel multi-service wrapper.
+
+The new service is `{service_label}` (slug `{service_slug}`, tech
+`ts-react-skel`). It already ships:
+- A typed `src/api/{items_plural}.ts` fetch client with JWT bearer auth.
+- A typed `src/api/categories.ts` fetch client (wrapper-shared).
+- The wrapper-shared `src/config.ts` populated by `vite.config.ts`
+  from `<wrapper>/.env` and `<wrapper>/_shared/service-urls.env`.
+- The wrapper-shared `src/state/` layer (`app-state-store.ts`,
+  `state-api.ts`, `use-app-state.ts`, `AppStateProvider.tsx`).
+- The wrapper-shared `src/auth/` layer (`token-store.ts`,
+  `use-auth-token.ts`).
+
+This is a **frontend SPA** — it does NOT run its own HTTP server.
+Integration testing here means:
+- Verifying that `config.backendUrl` and `config.jwt.*` are defined
+  and contain the expected wrapper-shared values baked in by Vite.
+- Verifying that the typed API client modules export the expected
+  function signatures (`listItems`, `createItem`, `listCategories`,
+  `createCategory`, etc.).
+- When sibling services exist in the wrapper, verifying that their
+  URLs are baked into the config via the `VITE_SERVICE_URL_*` env vars.
+- All assertions are compile-time / unit-level — NO live HTTP calls.
+
+Sibling services already in the wrapper (snapshot of their key files
+follows so you can ground your code in real signatures, not guesses):
+
+{wrapper_snapshot}
+
+Coding rules:
+- Strict TypeScript — every exported function has explicit parameter
+  and return types. Use `import {{ type ReactElement }} from 'react'`
+  for component return types.
+- 2-space indentation, single quotes, semicolons. Match the existing
+  files exactly.
+- Use vitest for all tests (`import {{ describe, it, expect }} from
+  'vitest';`).
+- Output ONLY the file's contents. No markdown fences, no commentary.
+- When `{sibling_count}` is 0 the integration tests should still
+  exercise the config shape and API client exports. Do not assume
+  sibling services exist; gracefully degrade.
+
+User-supplied integration instructions (free-form, take with the same
+weight as the rules above):
+{integration_extra}
+
+User-supplied frontend instructions (already applied during the
+per-target phase, repeated here so the integration code stays
+consistent):
+{frontend_extra}
+"""
+
+
+INTEGRATION_MANIFEST = {
+    "system_prompt": INTEGRATION_SYSTEM_PROMPT,
+    "notes": (
+        "Integration phase: writes src/integration/sibling-info.ts "
+        "and src/integration/integration.test.ts, then runs the "
+        "test-and-fix loop via vitest."
+    ),
+    "test_command": "npm test -- --run",
+    "fix_timeout_m": 60,
+    "targets": [
+        {
+            "path": "src/integration/sibling-info.ts",
+            "language": "typescript",
+            "description": "src/integration/sibling-info.ts — typed map of sibling service URLs",
+            "prompt": """\
+Write `src/integration/sibling-info.ts`. The module reads
+`config.services` (from the Vite-baked env in `src/config.ts`) and
+exports a typed map of sibling service URLs.
+
+Wrapper snapshot (sibling services discovered, {sibling_count} total):
+---
+{wrapper_snapshot}
+---
+
+Required structure:
+
+- Import `config` from `'../config'`.
+- Export a `SiblingServices` type: `Record<string, string>` (slug →
+  base URL).
+- Export a `getSiblingServices(): SiblingServices` function that reads
+  `config.services` and returns a map of slug → URL for every sibling
+  whose URL is defined and non-empty.
+- When `{sibling_count}` is 0, the function must still be valid and
+  return an empty object `{{}}`.
+- Export a `siblingCount` constant set to the number of entries
+  returned by `getSiblingServices()`.
+- Use strict TypeScript with explicit types on every export.
+- 2-space indentation, single quotes, semicolons.
+
+Output the full file contents only.
+""",
+        },
+        {
+            "path": "src/integration/integration.test.ts",
+            "language": "typescript",
+            "description": "src/integration/integration.test.ts — vitest integration checks",
+            "prompt": """\
+Write `src/integration/integration.test.ts`. Vitest integration tests
+that verify the frontend's typed clients compile correctly and the
+Vite-baked config contains the expected wrapper-shared values.
+
+Wrapper snapshot:
+---
+{wrapper_snapshot}
+---
+
+Required tests (use `describe` / `it` / `expect` from vitest):
+
+1. `config shape` suite:
+   - Assert `config.backendUrl` is defined and is a non-empty string.
+   - Assert `config.jwt.issuer` equals `'devskel'`.
+
+2. `items client exports` suite:
+   - Import `* as itemsClient` from `'../../api/{items_plural}'`.
+   - Assert `itemsClient.list{item_class}s` is a function (i.e.
+     `typeof itemsClient.list{item_class}s === 'function'`).
+   - Assert `itemsClient.create{item_class}` is a function.
+   - Assert `itemsClient.complete{item_class}` is a function.
+   - Assert `itemsClient.loginWithPassword` is a function.
+
+3. `categories client exports` suite:
+   - Import `* as categoriesClient` from `'../../api/categories'`.
+   - Assert `categoriesClient.listCategories` is a function.
+   - Assert `categoriesClient.createCategory` is a function.
+
+4. **When `{sibling_count}` > 0**: add a `sibling URLs` suite that:
+   - Imports `getSiblingServices` from `'./sibling-info'`.
+   - Asserts the returned map has at least one entry.
+   - For each known sibling slug, asserts the corresponding URL is a
+     non-empty string starting with `'http'`.
+
+5. **When `{sibling_count}` is 0**: do NOT add any sibling URL test.
+
+Imports:
+- `import {{ describe, it, expect }} from 'vitest';`
+- `import {{ config }} from '../../config';`
+- Other imports as needed per suite.
+
+Use 2-space indentation, single quotes, semicolons.
+Output the full file contents only.
+""",
+        },
+    ],
+}

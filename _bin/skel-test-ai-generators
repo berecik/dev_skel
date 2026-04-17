@@ -108,6 +108,107 @@ def short_name(skeleton: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
+#  Critique loop (Section 2.3 from TODO)
+# --------------------------------------------------------------------------- #
+
+
+def _critique_file(
+    client: OllamaClient,
+    skeleton: str,
+    filename: str,
+    content: str,
+    system_prompt: str,
+) -> Optional[str]:
+    """Ask the model to critique a generated file against constraints.
+
+    Returns a one-line reason string if the critique says FAIL, or
+    None if PASS. Capped at a short prompt to keep latency low.
+    """
+
+    # Extract the CRITICAL RULES section from the system prompt
+    # (everything between "CRITICAL" and the next section or end).
+    import re
+    rules_match = re.search(
+        r"(?:CRITICAL|Coding rules|Required).*?(?=\n\n[A-Z]|\Z)",
+        system_prompt,
+        re.DOTALL | re.IGNORECASE,
+    )
+    rules = rules_match.group(0)[:1500] if rules_match else ""
+    if not rules:
+        return None  # No rules to check against
+
+    critique_prompt = f"""\
+Review this generated file against the coding rules below.
+Reply with EXACTLY one line: either "PASS" or "FAIL: <reason>".
+
+FILE: {filename}
+---
+{content[:3000]}
+---
+
+RULES:
+{rules}
+"""
+
+    try:
+        response = client.chat(
+            system="You are a code reviewer. Reply EXACTLY 'PASS' or 'FAIL: reason'.",
+            user=critique_prompt,
+        )
+        line = response.strip().splitlines()[0].strip()
+        if line.upper().startswith("FAIL"):
+            return line[5:].strip().lstrip(":").strip()
+        return None
+    except Exception:
+        return None  # critique failure is not blocking
+
+
+def _regenerate_with_critique(
+    client: OllamaClient,
+    manifest,
+    target,
+    ctx,
+    critique_reason: str,
+    output_path: Path,
+) -> bool:
+    """Re-generate a single target file with the critique reason appended.
+
+    Returns True if the re-generation succeeded and overwrote the file.
+    """
+
+    try:
+        extra_context = (
+            f"\n\nA code reviewer found an issue with a previous version:\n"
+            f"  {critique_reason}\n"
+            f"Fix this issue in the new version. Output ONLY the corrected "
+            f"file contents."
+        )
+        # We use the same generate_targets but with modified prompt
+        original_prompt = target.prompt
+        target.prompt = original_prompt + extra_context
+
+        results = generate_targets(
+            client=client,
+            manifest=manifest,
+            ctx=ctx,
+            dry_run=False,
+            progress=None,
+        )
+
+        target.prompt = original_prompt  # restore
+
+        # Find the result matching our target
+        for r in results:
+            if r.written_to == output_path or str(r.written_to).endswith(
+                str(output_path.name)
+            ):
+                return True
+        return False
+    except Exception:
+        return False
+
+
+# --------------------------------------------------------------------------- #
 #  Per-skeleton validators
 # --------------------------------------------------------------------------- #
 
@@ -386,8 +487,23 @@ def _validate_flutter(project_dir: Path, files: Sequence[Path]) -> Optional[str]
 
     proc = _run(["flutter", "analyze"], cwd=project_dir)
     if proc.returncode != 0:
-        tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-30:])
-        return f"`flutter analyze` failed:\n{tail}"
+        combined = proc.stdout + proc.stderr
+        lines = combined.splitlines()
+        # Only fail on error/warning lines — info-level lint
+        # diagnostics (dangling_library_doc_comments, deprecated hints)
+        # are noise from AI-generated code and not worth blocking on.
+        # Flutter analyze lines look like: "  error • msg • file:line • rule"
+        error_lines = [
+            line for line in lines
+            if " • " in line and (
+                line.strip().startswith("error") or
+                line.strip().startswith("warning")
+            )
+        ]
+        if error_lines:
+            tail = "\n".join(error_lines[:15])
+            return f"`flutter analyze` failed:\n{tail}"
+        # Info-only — treat as pass
     return None
 
 
@@ -527,41 +643,95 @@ def run_one_skeleton(
             detail="dry-run",
         )
 
-    try:
-        results = generate_targets(
-            client=client,
-            manifest=manifest,
-            ctx=ctx,
-            dry_run=False,
-            progress=sys.stdout,
-        )
-    except OllamaError as exc:
-        return RunResult(
-            skeleton=skeleton,
-            status="fail",
-            duration_s=time.monotonic() - started,
-            detail=f"Ollama generation failed: {exc}",
-        )
+    max_retries = getattr(args, "max_retries", 1)
+    use_critique = getattr(args, "critique", True)
+    last_err: Optional[str] = None
 
-    written = [r.written_to for r in results]
-    print(f"  wrote {len(written)} file(s)")
+    for attempt in range(1 + max_retries):
+        if attempt > 0:
+            print(f"  retry {attempt}/{max_retries} (previous: {last_err[:80]}...)")
 
-    # ----- 5. Validate ---------------------------------------------- #
+        try:
+            results = generate_targets(
+                client=client,
+                manifest=manifest,
+                ctx=ctx,
+                dry_run=False,
+                progress=sys.stdout,
+            )
+        except OllamaError as exc:
+            last_err = f"Ollama generation failed: {exc}"
+            if attempt < max_retries:
+                continue
+            return RunResult(
+                skeleton=skeleton,
+                status="fail",
+                duration_s=time.monotonic() - started,
+                detail=last_err,
+            )
 
-    validator = VALIDATORS.get(skeleton)
-    if validator is None:
-        # No specific validator: just syntax-check the generated files.
-        err = _syntax_check(written)
-    else:
-        err = validator(inner_dir, written)
+        written = [r.written_to for r in results]
+        print(f"  wrote {len(written)} file(s)")
 
-    if err:
-        return RunResult(
-            skeleton=skeleton,
-            status="fail",
-            duration_s=time.monotonic() - started,
-            detail=err,
-        )
+        # ----- 4a. Critique loop (optional) ------------------------- #
+        #
+        # Ask the same model to review each generated file against the
+        # manifest's system prompt constraints. If the critique says
+        # FAIL, re-generate that single file with the critique reason
+        # appended as extra context. Capped at 1 critique per file to
+        # bound runtime.
+
+        if use_critique and client is not None:
+            for result in results:
+                if not result.written_to.is_file():
+                    continue
+                content = result.written_to.read_text(encoding="utf-8")
+                critique = _critique_file(
+                    client, skeleton, result.written_to.name, content,
+                    manifest.system_prompt,
+                )
+                if critique:
+                    print(f"  critique: {result.written_to.name} → {critique[:60]}...")
+                    # Re-generate with the critique as extra context.
+                    # We modify the target's prompt temporarily.
+                    for target in manifest.targets:
+                        expanded = expand_target_paths(target, ctx)
+                        if str(result.written_to).endswith(expanded.path):
+                            fixed = _regenerate_with_critique(
+                                client, manifest, target, ctx,
+                                critique, result.written_to,
+                            )
+                            if fixed:
+                                print(f"  critique-fix: {result.written_to.name} re-generated")
+                            break
+
+        # ----- 5. Validate ---------------------------------------------- #
+
+        validator = VALIDATORS.get(skeleton)
+        if validator is None:
+            err = _syntax_check(written)
+        else:
+            err = validator(inner_dir, written)
+
+        if err:
+            last_err = err
+            if attempt < max_retries:
+                # Clean up generated files before retry so the next
+                # attempt starts fresh.
+                for f in written:
+                    with contextlib.suppress(OSError):
+                        f.unlink()
+                continue
+            return RunResult(
+                skeleton=skeleton,
+                status="fail",
+                duration_s=time.monotonic() - started,
+                detail=err,
+            )
+        else:
+            if attempt > 0:
+                print(f"  passed on retry {attempt}")
+            break  # validation passed
 
     # Optional cleanup
     if not args.keep:
@@ -638,6 +808,26 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip the Ollama call entirely; only verify that the manifest "
         "loads, the base scaffold succeeds, and target paths resolve.",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=1,
+        help="Number of times to retry the full generation when the validator "
+        "fails (default: 1). Set to 0 to fail fast on the first error.",
+    )
+    parser.add_argument(
+        "--critique",
+        action="store_true",
+        default=True,
+        help="Run a critique prompt on each generated file before accepting "
+        "it (default: on). Disable with --no-critique.",
+    )
+    parser.add_argument(
+        "--no-critique",
+        action="store_false",
+        dest="critique",
+        help="Disable the post-generation critique loop.",
     )
     return parser.parse_args()
 

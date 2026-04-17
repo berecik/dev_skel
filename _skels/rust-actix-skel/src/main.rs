@@ -1,9 +1,10 @@
 //! Rust/Actix-web Skeleton Project
 //!
 //! Wires the wrapper-shared backend stack so the React frontend's
-//! `/api/auth/*`, `/api/items`, and `/api/state` calls work
-//! out-of-the-box. The schema mirrors the django-bolt skel so a
-//! single `_shared/db.sqlite3` is interchangeable between backends.
+//! `/api/auth/*`, `/api/categories`, `/api/items`, and `/api/state`
+//! calls work out-of-the-box. The schema mirrors the django-bolt skel
+//! so a single `_shared/db.sqlite3` is interchangeable between
+//! backends.
 
 mod auth;
 mod config;

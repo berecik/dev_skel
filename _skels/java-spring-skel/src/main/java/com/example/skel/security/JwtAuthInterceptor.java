@@ -14,7 +14,8 @@ import java.util.Map;
 
 /**
  * Lightweight JWT bearer-auth interceptor. Registered against the
- * {@code /api/items/**} and {@code /api/state/**} URL patterns by
+ * {@code /api/items/**}, {@code /api/categories/**}, and
+ * {@code /api/state/**} URL patterns by
  * {@link com.example.skel.config.WebMvcConfig}.
  *
  * <p>Failed auth writes a JSON 401 body matching the contract every

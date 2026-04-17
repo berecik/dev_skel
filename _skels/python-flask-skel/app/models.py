@@ -30,6 +30,36 @@ class User(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class Category(db.Model):
+    """Wrapper-shared category resource.
+
+    Categories are shared (not per-user) but all CRUD endpoints still
+    require a JWT bearer token. The ``name`` column has a unique
+    constraint matching the django-bolt / fastapi skeletons.
+    """
+
+    __tablename__ = "categories"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(255), unique=True, nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    items = db.relationship("Item", backref="category", lazy="select")
+
+    def to_dict(self):
+        """Serialise to the wrapper-shared snake_case JSON shape."""
+
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description or "",
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 class Item(db.Model):
     """Wrapper-shared CRUD resource consumed by React via ``/api/items``."""
 
@@ -39,6 +69,11 @@ class Item(db.Model):
     name = db.Column(db.String(255), nullable=False)
     description = db.Column(db.String(2048), nullable=True)
     is_completed = db.Column(db.Boolean, nullable=False, default=False)
+    category_id = db.Column(
+        db.Integer,
+        db.ForeignKey("categories.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -50,6 +85,7 @@ class Item(db.Model):
             "name": self.name,
             "description": self.description,
             "is_completed": bool(self.is_completed),
+            "category_id": self.category_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

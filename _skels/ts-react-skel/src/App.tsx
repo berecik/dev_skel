@@ -34,6 +34,7 @@ import ItemForm from './components/ItemForm';
 import ItemList from './components/ItemList';
 import { useAuthToken } from './auth/use-auth-token';
 import { useItems } from './hooks/use-items';
+import { useCategories } from './hooks/use-categories';
 import AppStateProvider from './state/AppStateProvider';
 
 function AuthenticatedApp({
@@ -42,6 +43,7 @@ function AuthenticatedApp({
   onSignOut: () => void;
 }): ReactElement {
   const { items, loading, error, refresh, create, complete } = useItems();
+  const { categories, create: createCategory } = useCategories();
 
   return (
     <>
@@ -50,13 +52,14 @@ function AuthenticatedApp({
           Sign out
         </button>
       </section>
-      <ItemForm create={create} />
+      <ItemForm create={create} categories={categories} createCategory={createCategory} />
       <ItemList
         items={items}
         loading={loading}
         error={error}
         refresh={refresh}
         complete={complete}
+        categories={categories}
       />
     </>
   );

@@ -28,8 +28,10 @@ from django_bolt import (
     get_current_user,
 )
 
-from app.models import Item, Project, ReactState, Task, UserProfile
+from app.models import Category, Item, Project, ReactState, Task, UserProfile
 from app.schemas import (
+    CategoryCreateSchema,
+    CategorySchema,
     ItemCreateSchema,
     ItemSchema,
     LoginSchema,
@@ -244,6 +246,56 @@ class TaskViewSet(ModelViewSet):
 
 
 # --------------------------------------------------------------------------- #
+#  Category CRUD
+# --------------------------------------------------------------------------- #
+
+
+@api.viewset(
+    "/api/categories",
+    auth=[JWTAuthentication()],
+    guards=[IsAuthenticated()],
+)
+class CategoryViewSet(ModelViewSet):
+    serializer_class = CategorySchema
+    pagination_class = PageNumberPagination
+
+    async def get_queryset(self):
+        return Category.objects.all()
+
+    async def list(self, request: Request) -> List[CategorySchema]:
+        qs = await self.get_queryset()
+        return [CategorySchema.from_model(obj) async for obj in qs]
+
+    async def create(self, request: Request) -> CategorySchema:
+        data = msgspec.json.decode(request.body, type=CategoryCreateSchema)
+        category = await Category.objects.acreate(
+            name=data.name,
+            description=data.description,
+        )
+        return JSON(CategorySchema.from_model(category), status_code=201)
+
+    async def retrieve(self, request: Request, pk: int) -> CategorySchema:
+        qs = await self.get_queryset()
+        category = await qs.aget(pk=pk)
+        return CategorySchema.from_model(category)
+
+    async def update(self, request: Request, pk: int) -> CategorySchema:
+        data = msgspec.json.decode(request.body, type=CategoryCreateSchema)
+        qs = await self.get_queryset()
+        category = await qs.aget(pk=pk)
+        category.name = data.name
+        category.description = data.description
+        await category.asave()
+        return CategorySchema.from_model(category)
+
+    async def destroy(self, request: Request, pk: int) -> dict:
+        qs = await self.get_queryset()
+        category = await qs.aget(pk=pk)
+        await category.adelete()
+        return JSON({}, status_code=204)
+
+
+# --------------------------------------------------------------------------- #
 #  Wrapper-shared `items` resource (consumed by the React skeleton).
 # --------------------------------------------------------------------------- #
 #
@@ -275,6 +327,7 @@ class ItemViewSet(ModelViewSet):
             name=data.name,
             description=data.description,
             is_completed=data.is_completed,
+            category_id=data.category_id,
         )
         return JSON(ItemSchema.from_model(item), status_code=201)
 

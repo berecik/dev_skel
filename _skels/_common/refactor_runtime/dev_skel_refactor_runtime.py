@@ -911,7 +911,7 @@ def _ollama_chat(
 ) -> str:
     """Stdlib-only POST to Ollama's OpenAI-compatible chat endpoint."""
 
-    model = model or os.environ.get("OLLAMA_MODEL", "gemma4:31b")
+    model = model or os.environ.get("OLLAMA_MODEL", "qwen3-coder:30b")
     base_url = (base_url or os.environ.get(
         "OLLAMA_BASE_URL", "http://localhost:11434",
     )).rstrip("/")
@@ -1144,7 +1144,7 @@ class MinimalRunner:
             f"Now produce RATIONALE / FILES / FILE blocks as instructed."
         )
         if self.progress is not None:
-            model = os.environ.get("OLLAMA_MODEL", "gemma4:31b")
+            model = os.environ.get("OLLAMA_MODEL", "qwen3-coder:30b")
             base_url = os.environ.get(
                 "OLLAMA_BASE_URL", "http://localhost:11434",
             )
@@ -1673,7 +1673,7 @@ def _serialise_ctx(ctx: RefactorContext) -> str:
         "test_command": ctx.test_command,
         "fix_timeout_m": ctx.fix_timeout_m,
         "ollama": {
-            "model": os.environ.get("OLLAMA_MODEL", "gemma4:31b"),
+            "model": os.environ.get("OLLAMA_MODEL", "qwen3-coder:30b"),
             "base_url": os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"),
         },
         "sidecar": ctx.sidecar,

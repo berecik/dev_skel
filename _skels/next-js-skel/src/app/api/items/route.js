@@ -12,6 +12,7 @@ function formatItem(row) {
     name: row.name,
     description: row.description,
     is_completed: row.is_completed === 1,
+    category_id: row.category_id ?? null,
     owner_id: row.owner_id,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -36,7 +37,7 @@ export async function GET(request) {
 
 /**
  * POST /api/items
- * Body: { name, description?, is_completed? }
+ * Body: { name, description?, is_completed?, category_id? }
  * Returns 201 with the created item. Requires Bearer auth.
  */
 export async function POST(request) {
@@ -49,7 +50,7 @@ export async function POST(request) {
 
   try {
     const body = await request.json();
-    const { name, description, is_completed } = body;
+    const { name, description, is_completed, category_id } = body;
 
     if (!name) {
       return NextResponse.json({ error: 'name is required' }, { status: 400 });
@@ -60,9 +61,9 @@ export async function POST(request) {
     const ownerId = user.sub ? Number(user.sub) : null;
 
     const stmt = db.prepare(
-      'INSERT INTO items (name, description, is_completed, owner_id) VALUES (?, ?, ?, ?)'
+      'INSERT INTO items (name, description, is_completed, category_id, owner_id) VALUES (?, ?, ?, ?, ?)'
     );
-    const result = stmt.run(name, description || null, completed, ownerId);
+    const result = stmt.run(name, description || null, completed, category_id ?? null, ownerId);
 
     const created = db.prepare('SELECT * FROM items WHERE id = ?').get(result.lastInsertRowid);
 

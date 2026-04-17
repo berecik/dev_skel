@@ -3,8 +3,10 @@
 //!
 //! Schema mirrors django-bolt's `Item` model (table `items`) so the
 //! shared `_shared/db.sqlite3` is fully interchangeable between the
-//! two backends. Every endpoint requires a Bearer JWT — anonymous
-//! requests get 401 from the `AuthUser` extractor.
+//! two backends. Items carry an optional `category_id` FK to the
+//! `categories` table (ON DELETE SET NULL). Every endpoint requires a
+//! Bearer JWT — anonymous requests get 401 from the `AuthUser`
+//! extractor.
 
 use actix_web::{get, post, web, HttpResponse};
 use chrono::Utc;
@@ -20,6 +22,7 @@ pub struct ItemRow {
     pub name: String,
     pub description: Option<String>,
     pub is_completed: bool,
+    pub category_id: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -31,6 +34,8 @@ pub struct CreateItemPayload {
     pub description: Option<String>,
     #[serde(default)]
     pub is_completed: bool,
+    #[serde(default)]
+    pub category_id: Option<i64>,
 }
 
 #[get("")]
@@ -39,7 +44,7 @@ pub async fn list_items(
     _user: AuthUser,
 ) -> Result<HttpResponse, ApiError> {
     let rows = sqlx::query_as::<_, ItemRow>(
-        "SELECT id, name, description, is_completed, created_at, updated_at \
+        "SELECT id, name, description, is_completed, category_id, created_at, updated_at \
          FROM items ORDER BY created_at DESC, id DESC",
     )
     .fetch_all(pool.get_ref())
@@ -59,12 +64,13 @@ pub async fn create_item(
     }
     let now = utc_iso8601();
     let row: (i64,) = sqlx::query_as(
-        "INSERT INTO items (name, description, is_completed, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?) RETURNING id",
+        "INSERT INTO items (name, description, is_completed, category_id, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
     )
     .bind(&p.name)
     .bind(&p.description)
     .bind(p.is_completed)
+    .bind(p.category_id)
     .bind(&now)
     .bind(&now)
     .fetch_one(pool.get_ref())
@@ -75,6 +81,7 @@ pub async fn create_item(
         name: p.name,
         description: p.description,
         is_completed: p.is_completed,
+        category_id: p.category_id,
         created_at: now.clone(),
         updated_at: now,
     };
@@ -89,7 +96,7 @@ pub async fn get_item(
 ) -> Result<HttpResponse, ApiError> {
     let id = path.into_inner();
     let row = sqlx::query_as::<_, ItemRow>(
-        "SELECT id, name, description, is_completed, created_at, updated_at \
+        "SELECT id, name, description, is_completed, category_id, created_at, updated_at \
          FROM items WHERE id = ?",
     )
     .bind(id)
@@ -119,7 +126,7 @@ pub async fn complete_item(
         return Err(ApiError::NotFound(format!("item {id} not found")));
     }
     let row = sqlx::query_as::<_, ItemRow>(
-        "SELECT id, name, description, is_completed, created_at, updated_at \
+        "SELECT id, name, description, is_completed, category_id, created_at, updated_at \
          FROM items WHERE id = ?",
     )
     .bind(id)

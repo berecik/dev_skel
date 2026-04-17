@@ -1,305 +1,162 @@
 # Dev Skel Roadmap
 
-Dev Skel is evolving from “a set of skeletons” into a **multi‑service project platform**:
+Dev Skel generates **whole multi-service projects where every service
+ships with its own in-service code agent**. The platform covers
+generation, per-service AI refactoring, template ↔ service sync,
+cross-stack integration testing, Docker, devcontainers, and a unified
+data schema enforced across all 10 backends and both frontends.
 
-- You start with a wrapper project and a main backend (Java Spring, FastAPI, or Django).
-- Later you add more services into the **same project** – React frontend, Rust Actix auth layer, Rust Axum extra‑fast API, Flutter mobile/desktop app, and more.
-- The long‑term goal: these services are **integrated automatically**, share types/contracts, and ship with **turn‑key deployments** (Docker, Compose, Kubernetes, Helm) and **observability**.
-
-This document tracks the roadmap to that vision.
-
----
-
-## Phase 1 – Strong Multi‑Service Foundation
-
-**Goal:** Formalize the concept of “services inside a wrapper” and expose it via simple tooling.
-
-### 1.1 Project‑Level Service Metadata
-
-- [ ] Introduce a wrapper‑level metadata file (e.g. `dev_skel.project.yml`).
-- [ ] Record one entry per service with at least:
-  - [ ] `id` – stable identifier (e.g. `backend-1`, `frontend-1`, `auth-actix-1`).
-  - [ ] `kind` – `backend`, `frontend`, `worker`, `gateway`, `mobile`, etc.
-  - [ ] `tech` – `python-fastapi`, `python-django`, `java-spring`, `ts-react`, `rust-actix`, `rust-axum`, `flutter`, …
-  - [ ] `role` – `main-api`, `auth`, `edge-api`, `admin-ui`, `mobile-app`, etc.
-  - [ ] `ports` – well‑known dev and internal ports where applicable.
-- [ ] Update each `gen` script so generating a service **creates/updates** this metadata file instead of relying purely on directory names.
-
-### 1.2 Wrapper‑Level Service Commands
-
-- [ ] Add wrapper scripts/targets to work with services via metadata:
-  - [ ] `./services list` – list all services with id/kind/tech/role.
-  - [ ] `./services info <id>` – show details for a single service.
-  - [ ] `./services set-active <id>` – mark the “active” service for `./run`, `./test`, etc.
-- [ ] Refactor `_skels/_common/common-wrapper.sh` to read service metadata and the active service instead of guessing.
-
-### 1.3 Skeleton Docs & Examples
-
-- [ ] Update skeleton docs (`_docs/*.md`) so each skeleton clearly states:
-  - [ ] Typical roles (e.g. FastAPI = main backend, Actix = auth/edge API, Axum = ultra‑fast API, Flutter = mobile/desktop client).
-  - [ ] How it is represented in `dev_skel.project.yml`.
-  - [ ] Example multi‑service combinations (backend + frontend + auth + extra fast API).
-
-**Outcome:** A wrapper has a **first‑class notion of services**, and tools can introspect and manipulate them.
+This roadmap tracks what's next.
 
 ---
 
-## Phase 2 – Shared Contracts, Types, and API Protocols
+## What's shipped (2026-04)
 
-**Goal:** Make services share **types and API contracts** from a single source of truth.
-
-### 2.1 Contract Formats and Layout
-
-- [ ] Standardize on OpenAPI for HTTP/REST contracts.
-- [ ] Plan for protobuf/gRPC and JSON Schema support where useful.
-- [ ] Introduce a project‑level `contracts/` directory:
-  - [ ] `contracts/openapi/` for service API specs.
-  - [ ] Later: `contracts/proto/`, `contracts/schemas/`, etc.
-- [ ] Define conventions, e.g.:
-  - [ ] `contracts/openapi/main-api.yaml` – main backend.
-  - [ ] `contracts/openapi/auth-api.yaml` – Actix auth service.
-  - [ ] `contracts/openapi/mobile-api.yaml` – Axum/mobile‑oriented API.
-
-### 2.2 Contracts in Skeletons
-
-- [ ] For **FastAPI, Django, Spring** skeletons:
-  - [ ] Expose OpenAPI specs (FastAPI builtin; plugins or tooling for Django/Spring).
-  - [ ] Add `./contracts export` (or similar) to write specs into `contracts/openapi/`.
-- [ ] For **Rust Actix/Axum** skeletons:
-  - [ ] Integrate OpenAPI generators (`utoipa`/`okapi`‑style or equivalent).
-  - [ ] Export specs into the same contracts directory.
-- [ ] For **React / Flutter** skeletons:
-  - [ ] Document how they **consume** contracts for client codegen.
-
-### 2.3 Type‑Safe Code Generation
-
-- [ ] Create a contract codegen tool (wrapper‑level command, e.g. `./contracts gen`):
-  - [ ] From OpenAPI, generate:
-    - [ ] Python models/clients (Pydantic/dataclasses).
-    - [ ] TypeScript models/clients for `ts-react-skel` / `next-js-skel`.
-    - [ ] Rust models/clients for `rust-actix-skel` / `rust-axum-skel`.
-    - [ ] Dart models/clients for Flutter.
-  - [ ] Place generated code in framework‑friendly locations (e.g. `backend-1/shared/contracts/`, `frontend-1/src/shared/contracts/`).
-- [ ] Integrate codegen into skeleton Makefiles as **optional** steps, so existing generators still work without contracts.
-
-### 2.4 Contract Validation
-
-- [ ] Add `./contracts validate` to:
-  - [ ] Validate OpenAPI/JSON Schema.
-  - [ ] Optionally detect breaking changes (later with semver rules).
-
-**Outcome:** Multiple services share consistent API contracts and data models, generated from one source of truth.
+- **12 skeletons** — Python (FastAPI, FastAPI-RAG, Django, Django-Bolt,
+  Flask), Java (Spring), Rust (Actix, Axum), Go, Next.js, React/Vite,
+  Flutter. All ship Dockerfile + .devcontainer + VERSION + CHANGELOG.
+- **10 AI manifests** — every skel except go-skel and
+  python-fastapi-rag-skel has a manifest under
+  `_skels/_common/manifests/`.
+- **Full-stack dialog** — `skel-gen-ai` asks for backend + frontend
+  separately (defaults: first items-API backend + `ts-react-skel`),
+  then runs 5 Ollama phases. Both halves optional (`--no-backend`,
+  `--no-frontend`).
+- **Unified data schema** — ALL 10 backends ship the complete
+  wrapper-shared API:
+  - `/api/auth/register` + `/api/auth/login` (JWT)
+  - `/api/items` CRUD + `/api/items/{id}/complete`
+  - `/api/categories` CRUD (shared, auth-protected, unique name)
+  - `/api/state` per-user key/value store
+  - Data model: `user -< item >- category`, `user -< state`
+  - `category_id` nullable FK with ON DELETE SET NULL
+- **Both frontends** (React + Flutter) ship typed clients for all
+  four endpoint families (items, categories, auth, state).
+- **Per-service `./ai`** — propose / apply / verify / explain /
+  history / undo / upgrade. In-tree (FAISS RAG) and out-of-tree
+  (stdlib) modes. Wrapper-level fan-out by default.
+- **`./backport` + `./ai upgrade`** — service ↔ template sync with
+  semver VERSION bump + CHANGELOG append.
+- **Cross-call memory** — JSONL at wrapper + service level.
+- **Cross-stack integration tests** — 9 React × backend pairs + 2
+  Flutter × backend pairs. Each exercises 23+ HTTP steps: items CRUD
+  (9 steps) + categories CRUD (5 steps) + items↔categories FK (4
+  steps) + state save/load/delete (5 steps) + vitest smoke +
+  Playwright E2E.
+- **Shared-DB integration test** — proves every Python backend reads
+  the same SQLite via `DATABASE_URL`.
+- **Skeleton Design Guide** — `_docs/SKELETON-DESIGN-GUIDE.md` covers
+  creating, updating, and maintaining skeletons.
+- **CI pipeline** — GitHub Actions runs `./maintenance` on every push
+  to master. `make ci-status` / `ci-watch` / `ci-log` via `gh`.
 
 ---
 
-## Phase 3 – Integrated Routing, Ports, and Local Service Discovery
+## ~~Phase 1 — INTEGRATION_MANIFEST rollout~~ (DONE)
 
-**Goal:** Make multi‑service **local development** plug‑and‑play: predictable ports and routes.
+**Shipped 2026-04.** All 10 AI-supported skeletons now ship an
+`INTEGRATION_MANIFEST` with sibling-client targets + integration test
+targets + a `test_command`. `make test-ai-generators-dry` passes 10/10.
 
-### 3.1 Port & Route Conventions
-
-- [ ] Define default dev ports per role/tech (overridable via config):
-  - [ ] Main backend (FastAPI/Django/Spring).
-  - [ ] Frontend (React).
-  - [ ] Auth service (Actix).
-  - [ ] Extra‑fast API (Axum).
-- [ ] Store chosen ports in the metadata file and expose them to tooling.
-
-### 3.2 Shared Env Config
-
-- [ ] Generate wrapper‑level `.env.dev` and `.env.test` containing:
-  - [ ] `BACKEND_URL`, `AUTH_URL`, `MOBILE_API_URL`, etc.
-  - [ ] Stubs for DB, Kafka and other infra endpoints (to be wired in Phase 4).
-- [ ] Update skeletons to read these env vars for local dev.
-
-### 3.3 Optional Local Gateway / Reverse Proxy
-
-- [ ] Provide an optional Nginx/Traefik “gateway” skeleton/service that:
-  - [ ] Routes `/api` to the main backend.
-  - [ ] Routes `/auth` to the Actix auth service.
-  - [ ] Routes `/mobile`/`/fast` to the Axum service.
-  - [ ] Serves the React/Flutter web bundle at `/`.
-- [ ] Generate its configuration from service metadata and port conventions.
-
-### 3.4 Dev‑Mode Orchestration
-
-- [ ] Add wrapper commands for multi‑service dev:
-  - [ ] `./run dev-all` – start backend(s), frontend, auth, quick APIs, and minimal infra.
-  - [ ] `./stop dev-all` – stop them.
-- [ ] Start with simple background processes/`tmux`/`foreman` before relying fully on Docker.
-
-**Outcome:** A Dev Skel project with several services runs locally with sensible defaults and consistent URLs.
+| Skeleton | Integration targets | test_command |
+| -------- | ------------------- | ------------ |
+| python-django-bolt-skel | 3 (marker + clients + tests) | `./test app/tests/test_integration.py` |
+| python-django-skel | 3 | `./test tests/test_integration.py` |
+| python-fastapi-skel | 3 | `./test app/tests/test_integration.py` |
+| python-flask-skel | 3 | `./test tests/test_integration.py` |
+| java-spring-skel | 2 (clients + tests) | `./test` |
+| rust-actix-skel | 3 (mod + clients + tests) | `cargo test --test integration` |
+| rust-axum-skel | 3 | `cargo test --test integration` |
+| next-js-skel | 2 (clients + tests) | `npm test` |
+| ts-react-skel | 2 (sibling-info + tests) | `npm test -- --run` |
+| flutter-skel | 2 (sibling_info + tests) | `flutter test test/integration_test.dart` |
 
 ---
 
-## Phase 4 – Automatic Local Deployment with Docker & Docker Compose
+## Phase 2 — Project metadata + orchestration UX
 
-**Goal:** One command to run **all services + infra** via containers on a developer machine.
+**Goal:** The wrapper has a first-class notion of its services beyond
+"directory exists".
 
-### 4.1 Docker Baseline per Skeleton
-
-- [ ] Ensure each skeleton ships with an up‑to‑date, production‑leaning Dockerfile:
-  - [ ] FastAPI: multi‑stage with uvicorn/gunicorn.
-  - [ ] Django: multi‑stage with gunicorn and static assets.
-  - [ ] Java Spring: JAR build + runtime stage.
-  - [ ] Actix/Axum: release binary in minimal or distroless base.
-  - [ ] React: build + static server or proxy.
-  - [ ] Flutter: strategy for web or containerized desktop builds where feasible.
-
-### 4.2 Compose File Generation
-
-- [ ] Implement `./deploy compose-gen` (or `make compose-gen`) that:
-  - [ ] Reads service metadata.
-  - [ ] Generates `docker-compose.yml` including:
-    - [ ] One container per service.
-    - [ ] Ports, env, dependencies based on metadata.
-    - [ ] Infra services:
-      - [ ] Database (PostgreSQL or configurable).
-      - [ ] HTTP reverse proxy (if enabled).
-      - [ ] Kafka (or compatible broker).
-      - [ ] Monitoring stack (Prometheus + Grafana).
-  - [ ] Support overrides via `docker-compose.override.dev.yml`.
-
-### 4.3 Wrapper Deployment Commands (Local)
-
-- [ ] Add wrapper commands:
-  - [ ] `./deploy up` – `docker compose up -d` for all services + infra.
-  - [ ] `./deploy down` – `docker compose down` (with optional volume cleanup).
-  - [ ] `./deploy logs [service]` – follow container logs.
-- [ ] Make existing scripts (`./run docker`, `./stop`) aware of or reuse these commands.
-
-**Outcome:** Any multi‑service project can be lifted into Docker/Compose with a single command.
+- [ ] `dev_skel.project.yml` — per-service entry with `id`, `kind`,
+      `tech`, `role`, `ports`. Auto-updated by `gen` / `common-wrapper`.
+- [ ] `./services info <id>` / `./services set-active <id>`.
+- [ ] `./run dev-all` — start every service in parallel, combined log
+      tail, `./stop dev-all` to tear down.
+- [ ] Per-service entries in `docker-compose.yml` — today only Postgres
+      is declared; add one container per service so `docker compose up`
+      boots the whole stack.
 
 ---
 
-## Phase 5 – Kubernetes & Helm Integration
+## Phase 3 — Cross-service contracts
 
-**Goal:** Generate Kubernetes/Helm configs to run the same project on clusters.
+**Goal:** Services share types and API contracts from a single source
+of truth.
 
-### 5.1 K8s/Helm Structure
-
-- [ ] Decide on a deployment layout, e.g. under `deploy/`:
-  - [ ] `deploy/helm/` – umbrella chart for the whole project.
-  - [ ] `deploy/helm/services/<service-id>/` – per‑service subcharts.
-  - [ ] `deploy/helm/infra/` – DB, proxy, Kafka, monitoring subcharts.
-
-### 5.2 Helm Template Generation
-
-- [ ] Implement `./deploy helm-gen` to:
-  - [ ] Use service metadata (id, tech, role, ports, resources, env).
-  - [ ] Generate Deployments/StatefulSets, Services, Ingress, ConfigMaps and Secrets stubs.
-  - [ ] Include default HPAs with sane initial values.
-- [ ] Allow configuration via `values.yaml` (committed) and `values.local.yaml` (gitignored for developers).
-
-### 5.3 CI‑Friendly Build & Deploy
-
-- [ ] Add CI‑oriented Make targets:
-  - [ ] `make ci-build-images` – build all service images with project/commit‑based tags.
-  - [ ] `make ci-push-images` – push to a registry.
-  - [ ] `make ci-deploy` – run `helm upgrade --install` using generated charts.
-- [ ] Ship a reference GitHub Actions workflow using these targets.
-
-### 5.4 Environment Profiles
-
-- [ ] Introduce environment profiles (`dev`, `staging`, `prod`) controlling:
-  - [ ] Replica counts and resource limits.
-  - [ ] Ingress hosts and TLS.
-  - [ ] Feature flags and optional services (e.g. Kafka in dev vs prod).
-
-**Outcome:** A Dev Skel project can be deployed to Kubernetes via generated Helm charts with minimal manual YAML work.
+- [ ] OpenAPI export per backend (`./contracts export` → writes specs
+      to `contracts/openapi/<slug>.yaml`).
+- [ ] Type-safe codegen (`./contracts gen` → Python Pydantic clients,
+      TypeScript fetch clients, Rust `reqwest` clients, Dart clients
+      from OpenAPI specs).
+- [ ] Contract validation (`./contracts validate` — lint + breaking
+      change detection).
 
 ---
 
-## Phase 6 – Built‑In Observability & Diagnostics
+## Phase 4 — Observability baseline
 
-**Goal:** Each skeleton becomes an **observable service** by default, with cross‑service insights.
+**Goal:** Every generated service is observable by default.
 
-### 6.1 Observability Baseline per Skeleton
-
-- [ ] Add standard observability wiring to skeletons:
-  - [ ] Structured JSON logging with correlation IDs.
-  - [ ] HTTP and DB metrics (Prometheus style).
-  - [ ] OpenTelemetry tracing with OTLP exporters.
-- [ ] Standardize env vars like:
-  - [ ] `SERVICE_NAME`, `LOG_LEVEL`, `OTEL_EXPORTER_OTLP_ENDPOINT`.
-
-### 6.2 Trace Propagation
-
-- [ ] Ensure HTTP clients and middleware in:
-  - [ ] FastAPI, Django, Spring.
-  - [ ] Actix, Axum.
-  - [ ] React/Node.js, Flutter (where applicable).
-  - [ ] propagate `traceparent` and related headers between services.
-
-### 6.3 Monitoring Stack Integration
-
-- [ ] Extend Compose and Helm templates to:
-  - [ ] Add Prometheus scrape configs for all services.
-  - [ ] Provide Grafana dashboards for common stacks:
-    - [ ] FastAPI + React.
-    - [ ] Django + React.
-    - [ ] Spring + Rust APIs.
-- [ ] Add a helper `./observability dashboards` to import or generate dashboards.
-
-### 6.4 Health & Diagnostics
-
-- [ ] Standardize `/health` and `/ready` endpoints for all HTTP services.
-- [ ] Add simple diagnostics pages/endpoints for DB, Kafka, and external dependencies.
-
-**Outcome:** Generated stacks are observable and diagnosable from day one.
+- [ ] Structured JSON logging with a canonical envelope
+      (`timestamp`, `level`, `service`, `trace_id`, `message`).
+      `LOG_FORMAT=json|console` env var.
+- [ ] OpenTelemetry tracing — propagate `traceparent` across HTTP
+      calls. Per-skel OTel SDK init wired into the existing middleware.
+- [ ] Docker Compose `--profile observability` that brings up
+      otel-collector + Tempo + Grafana.
+- [ ] Standardise `/health` + `/ready` endpoints across all backends.
 
 ---
 
-## Phase 7 – Project‑Level Orchestration & Developer UX
+## Phase 5 — Kubernetes & Helm
 
-**Goal:** Treat the wrapper as a **single product** even though it contains many services.
+**Goal:** Generate K8s/Helm configs from the same project metadata.
 
-### 7.1 Unified Project Commands
-
-- [ ] Implement project‑level commands that fan out across services:
-  - [ ] `./project test` – run tests for all services, aggregate status.
-  - [ ] `./project lint` – run linters/formatters everywhere.
-  - [ ] `./project build` – build all artifacts/images.
-- [ ] Use service metadata to discover the right scripts in each service directory.
-
-### 7.2 Service Graph & Dependencies
-
-- [ ] Record service dependencies (could reuse metadata or add `services.graph.yml`):
-  - [ ] Example: `frontend-1` depends_on `backend-1`; `backend-1` depends_on `db` and `kafka`.
-- [ ] Add `./project graph` to:
-  - [ ] Emit a DOT/PlantUML/mermaid diagram, or
-  - [ ] Print a readable dependency tree.
-
-### 7.3 Environment Management UX
-
-- [ ] Provide simple helpers, e.g. `./env use dev|staging|prod`, to:
-  - [ ] Switch active environment profile.
-  - [ ] Influence which Compose files / Helm values / env files are used.
-
-### 7.4 Opinionated Example Stacks
-
-- [ ] Ship high‑level “stack generators” for common architectures:
-  - [ ] **Web App Stack** – Django or FastAPI + React + Postgres + proxy + monitoring.
-  - [ ] **Auth + Edge APIs Stack** – Spring main backend + Actix auth + Axum mobile API + Kafka.
-- [ ] Expose them as Make targets, e.g.:
-  - [ ] `make gen-stack-web NAME=myproj`.
-  - [ ] `make gen-stack-auth-edge NAME=myproj`.
-
-**Outcome:** From the developer’s point of view, a Dev Skel project is one orchestrated system with great ergonomics.
+- [ ] `deploy/helm/` umbrella chart with per-service subcharts.
+- [ ] `./deploy helm-gen` reads `dev_skel.project.yml` and generates
+      Deployments, Services, Ingress, ConfigMaps, Secrets, HPAs.
+- [ ] Environment profiles (`dev` / `staging` / `prod`) via
+      `values.yaml` / `values.local.yaml`.
+- [ ] CI targets: `make ci-build-images`, `ci-push-images`, `ci-deploy`.
 
 ---
 
-## Suggested Implementation Order
+## Phase 6 — Project-level UX
 
-To reduce risk and deliver value incrementally:
+**Goal:** Treat the wrapper as a single product.
 
-1. Phase 1 – Metadata + service commands.
-2. Phase 3 (core parts) – Ports and env wiring.
-3. Phase 2 – Contracts and type sharing.
-4. Phase 4 – Docker/Compose stack.
-5. Phase 6 (baseline) – Logging/metrics/health.
-6. Phase 5 – Kubernetes/Helm.
-7. Phase 6 (advanced) – Tracing and dashboards.
-8. Phase 7 – Orchestration UX and example stacks.
+- [ ] `./project test` / `lint` / `build` — fan out across services
+      with a colour-coded aggregated summary.
+- [ ] `./project graph` — emit a Mermaid/DOT service dependency
+      diagram from `dev_skel.project.yml`.
+- [ ] `./env use dev|staging|prod` — switch environment profiles.
+- [ ] Opinionated "stack generators" for common architectures:
+      `make gen-stack-web NAME=myproj` (FastAPI + React + Postgres),
+      `make gen-stack-enterprise NAME=myproj` (Spring + Actix auth +
+      Axum edge + React + Kafka).
 
-This roadmap should remain high‑level: individual issues/PRs can reference concrete checklist items from here.
+---
+
+## Suggested implementation order
+
+1. **Phase 1** — INTEGRATION_MANIFEST rollout (every AI gen produces
+   integration tests).
+2. **Phase 2** — project metadata + `dev_skel.project.yml` (unblocks
+   Phases 3–6).
+3. **Phase 3** — cross-service contracts.
+4. **Phase 4** — observability baseline.
+5. **Phase 5** — Kubernetes / Helm.
+6. **Phase 6** — project-level UX + stack generators.
+
+Each phase is self-contained. Pick one, ship it, move on.

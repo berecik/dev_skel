@@ -12,6 +12,7 @@ function formatItem(row) {
     name: row.name,
     description: row.description,
     is_completed: row.is_completed === 1,
+    category_id: row.category_id ?? null,
     owner_id: row.owner_id,
     created_at: row.created_at,
     updated_at: row.updated_at,

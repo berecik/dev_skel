@@ -42,10 +42,24 @@ class LoginResponse(BaseModel):
     username: str
 
 
+class CategoryCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    description: Optional[str] = ""
+
+
+class CategoryRead(BaseModel):
+    id: int
+    name: str
+    description: str
+    created_at: datetime
+    updated_at: datetime
+
+
 class ItemCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: Optional[str] = ""
     is_completed: Optional[bool] = False
+    category_id: Optional[int] = None
 
 
 class ItemRead(BaseModel):
@@ -53,6 +67,7 @@ class ItemRead(BaseModel):
     name: str
     description: str
     is_completed: bool
+    category_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 

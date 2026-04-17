@@ -1,18 +1,22 @@
 """HTTP routes for the wrapper-shared backend stack.
 
-Three blueprints expose the canonical contract every dev_skel backend
+Five blueprints expose the canonical contract every dev_skel backend
 honours so the React frontend's typed fetch client + JWT auth flow
 (``ts-react-skel/src/api/items.ts`` + ``src/state/state-api.ts``) Just
 Works against this Flask service:
 
 * ``/api/auth/register`` and ``/api/auth/login``
+* ``/api/categories`` CRUD
 * ``/api/items`` CRUD + ``POST /api/items/<id>/complete``
 * ``/api/state`` per-user JSON KV store
 
 Plus ``/`` and ``/health`` for project info / liveness.
 """
 
+from datetime import datetime
+
 from flask import Blueprint, g, jsonify, request
+from sqlalchemy.exc import IntegrityError
 
 from app import db
 from app.auth import (
@@ -22,7 +26,7 @@ from app.auth import (
     mint_refresh_token,
     verify_password,
 )
-from app.models import Item, ReactState, User
+from app.models import Category, Item, ReactState, User
 
 
 # --------------------------------------------------------------------------- #
@@ -136,6 +140,91 @@ def login():
 
 
 # --------------------------------------------------------------------------- #
+#  /api/categories — JWT-protected CRUD
+# --------------------------------------------------------------------------- #
+
+categories_bp = Blueprint("categories", __name__, url_prefix="/api/categories")
+
+
+@categories_bp.route("", methods=["GET"])
+@jwt_required
+def list_categories():
+    rows = db.session.query(Category).order_by(Category.id).all()
+    return jsonify([cat.to_dict() for cat in rows])
+
+
+@categories_bp.route("", methods=["POST"])
+@jwt_required
+def create_category():
+    payload = request.get_json(silent=True) or {}
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return _bad_request("category name cannot be empty")
+    cat = Category(
+        name=name,
+        description=payload.get("description") or "",
+    )
+    db.session.add(cat)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return _conflict(f"Category with name '{name}' already exists")
+    response = jsonify(cat.to_dict())
+    response.status_code = 201
+    return response
+
+
+@categories_bp.route("/<int:category_id>", methods=["GET"])
+@jwt_required
+def get_category(category_id):
+    cat = db.session.get(Category, category_id)
+    if cat is None:
+        response = jsonify({"detail": "Category not found", "status": 404})
+        response.status_code = 404
+        return response
+    return jsonify(cat.to_dict())
+
+
+@categories_bp.route("/<int:category_id>", methods=["PUT"])
+@jwt_required
+def update_category(category_id):
+    cat = db.session.get(Category, category_id)
+    if cat is None:
+        response = jsonify({"detail": "Category not found", "status": 404})
+        response.status_code = 404
+        return response
+    payload = request.get_json(silent=True) or {}
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return _bad_request("category name cannot be empty")
+    cat.name = name
+    cat.description = payload.get("description") or ""
+    cat.updated_at = datetime.utcnow()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return _conflict(f"Category with name '{name}' already exists")
+    return jsonify(cat.to_dict())
+
+
+@categories_bp.route("/<int:category_id>", methods=["DELETE"])
+@jwt_required
+def delete_category(category_id):
+    cat = db.session.get(Category, category_id)
+    if cat is None:
+        response = jsonify({"detail": "Category not found", "status": 404})
+        response.status_code = 404
+        return response
+    db.session.delete(cat)
+    db.session.commit()
+    response = jsonify({})
+    response.status_code = 204
+    return response
+
+
+# --------------------------------------------------------------------------- #
 #  /api/items — JWT-protected CRUD (no per-user scoping; matches the
 #  django-bolt convention so cross-stack tests stay simple).
 # --------------------------------------------------------------------------- #
@@ -161,6 +250,7 @@ def create_item():
         name=name,
         description=payload.get("description"),
         is_completed=bool(payload.get("is_completed")),
+        category_id=payload.get("category_id"),
     )
     db.session.add(item)
     db.session.commit()

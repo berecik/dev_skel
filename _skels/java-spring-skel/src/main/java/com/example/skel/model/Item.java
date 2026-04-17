@@ -9,15 +9,17 @@ package com.example.skel.model;
  * Python and JVM backends.
  *
  * <p>Jackson serialises the camelCase Java fields to snake_case JSON
- * keys ({@code is_completed}, {@code created_at}, {@code updated_at})
- * because {@code spring.jackson.property-naming-strategy=SNAKE_CASE}
- * is set globally in {@code application.properties}.
+ * keys ({@code is_completed}, {@code category_id}, {@code created_at},
+ * {@code updated_at}) because
+ * {@code spring.jackson.property-naming-strategy=SNAKE_CASE} is set
+ * globally in {@code application.properties}.
  */
 public record Item(
     Long id,
     String name,
     String description,
     boolean isCompleted,
+    Long categoryId,
     String createdAt,
     String updatedAt
 ) {

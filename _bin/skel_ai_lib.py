@@ -50,7 +50,7 @@ from dev_skel_lib import slugify_service_name
 
 
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
-DEFAULT_OLLAMA_MODEL = "gemma4:31b"
+DEFAULT_OLLAMA_MODEL = "qwen3-coder:30b"
 # seconds — local Ollama can be slow on big models. The default is sized
 # for ~30B-class instruction models like gemma4:31b (a single completion
 # can include a 30-40 s cold-load on the first call plus several minutes

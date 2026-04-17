@@ -6,6 +6,9 @@ endpoints on whichever backend is named by the wrapper-shared
 
 * ``POST /api/auth/register`` — `{username, email, password, password_confirm}`
 * ``POST /api/auth/login`` — `{username, password}` → `{access, refresh, user_id, username}`
+* ``GET / POST /api/categories`` — list / create shared categories
+* ``GET / PUT / DELETE /api/categories/{id}`` — retrieve / update / delete
+  a category
 * ``GET / POST /api/items`` — list / create wrapper-shared items
 * ``GET /api/items/{id}`` — retrieve a single item
 * ``POST /api/items/{id}/complete`` — mark complete (matches the React

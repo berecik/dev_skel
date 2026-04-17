@@ -189,6 +189,13 @@ class RagAgent:
         system = build_system_prompt(manifest, ctx)
         retriever = self.get_retriever(corpus_for_skeleton(ctx.skeleton_path))
 
+        # Multi-phase context: each target sees the outputs of all
+        # earlier targets via the {prior_outputs} placeholder. This
+        # lets the AI keep schemas consistent across files (e.g. the
+        # test file can reference the exact field names the model file
+        # used). Implements TODO Section 2.2.
+        prior_outputs: List[str] = []
+
         for index, target in enumerate(manifest.targets, start=1):
             expanded = expand_target_paths(target, ctx)
             label = expanded.description or expanded.path
@@ -204,11 +211,23 @@ class RagAgent:
                 ctx=ctx,
             )
 
+            # Build the prior_outputs block from earlier phases
+            prior_block = ""
+            if prior_outputs:
+                prior_block = (
+                    "Files already generated in earlier phases of this run "
+                    "(use these to keep types, field names, and imports "
+                    "consistent):\n\n" + "\n\n".join(prior_outputs)
+                )
+
             user_prompt = format_prompt(
                 target.prompt,
                 ctx,
                 reference=reference,
-                extra={"retrieved_context": retrieved_block},
+                extra={
+                    "retrieved_context": retrieved_block,
+                    "prior_outputs": prior_block,
+                },
             )
 
             destination = ctx.project_dir / expanded.path
@@ -235,6 +254,16 @@ class RagAgent:
                     written_to=destination,
                     bytes_written=len(cleaned.encode("utf-8")),
                 )
+            )
+
+            # Accumulate for multi-phase context (cap each file to
+            # ~2000 chars so the prompt doesn't blow up for large
+            # manifests with many targets).
+            snippet = cleaned[:2000]
+            if len(cleaned) > 2000:
+                snippet += "\n... (truncated)"
+            prior_outputs.append(
+                f"--- FILE: {expanded.path} ---\n{snippet}\n--- END ---"
             )
 
         return results

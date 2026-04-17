@@ -6,7 +6,7 @@ and pairs naturally with django-bolt's Rust HTTP layer.
 
 import msgspec
 
-from app.models import Item, Project, ReactState, Task, UserProfile
+from app.models import Category, Item, Project, ReactState, Task, UserProfile
 
 
 class UserSchema(msgspec.Struct):
@@ -161,6 +161,34 @@ class TaskCreateSchema(msgspec.Struct, kw_only=True):
 
 
 # --------------------------------------------------------------------------- #
+#  Wrapper-shared `categories` resource.
+# --------------------------------------------------------------------------- #
+
+
+class CategorySchema(msgspec.Struct):
+    id: int
+    name: str
+    description: str | None
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def from_model(cls, obj) -> "CategorySchema":
+        return cls(
+            id=obj.id,
+            name=obj.name,
+            description=obj.description,
+            created_at=str(obj.created_at),
+            updated_at=str(obj.updated_at),
+        )
+
+
+class CategoryCreateSchema(msgspec.Struct):
+    name: str
+    description: str | None = None
+
+
+# --------------------------------------------------------------------------- #
 #  Wrapper-shared `items` resource (consumed by the React skeleton).
 # --------------------------------------------------------------------------- #
 
@@ -178,6 +206,7 @@ class ItemSchema(msgspec.Struct):
     name: str
     description: str | None
     is_completed: bool
+    category_id: int | None
     created_at: str
     updated_at: str
 
@@ -188,6 +217,7 @@ class ItemSchema(msgspec.Struct):
             name=obj.name,
             description=obj.description,
             is_completed=obj.is_completed,
+            category_id=obj.category_id,
             created_at=str(obj.created_at),
             updated_at=str(obj.updated_at),
         )
@@ -199,6 +229,7 @@ class ItemCreateSchema(msgspec.Struct):
     name: str
     description: str | None = None
     is_completed: bool = False
+    category_id: int | None = None
 
 
 # --------------------------------------------------------------------------- #

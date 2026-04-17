@@ -26,6 +26,7 @@
 import { useCallback, useMemo, type ReactElement } from 'react';
 
 import { type Item } from '../api/items';
+import { type Category } from '../api/categories';
 import { useAppState } from '../state/use-app-state';
 
 export interface ItemListProps {
@@ -34,6 +35,7 @@ export interface ItemListProps {
   error: string | null;
   refresh: () => Promise<void>;
   complete: (id: number) => Promise<Item>;
+  categories?: Category[];
 }
 
 export default function ItemList({
@@ -42,7 +44,12 @@ export default function ItemList({
   error,
   refresh,
   complete,
+  categories = [],
 }: ItemListProps): ReactElement {
+  const categoryMap = useMemo(
+    () => new Map(categories.map((c) => [c.id, c.name])),
+    [categories],
+  );
   // Persistent UI filter — shared across browser reloads via the
   // backend `/api/state` endpoint.
   const [showCompleted, setShowCompleted] = useAppState<boolean>(
@@ -116,6 +123,9 @@ export default function ItemList({
               <div className="item-body">
                 <strong>{item.name}</strong>
                 {item.description && <p>{item.description}</p>}
+                {item.category_id && categoryMap.has(item.category_id) && (
+                  <span className="category-badge">{categoryMap.get(item.category_id)}</span>
+                )}
                 <small>updated {item.updated_at}</small>
               </div>
               {!item.is_completed && (

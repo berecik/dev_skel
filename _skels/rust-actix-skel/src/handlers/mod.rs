@@ -5,6 +5,7 @@
 //! stay focused on a single resource.
 
 pub mod auth;
+pub mod categories;
 pub mod items;
 pub mod state;
 
@@ -20,6 +21,14 @@ pub fn register(cfg: &mut web::ServiceConfig) {
                 web::scope("/auth")
                     .service(auth::register_handler)
                     .service(auth::login_handler),
+            )
+            .service(
+                web::scope("/categories")
+                    .service(categories::list_categories)
+                    .service(categories::create_category)
+                    .service(categories::get_category)
+                    .service(categories::update_category)
+                    .service(categories::delete_category),
             )
             .service(
                 web::scope("/items")

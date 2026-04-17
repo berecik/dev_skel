@@ -1073,7 +1073,7 @@ Exit codes: `0` (all passed), `1` (at least one skeleton failed),
 
 The runner is intentionally **not** part of `make test-generators`. AI
 runs need a local Ollama daemon and can take 30+ minutes total against
-the default `gemma4:31b` model. Drop to a smaller coder model on
+the default `qwen3-coder:30b` model. Drop to a smaller coder model on
 slower hardware:
 
 ```bash

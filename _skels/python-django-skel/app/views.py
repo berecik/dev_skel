@@ -9,8 +9,10 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from app.models import Item, ReactState
+from app.models import Category, Item, ReactState
 from app.serializers import (
+    CategoryCreateSerializer,
+    CategorySerializer,
     ItemCreateSerializer,
     ItemSerializer,
     RegisterSerializer,
@@ -80,6 +82,35 @@ class LoginView(APIView):
             "username": user.username,
         }
         return Response(body, status=status.HTTP_200_OK)
+
+
+class CategoryViewSet(viewsets.ModelViewSet):
+    """``/api/categories`` CRUD — JWT-protected.
+
+    Categories are wrapper-shared and not scoped to any user.
+    """
+
+    queryset = Category.objects.all()
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+
+    def get_serializer_class(self):
+        if self.action in ("create", "update", "partial_update"):
+            return CategoryCreateSerializer
+        return CategorySerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = CategoryCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        category = serializer.save()
+        return Response(CategorySerializer(category).data, status=status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        category = self.get_object()
+        serializer = CategoryCreateSerializer(category, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        category = serializer.save()
+        return Response(CategorySerializer(category).data, status=status.HTTP_200_OK)
 
 
 class ItemViewSet(viewsets.ModelViewSet):
