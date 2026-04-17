@@ -334,7 +334,14 @@
       "Bash(make -n ci-log)",
       "Bash(make -n ci-status ci-watch ci-log)",
       "Bash(make ci-status:*)",
-      "Bash(gh run:*)"
+      "Bash(gh run:*)",
+      "Bash(make gen-js:*)",
+      "Bash(npm test:*)",
+      "Bash(npx next:*)",
+      "Bash(_bin/skel-test-react-js:*)",
+      "Bash(/Users/beret/dev_skel/_bin/skel-test-react-js --port 18883 --keep)",
+      "Bash(/Users/beret/dev_skel/_bin/skel-test-react-js --port 18883)",
+      "Bash(make test-react-cross-stack:*)"
     ],
     "deny": [],
     "ask": []

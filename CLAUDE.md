@@ -115,7 +115,7 @@ make rule-affecting edits.
     Same behavior as pre-2026-04 invocations — kept for scripted
     users.
 - **All 10 skeletons are AI-supported** — Python (django, django-bolt,
-  fastapi, flask), Java (spring), Rust (actix, axum), Node (js),
+  fastapi, flask), Java (spring), Rust (actix, axum), Next.js (js),
   React (ts-react), and Flutter (flutter). The full-stack picker
   auto-partitions them via `split_skels_by_kind()` (everything that
   returns `kind=frontend` from the marker-file detector goes into the
@@ -154,7 +154,7 @@ make rule-affecting edits.
 - **Every backend skel** — Python (`python-django-skel`,
   `python-django-bolt-skel`, `python-fastapi-skel`, `python-flask-skel`),
   Java (`java-spring-skel`), Rust (`rust-actix-skel`, `rust-axum-skel`),
-  and JS (`js-skel`) — reads its database and JWT configuration from the
+  and Next.js (`next-js-skel`) — reads its database and JWT configuration from the
   wrapper-level `.env` first, then its local `.env`. Per-stack
   conventions:
   - **Python**: `python-dotenv` + a `_build_databases()` /
@@ -169,9 +169,11 @@ make rule-affecting edits.
     helper walks up to `<wrapper>/.env` before reading the local file).
     `Config` lives inside `AppState` so handlers pull it from
     `web::Data<Arc<AppState>>` (Actix) or `State<Arc<AppState>>` (Axum).
-  - **JS**: `src/config.js` with the `dotenv` package loading the
+  - **Next.js**: `src/config.js` with the `dotenv` package loading the
     service `.env` first then `<wrapper>/.env`. Exposes a single `config`
-    object with `databaseUrl`, `jwt`, and `service` namespaces.
+    object with `databaseUrl`, `dbPath`, `jwt`, and `service` namespaces.
+    Next.js App Router API routes import from `../../lib/db` and
+    `../../lib/auth` (relative paths).
   Never hardcode a sqlite path or JWT secret in any skel template; the
   env-driven flow is the contract that lets a token issued by one
   service be accepted by every other service in the same wrapper. The

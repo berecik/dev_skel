@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build script for Next.js project
+# Usage: ./build [options]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Default values
+TAG="js-app:latest"
+NO_CACHE=""
+PUSH=false
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --no-cache)
+            NO_CACHE="--no-cache"
+            shift
+            ;;
+        --push)
+            PUSH=true
+            shift
+            ;;
+        --tag=*)
+            TAG="${1#*=}"
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: ./build [options]"
+            echo ""
+            echo "Options:"
+            echo "  --no-cache   Build without using cache"
+            echo "  --push       Push image to registry after build"
+            echo "  --tag=TAG    Tag for the image (default: js-app:latest)"
+            exit 0
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+echo "Building Docker image: $TAG"
+docker build --tag "$TAG" $NO_CACHE .
+
+echo ""
+echo "Build complete: $TAG"
+docker images "$TAG" --format "Size: {{.Size}}"
+
+if [[ "$PUSH" == true ]]; then
+    echo "Pushing image..."
+    docker push "$TAG"
+fi

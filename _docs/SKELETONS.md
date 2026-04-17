@@ -98,7 +98,7 @@ single-service scoping.
 | [`rust-actix-skel`](rust-actix-skel.md) | backend | ✓ | `service/` | — | `src/config.rs` |
 | [`rust-axum-skel`](rust-axum-skel.md) | backend | ✓ | `service/` | — | `src/config.rs` |
 | `go-skel` | backend | — | `service/` | — | `internal/config/config.go` |
-| [`js-skel`](js-skel.md) | backend | ✓ | `app/` | — | `src/config.js` |
+| [`next-js-skel`](next-js-skel.md) | backend | ✓ | `app/` | **server** | `next.config.js` |
 | [`ts-react-skel`](ts-react-skel.md) | frontend | ✓ | `frontend/` | **client** | `vite.config.ts` |
 | [`flutter-skel`](flutter-skel.md) | frontend | ✓ | `frontend/` | **client** | `pubspec.yaml` |
 

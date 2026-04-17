@@ -97,7 +97,8 @@ real HTTP. Skips gracefully when the required toolchain is missing.
 | `make test-react-spring` | `java-spring-skel` |
 | `make test-react-actix` | `rust-actix-skel` |
 | `make test-react-axum` | `rust-axum-skel` |
-| `make test-react-go` | placeholder Go backend (TBD) |
+| `make test-react-go` | `go-skel` |
+| `make test-react-nextjs` | `next-js-skel` (Next.js 15) |
 
 Each has a `-keep` sibling that leaves the wrapper on disk for
 debugging. Pass `--port <N>` to override the backend port.
@@ -142,7 +143,7 @@ The pre-AI baseline. All accept `NAME=<wrapper>` plus an optional
 | `make gen-actix NAME=<w>` | `rust-actix-skel` | `service/` |
 | `make gen-axum NAME=<w>` | `rust-axum-skel` | `service/` |
 | `make gen-go NAME=<w>` | `go-skel` | `service/` |
-| `make gen-js NAME=<w>` | `js-skel` | `app/` |
+| `make gen-nextjs NAME=<w>` | `next-js-skel` | `app/` |
 | `make gen-react NAME=<w>` | `ts-react-skel` | `frontend/` |
 | `make gen-flutter NAME=<w>` | `flutter-skel` | `frontend/` |
 

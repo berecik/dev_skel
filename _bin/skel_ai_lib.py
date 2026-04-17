@@ -316,7 +316,7 @@ _SIBLING_KEY_FILES: Dict[str, List[str]] = {
     ],
     "rust-actix-skel": ["src/main.rs", "src/config.rs"],
     "rust-axum-skel": ["src/main.rs", "src/config.rs"],
-    "js-skel": ["src/index.js", "src/config.js"],
+    "next-js-skel": ["src/index.js", "src/config.js"],
     "ts-react-skel": [
         "src/config.ts",
         "src/api/items.ts",
@@ -375,7 +375,7 @@ _SERVICE_KIND_BY_TECH: Dict[str, str] = {
     "java-spring-skel": "backend",
     "rust-actix-skel": "backend",
     "rust-axum-skel": "backend",
-    "js-skel": "backend",
+    "next-js-skel": "backend",
     "ts-react-skel": "frontend",
     "flutter-skel": "frontend",
 }
@@ -433,7 +433,7 @@ def _detect_service_tech(service_dir: Path) -> Optional[str]:
         if "flutter:" in content and "sdk: flutter" in content:
             return "flutter-skel"
     if (service_dir / "package.json").is_file():
-        return "js-skel"
+        return "next-js-skel"
     return None
 
 
@@ -813,7 +813,7 @@ SKELETON_DESCRIPTIONS: Dict[str, str] = {
     "java-spring-skel": "Spring Boot (JPA + JwtProperties bean)",
     "rust-actix-skel": "Rust Actix-web (sqlite via stdlib)",
     "rust-axum-skel": "Rust Axum (sqlite via stdlib)",
-    "js-skel": "Node 22 (node:sqlite + node:test)",
+    "next-js-skel": "Node 22 (node:sqlite + node:test)",
     "ts-react-skel": "React + Vite + TypeScript (typed fetch client + items hook)",
     "flutter-skel": "Flutter / Dart (Material 3, secure token store, items + /api/state client)",
 }

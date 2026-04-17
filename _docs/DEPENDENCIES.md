@@ -166,7 +166,7 @@ cd myapi
 - Installs packages from `requirements.txt` or `pyproject.toml`
 - Provides instructions for activating venv
 
-**For Node.js projects** (js-skel, ts-react-skel):
+**For Node.js projects** (next-js-skel, ts-react-skel):
 - Runs `npm install`
 - Installs all packages from `package.json`
 - Displays project info
@@ -211,7 +211,7 @@ python manage.py runserver
 - Arch: `pacman -S jdk-openjdk maven`
 - Fedora: `dnf install java-21-openjdk-devel maven`
 
-### JavaScript (`js-skel`)
+### JavaScript (`next-js-skel`)
 - **Node.js** (v20+)
 - **npm**
 

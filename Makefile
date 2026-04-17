@@ -3,11 +3,11 @@
 
 .PHONY: help list test test-all run info info-all clean clean-all status \
         ci-status ci-watch ci-log \
-        gen-fastapi gen-fastapi-rag gen-flask gen-django gen-django-bolt gen-react gen-flutter gen-js gen-spring gen-actix gen-axum gen-go \
-        test-fastapi test-fastapi-rag test-flask test-django test-django-bolt test-react test-flutter test-js test-spring test-actix test-axum test-go \
+        gen-fastapi gen-fastapi-rag gen-flask gen-django gen-django-bolt gen-react gen-flutter gen-nextjs gen-spring gen-actix gen-axum gen-go \
+        test-fastapi test-fastapi-rag test-flask test-django test-django-bolt test-react test-flutter test-nextjs test-spring test-actix test-axum test-go \
         test-ai-generators test-ai-generators-dry \
         test-gen-ai-fastapi test-gen-ai-django test-gen-ai-django-bolt test-gen-ai-flask \
-        test-gen-ai-spring test-gen-ai-actix test-gen-ai-axum test-gen-ai-js test-gen-ai-react test-gen-ai-flutter \
+        test-gen-ai-spring test-gen-ai-actix test-gen-ai-axum test-gen-ai-nextjs test-gen-ai-react test-gen-ai-flutter \
         install-rag-deps install-deps rag-index-skels rag-clean-skels \
         test-shared-db test-shared-db-keep test-shared-db-python \
         test-react-cross-stack \
@@ -18,6 +18,7 @@
         test-react-spring test-react-spring-keep \
         test-react-flask test-react-flask-keep \
         test-react-go test-react-go-keep \
+        test-react-nextjs test-react-nextjs-keep \
         test-react-django test-react-django-keep \
         sync-ai-runtime test-ai-script test-ai-script-keep \
         test-backport-script test-backport-script-keep \
@@ -36,7 +37,7 @@ DJANGO_SKEL := $(SKEL_DIR)/python-django-skel
 DJANGO_BOLT_SKEL := $(SKEL_DIR)/python-django-bolt-skel
 REACT_SKEL := $(SKEL_DIR)/ts-react-skel
 FLUTTER_SKEL := $(SKEL_DIR)/flutter-skel
-JS_SKEL := $(SKEL_DIR)/js-skel
+NEXTJS_SKEL := $(SKEL_DIR)/next-js-skel
 SPRING_SKEL := $(SKEL_DIR)/java-spring-skel
 ACTIX_SKEL := $(SKEL_DIR)/rust-actix-skel
 AXUM_SKEL := $(SKEL_DIR)/rust-axum-skel
@@ -44,7 +45,7 @@ FASTAPI_RAG_SKEL := $(SKEL_DIR)/python-fastapi-rag-skel
 GO_SKEL := $(SKEL_DIR)/go-skel
 
 # All skeletons
-SKELETONS := $(FASTAPI_SKEL) $(FLASK_SKEL) $(DJANGO_SKEL) $(DJANGO_BOLT_SKEL) $(REACT_SKEL) $(FLUTTER_SKEL) $(JS_SKEL) $(SPRING_SKEL) $(ACTIX_SKEL) $(AXUM_SKEL) $(FASTAPI_RAG_SKEL) $(GO_SKEL)
+SKELETONS := $(FASTAPI_SKEL) $(FLASK_SKEL) $(DJANGO_SKEL) $(DJANGO_BOLT_SKEL) $(REACT_SKEL) $(FLUTTER_SKEL) $(NEXTJS_SKEL) $(SPRING_SKEL) $(ACTIX_SKEL) $(AXUM_SKEL) $(FASTAPI_RAG_SKEL) $(GO_SKEL)
 
 # Test output directory
 TEST_OUTPUT := _test_projects
@@ -102,8 +103,8 @@ gen-react: ## Generate React+Vite+TypeScript project (NAME=myapp [SERVICE="displ
 gen-flutter: ## Generate Flutter project (NAME=myapp [SERVICE="display name"] [PLATFORMS=web,android,...])
 	@$(MAKE) -C $(FLUTTER_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)" PLATFORMS="$(PLATFORMS)"
 
-gen-js: ## Generate JavaScript/Node project (NAME=myapp [SERVICE="display name"])
-	@$(MAKE) -C $(JS_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
+gen-nextjs: ## Generate Next.js API backend (NAME=myapp [SERVICE="display name"])
+	@$(MAKE) -C $(NEXTJS_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
 
 gen-spring: ## Generate Spring Boot project (NAME=myapp [SERVICE="display name"])
 	@$(MAKE) -C $(SPRING_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
@@ -129,7 +130,7 @@ test-generators: ## Test all generators by creating test projects
 	$(MAKE) test-gen-django
 	$(MAKE) test-gen-django-bolt
 	$(MAKE) test-gen-react
-	$(MAKE) test-gen-js
+	$(MAKE) test-gen-nextjs
 	$(MAKE) test-gen-spring
 	$(MAKE) test-gen-actix
 	$(MAKE) test-gen-axum
@@ -176,11 +177,11 @@ test-gen-flutter: ## Test Flutter generator (smoke build via skel test_skel)
 	@$(MAKE) -C $(FLUTTER_SKEL) test
 	@echo "$(GREEN)Flutter generator test passed$(NC)"
 
-test-gen-js: ## Test JavaScript generator
-	@echo "$(YELLOW)>>> Testing JavaScript generator$(NC)"
-	@$(MAKE) gen-js NAME=$(TEST_OUTPUT)/test-js-app
-	@cd $(TEST_OUTPUT)/test-js-app/app && node -e "console.log('Node.js OK')"
-	@echo "$(GREEN)JavaScript generator test passed$(NC)"
+test-gen-nextjs: ## Test Next.js generator
+	@echo "$(YELLOW)>>> Testing Next.js generator$(NC)"
+	@$(MAKE) gen-nextjs NAME=$(TEST_OUTPUT)/test-nextjs-app
+	@cd $(TEST_OUTPUT)/test-nextjs-app/app && npm test
+	@echo "$(GREEN)Next.js generator test passed$(NC)"
 
 test-gen-spring: ## Test Spring Boot generator
 	@echo "$(YELLOW)>>> Testing Spring Boot generator$(NC)"
@@ -246,8 +247,8 @@ test-gen-ai-actix: ## AI-generate a Rust Actix-web service in _test_projects/
 test-gen-ai-axum: ## AI-generate a Rust Axum service in _test_projects/
 	@_bin/skel-test-ai-generators --skel rust-axum-skel
 
-test-gen-ai-js: ## AI-generate a Node service in _test_projects/
-	@_bin/skel-test-ai-generators --skel js-skel
+test-gen-ai-nextjs: ## AI-generate a Node service in _test_projects/
+	@_bin/skel-test-ai-generators --skel next-js-skel
 
 test-gen-ai-react: ## AI-generate a React frontend in _test_projects/
 	@_bin/skel-test-ai-generators --skel ts-react-skel
@@ -394,6 +395,13 @@ test-react-go: ## Cross-stack integration test (go-skel + ts-react)
 test-react-go-keep: ## Same, but leave _test_projects/test-react-go on disk
 	@_bin/skel-test-react-go --keep
 
+test-react-nextjs: ## Cross-stack integration test (next-js-skel + ts-react)
+	@echo "$(GREEN)=== React + Next.js integration test ===$(NC)"
+	@_bin/skel-test-react-nextjs
+
+test-react-nextjs-keep: ## Same, but leave _test_projects/test-react-nextjs on disk
+	@_bin/skel-test-react-nextjs --keep
+
 test-react-django: ## Cross-stack integration test (python-django + ts-react)
 	@echo "$(GREEN)=== React + Django integration test ===$(NC)"
 	@_bin/skel-test-react-django
@@ -509,6 +517,7 @@ test-react-cross-stack: ## Run every React + backend cross-stack integration tes
 	@$(MAKE) test-react-actix
 	@$(MAKE) test-react-axum
 	@$(MAKE) test-react-go
+	@$(MAKE) test-react-nextjs
 	@echo "$(GREEN)All React + backend integration tests passed.$(NC)"
 
 test-cross-stack: ## Run every cross-stack integration test in sequence
@@ -555,9 +564,9 @@ test-flutter: ## Run Flutter skeleton tests
 	@echo "$(GREEN)Running Flutter tests...$(NC)"
 	$(MAKE) -C $(FLUTTER_SKEL) test
 
-test-js: ## Run JavaScript skeleton tests
-	@echo "$(GREEN)Running JavaScript tests...$(NC)"
-	$(MAKE) -C $(JS_SKEL) test
+test-nextjs: ## Run Next.js skeleton tests
+	@echo "$(GREEN)Running Next.js tests...$(NC)"
+	$(MAKE) -C $(NEXTJS_SKEL) test
 
 test-spring: ## Run Spring Boot skeleton tests
 	@echo "$(GREEN)Running Spring Boot tests...$(NC)"

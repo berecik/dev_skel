@@ -146,7 +146,7 @@ verify binary per stack.
 
 **Files.** `_bin/skel-test-shared-db` (`verify_runtime_smoke`),
 `_skels/java-spring-skel/`, `_skels/rust-actix-skel/`,
-`_skels/rust-axum-skel/`, `_skels/js-skel/`.
+`_skels/rust-axum-skel/`, `_skels/next-js-skel/`.
 
 **Scenario.**
 1. **Java (Spring Boot)**: ship a tiny `VerifyDb.java` main class in
@@ -298,7 +298,7 @@ skel a "wire me into the wrapper" pass.
 - `_skels/_common/manifests/java-spring-skel.py`
 - `_skels/_common/manifests/rust-actix-skel.py`
 - `_skels/_common/manifests/rust-axum-skel.py`
-- `_skels/_common/manifests/js-skel.py`
+- `_skels/_common/manifests/next-js-skel.py`
 - `_skels/_common/manifests/ts-react-skel.py`
 
 **Scenario per stack.** Copy the django-bolt template (3 targets:
@@ -317,7 +317,7 @@ package marker, `sibling_clients`, integration tests) and adapt:
   / `#[tokio::test]` in `tests/integration.rs`. Sibling clients use
   `reqwest` (or `ureq` to stay dependency-light). `test_command="./test"`
   → `cargo test --test integration`.
-- **js-skel**: integration tests using `node:test`. Sibling clients
+- **next-js-skel**: integration tests using `node:test`. Sibling clients
   use the global `fetch`. `test_command="./test"` → `node --test src/`.
 - **ts-react-skel**: integration tests using vitest. Mock the sibling
   endpoints with `vi.fn()` for unit-level coverage; add a separate
@@ -337,7 +337,7 @@ make test-ai-generators
 ### 3.2 ~~AI manifests for Java / Rust / JS backends~~ (LANDED — needs prompt hardening)
 
 **Status.** AI manifests for `java-spring-skel`, `rust-actix-skel`,
-`rust-axum-skel`, `js-skel`, and `ts-react-skel` shipped — **all 9
+`rust-axum-skel`, `next-js-skel`, and `ts-react-skel` shipped — **all 9
 skeletons are now AI-supported**. Validators (`mvn package`,
 `cargo check`, `node --check`, `tsc --noEmit`) are wired into
 `_bin/skel-test-ai-generators` and gracefully skip toolchains that aren't
@@ -361,7 +361,7 @@ is the obvious next step.
 **Files.** Three new files:
 - `_skels/_common/manifests/java-spring-skel.py`
 - `_skels/_common/manifests/rust-actix-skel.py` (and `rust-axum-skel.py`)
-- `_skels/_common/manifests/js-skel.py`
+- `_skels/_common/manifests/next-js-skel.py`
 
 **Scenario per stack.**
 
@@ -686,7 +686,7 @@ them.
 - `_skels/java-spring-skel/src/main/resources/application.properties`
   (logback JSON encoder).
 - `_skels/rust-*-skel/src/main.rs` (tracing-subscriber JSON layer).
-- `_skels/js-skel/src/index.js` (pino).
+- `_skels/next-js-skel/src/index.js` (pino).
 
 **Scenario.**
 1. Define a canonical envelope: `{timestamp, level, service, trace_id,

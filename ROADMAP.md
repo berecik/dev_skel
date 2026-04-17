@@ -76,7 +76,7 @@ This document tracks the roadmap to that vision.
 - [ ] Create a contract codegen tool (wrapper‑level command, e.g. `./contracts gen`):
   - [ ] From OpenAPI, generate:
     - [ ] Python models/clients (Pydantic/dataclasses).
-    - [ ] TypeScript models/clients for `ts-react-skel` / `js-skel`.
+    - [ ] TypeScript models/clients for `ts-react-skel` / `next-js-skel`.
     - [ ] Rust models/clients for `rust-actix-skel` / `rust-axum-skel`.
     - [ ] Dart models/clients for Flutter.
   - [ ] Place generated code in framework‑friendly locations (e.g. `backend-1/shared/contracts/`, `frontend-1/src/shared/contracts/`).

@@ -319,7 +319,7 @@ keep the contracts aligned without you re-explaining.
 | `rust-actix-skel` | backend | ✓ | — | Actix-web + AppState env wiring |
 | `rust-axum-skel` | backend | ✓ | — | Axum + Tokio |
 | `go-skel` | backend | — | — | net/http + sqlite + JWT |
-| `js-skel` | backend | ✓ | — | Plain Node.js + `node:sqlite` |
+| `next-js-skel` | backend | ✓ | server | Next.js 15 App Router + better-sqlite3 + jose JWT |
 | `ts-react-skel` | frontend | ✓ | client | React 19 + Vite + typed `src/api/items.ts` |
 | `flutter-skel` | frontend | ✓ | client | Flutter Material 3 + `flutter_secure_storage` + `flutter_dotenv` |
 

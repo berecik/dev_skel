@@ -98,7 +98,7 @@ rule-affecting edits.
   the `_bin/skel_rag/` RAG agent, behind the legacy `_bin/skel_ai_lib.py`
   shim) to rewrite the files listed in `_skels/_common/manifests/<skel>.py`.
   **All 10 skeletons** are now AI-supported — Python (django, django-bolt,
-  fastapi, flask), Java (spring), Rust (actix, axum), Node (js),
+  fastapi, flask), Java (spring), Rust (actix, axum), Next.js,
   React (ts-react), and Flutter (flutter). The picker
   (`_bin/skel-gen-ai` with no arguments) auto-discovers manifests, and
   the full-stack dialog auto-partitions backends vs frontends via

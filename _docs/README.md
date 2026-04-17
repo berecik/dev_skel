@@ -66,7 +66,7 @@ service.
   [`rust-axum-skel.md`](rust-axum-skel.md),
   [`python-django-skel.md`](python-django-skel.md),
   [`python-flask-skel.md`](python-flask-skel.md),
-  [`js-skel.md`](js-skel.md).
+  [`next-js-skel.md`](next-js-skel.md).
 
 ### 2. The in-service code agent (`./ai`)
 

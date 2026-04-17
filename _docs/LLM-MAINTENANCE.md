@@ -547,7 +547,7 @@ The `skel-deps` script will automatically detect the new `deps` script.
 - JDK (OpenJDK 21+)
 - Maven
 
-**JavaScript/Node.js** (`js-skel/deps`, `ts-react-skel/deps`):
+**JavaScript/Node.js** (`next-js-skel/deps`, `ts-react-skel/deps`):
 - Node.js 20+
 - npm
 
@@ -821,7 +821,7 @@ or `FAN_OUT_SCRIPTS` arrays at the top of `common-wrapper.sh`.
 Every backend skel — Python (`python-django-skel`,
 `python-django-bolt-skel`, `python-fastapi-skel`, `python-flask-skel`),
 Java (`java-spring-skel`), Rust (`rust-actix-skel`, `rust-axum-skel`), and
-JS (`js-skel`) — follows the same env-driven config rule. Each settings
+JS (`next-js-skel`) — follows the same env-driven config rule. Each settings
 or config layer:
 
 1. Loads `<wrapper>/.env` first (so the shared `DATABASE_URL` /
