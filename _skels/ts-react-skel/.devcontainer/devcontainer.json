@@ -1,0 +1,23 @@
+{
+  "name": "React + Vite Development",
+  "dockerComposeFile": ["docker-compose.devcontainer.yml"],
+  "service": "devcontainer",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "forwardPorts": [5173],
+  "postCreateCommand": "npm install",
+  "containerEnv": {
+    "NODE_ENV": "development"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.vscode-typescript-next",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "antfu.vite",
+        "ms-azuretools.vscode-docker",
+        "eamodio.gitlens"
+      ]
+    }
+  }
+}

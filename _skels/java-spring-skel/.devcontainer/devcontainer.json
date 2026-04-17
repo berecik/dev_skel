@@ -1,0 +1,22 @@
+{
+  "name": "Java Spring Development",
+  "dockerComposeFile": ["docker-compose.devcontainer.yml"],
+  "service": "devcontainer",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "forwardPorts": [8080, 5432],
+  "postCreateCommand": "mvn dependency:resolve",
+  "containerEnv": {
+    "SPRING_PROFILES_ACTIVE": "dev"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "vscjava.vscode-java-pack",
+        "vmware.vscode-spring-boot",
+        "vscjava.vscode-spring-boot-dashboard",
+        "vscjava.vscode-spring-initializr",
+        "ms-azuretools.vscode-docker"
+      ]
+    }
+  }
+}

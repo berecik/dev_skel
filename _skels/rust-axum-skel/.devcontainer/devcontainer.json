@@ -1,0 +1,21 @@
+{
+  "name": "Rust Axum Development",
+  "dockerComposeFile": ["docker-compose.devcontainer.yml"],
+  "service": "devcontainer",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "forwardPorts": [8000, 5432],
+  "postCreateCommand": "cargo fetch",
+  "containerEnv": {
+    "RUST_LOG": "debug"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "vadimcn.vscode-lldb",
+        "ms-azuretools.vscode-docker"
+      ]
+    }
+  }
+}
