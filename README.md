@@ -325,9 +325,14 @@ keep the contracts aligned without you re-explaining.
 
 All 12 ship the `./ai` runtime (so generated services keep talking to
 the model after they exist) plus a `VERSION` + `CHANGELOG.md` (so
-`./backport` and `./ai upgrade` work). Backends marked **server** ship
-the wrapper-shared `/api/items` + `/api/auth/login` contract; both
-frontends call that contract out of the box.
+`./backport` and `./ai upgrade` work). Every skeleton includes a
+**Dockerfile** (multi-stage: builder → production → development),
+**.devcontainer/** settings (VS Code Dev Containers with per-stack
+extensions, Postgres backing service, port forwarding), and a
+**.dockerignore**. Frontend skeletons (React, Flutter) ship an
+`nginx.conf` for SPA routing in production. Backends marked **server**
+ship the wrapper-shared `/api/items` + `/api/auth/login` contract;
+both frontends call that contract out of the box.
 
 ---
 

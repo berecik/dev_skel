@@ -41,6 +41,20 @@ _skels/_common/
 A generated service inherits from both — the skeleton's source tree
 plus the AI runtime that the wrapper installer drops next to it.
 
+Every skeleton also ships **Docker support**:
+- **`Dockerfile`** — multi-stage build (builder → production →
+  development). Python skels use `uv` for fast installs, Rust skels
+  use dependency caching via dummy builds, frontend skels (React,
+  Flutter) produce `nginx:alpine` production images with SPA routing.
+- **`.devcontainer/`** — VS Code Dev Containers configuration:
+  `devcontainer.json` (per-stack extensions, port forwarding,
+  `postCreateCommand`), a devcontainer-specific `Dockerfile` (based on
+  the official `mcr.microsoft.com/devcontainers/` images), and a
+  `docker-compose.devcontainer.yml` (mounts the source tree + a
+  Postgres backing service for backend skels).
+- **`.dockerignore`** — concise per-stack exclusions to keep images
+  small.
+
 ---
 
 ## What every generated service ships
@@ -51,6 +65,10 @@ directory contains:
 ```
 <wrapper>/<service>/
 ├── (real source tree for the chosen stack)
+├── Dockerfile                # multi-stage: builder → production → development
+├── .devcontainer/            # VS Code Dev Containers (devcontainer.json + Dockerfile + compose)
+├── .dockerignore             # per-stack Docker build exclusions
+├── nginx.conf                # (frontend skels only) SPA routing for nginx production stage
 ├── ai                        # in-service code agent (refactor / verify / undo / upgrade)
 ├── backport                  # per-service backport script (service → skel)
 ├── .ai_runtime.py            # vendored runtime (in-tree → RAG, out-of-tree → stdlib)
