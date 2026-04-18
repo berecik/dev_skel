@@ -135,7 +135,16 @@ class ItemsClient {
       headers: _headers(token: token),
     );
     return _unwrap<List<Item>>(response, (body) {
-      final list = body as List<dynamic>;
+      // Handle both raw arrays and paginated wrappers
+      // ({results: [...]}, {items: [...]})
+      final List<dynamic> list;
+      if (body is List<dynamic>) {
+        list = body;
+      } else if (body is Map<String, dynamic>) {
+        list = (body['results'] ?? body['items'] ?? <dynamic>[]) as List<dynamic>;
+      } else {
+        list = <dynamic>[];
+      }
       return list
           .map((row) => Item.fromJson(row as Map<String, dynamic>))
           .toList(growable: false);

@@ -167,6 +167,23 @@ Skip individual phases with `--no-integrate`, `--no-test-fix`,
 CLI overrides: `--ollama-url`, `--ollama-model`, `--fix-timeout-m`,
 `--max-files`.
 
+### AI pipeline quality features
+
+The generator includes three quality mechanisms that run automatically:
+
+* **Auto-retry** (`--max-retries N`, default 1) — if the generated
+  code fails validation (`cargo check`, `mvn package`, `tsc --noEmit`,
+  `flutter analyze`, `py_compile`), the runner cleans up and re-runs
+  the full generation.
+* **Multi-phase context** — each manifest target sees the outputs of
+  all earlier targets via the `{prior_outputs}` placeholder, so field
+  names and imports stay consistent across model → schema → route →
+  test files.
+* **Structured critique loop** (`--critique`, default on) — after
+  generating each file, the model reviews it against the system
+  prompt's CRITICAL rules. On FAIL, the file is re-generated with the
+  critique reason appended. Capped at 1 critique per file.
+
 ### Adding a new skeleton
 
 1. Drop the skeleton tree under `_skels/<name>-skel/`.
@@ -507,7 +524,39 @@ is only needed when running from inside a dev_skel checkout.
 | Project-authoritative behavior rules | [`_docs/JUNIE-RULES.md`](_docs/JUNIE-RULES.md) |
 | Per-skeleton deep-dive | [`_docs/<skel>.md`](_docs/) |
 | Create or update a skeleton | [`_docs/SKELETON-DESIGN-GUIDE.md`](_docs/SKELETON-DESIGN-GUIDE.md) |
+| Wrapper-shared API contract (OpenAPI 3.1) | [`_skels/_common/openapi/wrapper-api.yaml`](_skels/_common/openapi/wrapper-api.yaml) |
+| What shipped and when | [`CHANGELOG.md`](CHANGELOG.md) |
+| Forward-looking roadmap | [`ROADMAP.md`](ROADMAP.md) (Phases 5–6 open) |
 | Design specs (originals) | [`SERVICE_REFACTOR_COMMAND.md`](SERVICE_REFACTOR_COMMAND.md), [`SKEL_BACKPORT_COMMAND.md`](SKEL_BACKPORT_COMMAND.md), [`UPDATE_SKEL_REFACTOR.md`](UPDATE_SKEL_REFACTOR.md) |
+
+---
+
+## Project metadata + observability
+
+Every generated wrapper ships:
+
+```bash
+cat dev_skel.project.yml    # per-service metadata (id, kind, tech, port)
+./services list              # discover services
+./services info items_api    # show details for one service
+./services set-active web_ui # set the default for single-shot scripts
+./run-dev-all                # start every service, combined log tail
+./stop-dev-all               # tear down all running services
+```
+
+Observability is ready to activate:
+
+```bash
+# Every backend ships /api/health
+curl http://localhost:8000/api/health   # {"status": "ok"}
+
+# LOG_FORMAT in .env controls structured logging (console|json)
+LOG_FORMAT=json ./run items_api dev
+
+# OTel tracing — uncomment in .env, then:
+docker compose --profile observability up -d
+# → otel-collector (4317) + Tempo (3200) + Grafana (3000)
+```
 
 ---
 

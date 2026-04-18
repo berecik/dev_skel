@@ -1083,6 +1083,26 @@ OLLAMA_MODEL=qwen3-coder:30b OLLAMA_TIMEOUT=300 make test-ai-generators
 Use the runner after editing a manifest, when bumping the default
 model, or as part of a manual maintenance pass.
 
+**Quality features** (all enabled by default):
+
+* `--max-retries N` (default 1): on validation failure, cleans up
+  generated files and re-runs the full generation.
+* `--critique` / `--no-critique`: after generating each file, asks
+  the same model to review it against the system prompt's
+  CRITICAL/Coding rules. On FAIL, re-generates with the critique
+  reason appended. Capped at 1 critique per file.
+* **Multi-phase context**: each target in `generate_targets`
+  accumulates its output and passes it to subsequent targets via the
+  `{prior_outputs}` placeholder (implemented in
+  `_bin/skel_rag/agent.py`). Later targets (tests) see the exact
+  code earlier targets (models) produced.
+
+**INTEGRATION_MANIFEST**: all 10 AI-supported skeletons ship an
+`INTEGRATION_MANIFEST` with sibling-client targets + integration test
+targets. These run as a second Ollama pass after the per-target
+manifest and produce cross-service wiring code. Each manifest
+declares a `test_command` for the bounded test-and-fix loop.
+
 To add a new AI-supported skeleton, drop a manifest under
 `_skels/_common/manifests/` (the runner will auto-discover it) and, if
 the validation step needs more than the baseline syntax check, add an

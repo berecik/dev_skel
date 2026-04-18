@@ -327,8 +327,8 @@ When the user asks Claude to "use Ollama" / "AI-generate a service" / etc:
    is `qwen3-coder:30b` and the default `OLLAMA_TIMEOUT` is `1800`
    seconds (30 min — covers the 30-40 s cold-load + multi-minute
    completions a 31B-class model can take on a long file). Drop to a
-   smaller model (e.g. `qwen3-coder:30b` or `qwen2.5-coder:7b`) on
-   slower hardware via `OLLAMA_MODEL=...`.
+   smaller model (e.g. `qwen2.5-coder:7b`) on slower hardware via
+   `OLLAMA_MODEL=...`.
 2. Prefer running `_bin/skel-gen-ai --dry-run --no-input` first to confirm
    the manifest target list, then run the real generation. Real generation
    against a 30B-class instruction model can take **2–10 minutes per

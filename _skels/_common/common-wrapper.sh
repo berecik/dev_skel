@@ -127,6 +127,17 @@ SERVICE_PORT=8000
 # The React skeleton's `src/api/items.ts` and `src/state/state-api.ts`
 # both compose endpoints as \`\${BACKEND_URL}/api/...\`.
 BACKEND_URL=http://localhost:8000
+
+# Observability — structured logging + OpenTelemetry.
+# LOG_FORMAT controls log output: "json" for structured JSON (prod),
+# "console" for human-readable (dev, default).
+LOG_FORMAT=console
+
+# OpenTelemetry — uncomment and set OTEL_EXPORTER_OTLP_ENDPOINT to
+# enable distributed tracing. Every backend that ships OTel wiring
+# reads these vars.
+# OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+# OTEL_SERVICE_NAME=\${SERVICE_NAME:-devskel}
 EOF
 
 if [[ ! -f "$MAIN_DIR/.env" ]]; then
@@ -300,6 +311,16 @@ fi
 
 echo "  + _shared/service-urls.env (${#known_services[@]} service(s))"
 
+# Export the canonical OpenAPI contract spec into the wrapper so it
+# ships alongside the generated services. Idempotent — always
+# overwrites to keep the spec current with the dev_skel version.
+OPENAPI_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/openapi/wrapper-api.yaml"
+if [[ -f "$OPENAPI_SRC" ]]; then
+  mkdir -p "$MAIN_DIR/contracts/openapi"
+  cp "$OPENAPI_SRC" "$MAIN_DIR/contracts/openapi/wrapper-api.yaml"
+  echo "  + contracts/openapi/wrapper-api.yaml"
+fi
+
 if [[ ! -f "$MAIN_DIR/docker-compose.yml" ]]; then
   cat >"$MAIN_DIR/docker-compose.yml" <<'COMPOSE'
 # Wrapper-level docker-compose for $PROJECT_TITLE.
@@ -350,8 +371,77 @@ services:
 #        condition: service_healthy
 #    ports:
 #      - "${SERVICE_URL_TICKET_SERVICE_PORT:-8001}:8000"
+
+# ── Observability profile ────────────────────────────────────
+# Activate with: docker compose --profile observability up -d
+# Then open http://localhost:3000 for Grafana (admin/admin).
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: \${COMPOSE_PROJECT_NAME:-devskel}-otel
+    profiles: [observability]
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./_shared/otel-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"     # OTLP gRPC
+      - "4318:4318"     # OTLP HTTP
+
+  tempo:
+    image: grafana/tempo:latest
+    container_name: \${COMPOSE_PROJECT_NAME:-devskel}-tempo
+    profiles: [observability]
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./_shared/tempo.yaml:/etc/tempo/tempo.yaml:ro
+    ports:
+      - "3200:3200"     # Tempo API
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: \${COMPOSE_PROJECT_NAME:-devskel}-grafana
+    profiles: [observability]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    ports:
+      - "3000:3000"
+    depends_on:
+      - tempo
 COMPOSE
   echo "  + docker-compose.yml (Postgres backing service)"
+fi
+
+# Append per-service entries to docker-compose.yml for the current service.
+# Each backend that ships a Dockerfile gets a container entry so
+# `docker compose up` boots the whole stack. Idempotent — skips if the
+# service is already declared.
+if [[ -f "$MAIN_DIR/$PROJECT_SUBDIR/Dockerfile" ]] && \
+   ! grep -q "^  ${PROJECT_SUBDIR}:" "$MAIN_DIR/docker-compose.yml" 2>/dev/null; then
+
+  # Resolve the port from service-urls.env (or default to 8000)
+  _UPPER=$(echo "$PROJECT_SUBDIR" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
+  _PORT=""
+  if [[ -f "$MAIN_DIR/_shared/service-urls.env" ]]; then
+    _PORT=$(grep "^SERVICE_PORT_${_UPPER}=" "$MAIN_DIR/_shared/service-urls.env" 2>/dev/null | cut -d= -f2 || true)
+  fi
+  _PORT="${_PORT:-8000}"
+
+  cat >>"$MAIN_DIR/docker-compose.yml" <<SVCEOF
+
+  ${PROJECT_SUBDIR}:
+    build: ./${PROJECT_SUBDIR}
+    container_name: \${COMPOSE_PROJECT_NAME:-devskel}-${PROJECT_SUBDIR}
+    env_file:
+      - .env
+      - _shared/service-urls.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${_PORT}:${_PORT}"
+SVCEOF
+  echo "  + docker-compose.yml: added ${PROJECT_SUBDIR} service"
 fi
 
 # --------------------------------------------------------------------------- #
@@ -465,29 +555,99 @@ EOF
 #  4) ./services discovery script
 # --------------------------------------------------------------------------- #
 
-cat >"$MAIN_DIR/services" <<'EOF'
+cat >"$MAIN_DIR/services" <<'SERVICES_SCRIPT'
 #!/usr/bin/env bash
-# List every service directory in this wrapper.
+# Service discovery and management for this dev_skel wrapper.
 #
-# A service directory is any immediate subdirectory of the wrapper that
-# contains an executable `install-deps` (the marker every dev_skel-generated
-# service ships).
+# Usage:
+#   ./services              # list all service slugs (default)
+#   ./services list         # same
+#   ./services info <slug>  # show details from dev_skel.project.yml
+#   ./services set-active <slug>  # set the default for single-shot scripts
+
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-shopt -s nullglob
-found=0
-for dir in "$SCRIPT_DIR"/*/; do
-  name="$(basename "$dir")"
-  case "$name" in _shared|.*) continue ;; esac
-  if [[ -x "${dir%/}/install-deps" ]]; then
-    found=1
-    echo "$name"
+PROJECT_YML="$SCRIPT_DIR/dev_skel.project.yml"
+ACTIVE_FILE="$SCRIPT_DIR/_shared/active-service"
+
+_list_services() {
+  shopt -s nullglob
+  local found=0
+  for dir in "$SCRIPT_DIR"/*/; do
+    local name
+    name="$(basename "$dir")"
+    case "$name" in _shared|.*|contracts) continue ;; esac
+    if [[ -x "${dir%/}/install-deps" ]]; then
+      found=1
+      echo "$name"
+    fi
+  done
+  if [[ $found -eq 0 ]]; then
+    echo "(no services found)" >&2
   fi
-done
-if [[ $found -eq 0 ]]; then
-  echo "(no services found in $SCRIPT_DIR)" >&2
-fi
-EOF
+}
+
+_info() {
+  local slug="${1:-}"
+  if [[ -z "$slug" ]]; then
+    echo "Usage: ./services info <slug>" >&2
+    return 1
+  fi
+  if [[ ! -f "$PROJECT_YML" ]]; then
+    echo "No dev_skel.project.yml found — run any gen script first." >&2
+    return 1
+  fi
+  # Simple grep-based extraction from the YAML
+  local in_entry=0
+  while IFS= read -r line; do
+    if [[ "$line" == "  - id: $slug" ]]; then
+      in_entry=1
+      echo "$line"
+    elif [[ $in_entry -eq 1 ]]; then
+      if [[ "$line" =~ ^"  - id:" ]] || [[ "$line" =~ ^[a-z] ]]; then
+        break
+      fi
+      echo "$line"
+    fi
+  done < "$PROJECT_YML"
+  if [[ $in_entry -eq 0 ]]; then
+    echo "Service '$slug' not found in dev_skel.project.yml" >&2
+    return 1
+  fi
+}
+
+_set_active() {
+  local slug="${1:-}"
+  if [[ -z "$slug" ]]; then
+    echo "Usage: ./services set-active <slug>" >&2
+    return 1
+  fi
+  if [[ ! -d "$SCRIPT_DIR/$slug" ]]; then
+    echo "Service directory '$slug' does not exist." >&2
+    return 1
+  fi
+  mkdir -p "$SCRIPT_DIR/_shared"
+  echo "$slug" > "$ACTIVE_FILE"
+  echo "Active service set to: $slug"
+}
+
+CMD="${1:-list}"
+shift 2>/dev/null || true
+
+case "$CMD" in
+  list)       _list_services ;;
+  info)       _info "$@" ;;
+  set-active) _set_active "$@" ;;
+  -h|--help)
+    echo "Usage: ./services [list|info <slug>|set-active <slug>]"
+    ;;
+  *)
+    # If the first arg looks like a slug (not a subcommand), treat
+    # as shorthand for "info"
+    _info "$CMD"
+    ;;
+esac
+SERVICES_SCRIPT
 chmod +x "$MAIN_DIR/services"
 
 # --------------------------------------------------------------------------- #
@@ -707,5 +867,176 @@ for name in "${EXISTING_SERVICE_SCRIPTS[@]}"; do
   done
   write_dispatch_script "$name" "$mode"
 done
+
+# --------------------------------------------------------------------------- #
+#  7) Generate dev_skel.project.yml (AFTER the AI installer so sidecars exist)
+# --------------------------------------------------------------------------- #
+
+{
+  KUBE_CLUSTER_NAME="${KUBE_CLUSTER_NAME:-${K8S_CLUSTER_NAME:-local}}"
+  KUBE_CONTEXT="${KUBE_CONTEXT:-${K8S_CONTEXT:-default}}"
+  KUBE_NAMESPACE="${KUBE_NAMESPACE:-${K8S_NAMESPACE:-swarm}}"
+  IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-${KUBE_IMAGE_REPOSITORY:-${SWARM_REGISTRY:-beret}}}"
+
+  echo "# Auto-generated by common-wrapper.sh — do not edit by hand."
+  echo "# Re-run any gen script to refresh after adding/removing services."
+  echo ""
+  echo "project:"
+  echo "  name: $(basename "$MAIN_DIR")"
+  echo ""
+  echo "kubernetes:"
+  echo "  cluster: $KUBE_CLUSTER_NAME"
+  echo "  context: $KUBE_CONTEXT"
+  echo "  namespace: $KUBE_NAMESPACE"
+  echo ""
+  echo "images:"
+  echo "  repository: $IMAGE_REPOSITORY"
+  echo ""
+  echo "services:"
+
+  shopt -s nullglob
+  for dir in "$MAIN_DIR"/*/; do
+    svc_name="$(basename "$dir")"
+    case "$svc_name" in _shared|.*|contracts) continue ;; esac
+
+    sidecar="${dir%/}/.skel_context.json"
+    skel_name=""
+    skel_version=""
+    if [[ -f "$sidecar" ]]; then
+      skel_name=$(python3 -c "import json,sys;d=json.load(open(sys.argv[1]));print(d.get('skeleton_name',''))" "$sidecar" 2>/dev/null || true)
+      skel_version=$(python3 -c "import json,sys;d=json.load(open(sys.argv[1]));print(d.get('skeleton_version',''))" "$sidecar" 2>/dev/null || true)
+    fi
+
+    kind="backend"
+    case "$skel_name" in
+      ts-react-skel|flutter-skel) kind="frontend" ;;
+    esac
+
+    upper=$(echo "$svc_name" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
+    port=""
+    if [[ -f "$MAIN_DIR/_shared/service-urls.env" ]]; then
+      port=$(grep "^SERVICE_PORT_${upper}=" "$MAIN_DIR/_shared/service-urls.env" 2>/dev/null | cut -d= -f2 || true)
+    fi
+
+    echo "  - id: $svc_name"
+    echo "    kind: $kind"
+    [[ -n "$skel_name" ]] && echo "    tech: $skel_name"
+    [[ -n "$skel_version" ]] && echo "    version: $skel_version"
+    [[ -n "$port" ]] && echo "    port: $port"
+    echo "    directory: ./$svc_name"
+  done
+} >"$MAIN_DIR/dev_skel.project.yml"
+echo "  + dev_skel.project.yml"
+
+# --------------------------------------------------------------------------- #
+#  8) run-dev-all / stop-dev-all — multi-service launcher
+# --------------------------------------------------------------------------- #
+
+cat >"$MAIN_DIR/run-dev-all" <<'RUN_DEV_ALL'
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Source shared env
+if [[ -f "$SCRIPT_DIR/.env" ]]; then set -a; source "$SCRIPT_DIR/.env"; set +a; fi
+if [[ -f "$SCRIPT_DIR/_shared/service-urls.env" ]]; then set -a; source "$SCRIPT_DIR/_shared/service-urls.env"; set +a; fi
+
+# Discover services with ./run-dev
+shopt -s nullglob
+SERVICES=()
+for dir in "$SCRIPT_DIR"/*/; do
+  svc="$(basename "$dir")"
+  case "$svc" in _shared|.*|contracts) continue ;; esac
+  [[ -x "${dir%/}/run-dev" ]] && SERVICES+=("$svc")
+done
+
+if [[ ${#SERVICES[@]} -eq 0 ]]; then
+  echo "[run-dev-all] no services found with ./run-dev" >&2
+  exit 0
+fi
+
+mkdir -p "$SCRIPT_DIR/_shared/logs"
+PID_FILE="$SCRIPT_DIR/_shared/run-dev-all.pids"
+> "$PID_FILE"
+
+echo "[run-dev-all] Starting ${#SERVICES[@]} service(s)..."
+
+for svc in "${SERVICES[@]}"; do
+  log="$SCRIPT_DIR/_shared/logs/${svc}.log"
+  echo "[run-dev-all] >>> $svc (log: _shared/logs/${svc}.log)"
+  ( cd "$SCRIPT_DIR/$svc" && ./run-dev > "$log" 2>&1 ) &
+  echo "$! $svc" >> "$PID_FILE"
+done
+
+echo ""
+echo "[run-dev-all] All services started. PIDs in _shared/run-dev-all.pids"
+echo "[run-dev-all] Tailing logs (Ctrl+C to stop)..."
+echo ""
+
+trap 'echo ""; echo "[run-dev-all] Stopping..."; bash "$SCRIPT_DIR/stop-dev-all"; exit 0' INT TERM
+tail -F "$SCRIPT_DIR"/_shared/logs/*.log 2>/dev/null || wait
+RUN_DEV_ALL
+chmod +x "$MAIN_DIR/run-dev-all"
+
+cat >"$MAIN_DIR/stop-dev-all" <<'STOP_DEV_ALL'
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PID_FILE="$SCRIPT_DIR/_shared/run-dev-all.pids"
+
+if [[ ! -f "$PID_FILE" ]]; then
+  echo "[stop-dev-all] no PID file found — nothing to stop" >&2
+  exit 0
+fi
+
+while read -r pid svc; do
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null && echo "[stop-dev-all] stopped $svc (pid $pid)"
+  fi
+done < "$PID_FILE"
+
+rm -f "$PID_FILE"
+echo "[stop-dev-all] all services stopped"
+STOP_DEV_ALL
+chmod +x "$MAIN_DIR/stop-dev-all"
+
+# --------------------------------------------------------------------------- #
+#  9) ./deploy script — Kubernetes/Helm lifecycle
+# --------------------------------------------------------------------------- #
+
+cat >"$MAIN_DIR/kube" <<'DEPLOY_SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+# Dev Skel deployment wrapper.
+# Usage:
+#   ./deploy helm-gen           # generate Helm chart from project metadata
+#   ./deploy up                 # helm upgrade --install
+#   ./deploy up -f deploy/helm/values-local.yaml  # with local overrides
+#   ./deploy down               # helm uninstall
+#   ./deploy status             # show release + pods
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Find the dev_skel skel-deploy script
+SKEL_DEPLOY=""
+for candidate in \
+  "$SCRIPT_DIR/../_bin/skel-deploy" \
+  "${DEV_SKEL_ROOT:-}/bin/skel-deploy" \
+  "$HOME/dev_skel/_bin/skel-deploy" \
+  "$HOME/dev/_bin/skel-deploy"; do
+  if [[ -x "$candidate" ]]; then
+    SKEL_DEPLOY="$candidate"
+    break
+  fi
+done
+
+if [[ -z "$SKEL_DEPLOY" ]]; then
+  echo "Error: skel-deploy not found. Set DEV_SKEL_ROOT or install dev_skel." >&2
+  exit 1
+fi
+
+exec "$SKEL_DEPLOY" "${1:-helm-gen}" "$SCRIPT_DIR" "${@:2}"
+DEPLOY_SCRIPT
+chmod +x "$MAIN_DIR/kube"
 
 echo "[common-wrapper] Done."

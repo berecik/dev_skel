@@ -84,7 +84,10 @@ export async function listItems(options: RequestOptions = {}): Promise<Item[]> {
     headers: buildHeaders(options),
     signal: options.signal,
   });
-  return unwrap<Item[]>(response);
+  const body = await unwrap<Item[] | { results?: Item[]; items?: Item[] }>(response);
+  // Handle both raw arrays and paginated wrappers ({results: [...]}, {items: [...]})
+  if (Array.isArray(body)) return body;
+  return body.results ?? body.items ?? [];
 }
 
 export async function getItem(

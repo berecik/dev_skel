@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+"""Dev Skel deployment CLI.
+
+Subcommands:
+
+    helm-gen [wrapper-dir]
+        Generate a Helm chart under ``<wrapper>/deploy/helm/`` from the
+        project's ``dev_skel.project.yml`` and the canonical templates
+        at ``_skels/_common/helm/``.
+
+    up [wrapper-dir]
+        Run ``helm upgrade --install`` against the generated chart.
+
+    down [wrapper-dir]
+        Run ``helm uninstall`` to tear down the deployment.
+
+    status [wrapper-dir]
+        Show the Helm release status + pod health.
+
+Usage::
+
+    _bin/skel-deploy helm-gen myproj
+    _bin/skel-deploy up myproj
+    _bin/skel-deploy down myproj
+    _bin/skel-deploy status myproj
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+HELM_TEMPLATES = REPO_ROOT / "_skels" / "_common" / "helm"
+
+
+def _read_project_yml(wrapper: Path) -> dict:
+    """Minimal YAML-subset parser for dev_skel.project.yml."""
+    yml = wrapper / "dev_skel.project.yml"
+    if not yml.is_file():
+        print(f"Error: {yml} not found — run a gen script first.", file=sys.stderr)
+        sys.exit(1)
+
+    data: dict = {"project": {}, "kubernetes": {}, "images": {}, "services": []}
+    current_service: dict | None = None
+
+    for line in yml.read_text().splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or not stripped:
+            continue
+
+        # Top-level keys
+        if line.startswith("  name:"):
+            data["project"]["name"] = stripped.split(":", 1)[1].strip()
+        elif line.startswith("  cluster:"):
+            data["kubernetes"]["cluster"] = stripped.split(":", 1)[1].strip()
+        elif line.startswith("  context:"):
+            data["kubernetes"]["context"] = stripped.split(":", 1)[1].strip()
+        elif line.startswith("  namespace:"):
+            data["kubernetes"]["namespace"] = stripped.split(":", 1)[1].strip()
+        elif line.startswith("  repository:"):
+            data["images"]["repository"] = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("- id:"):
+            if current_service:
+                data["services"].append(current_service)
+            current_service = {"id": stripped.split(":", 1)[1].strip()}
+        elif current_service and stripped.startswith("kind:"):
+            current_service["kind"] = stripped.split(":", 1)[1].strip()
+        elif current_service and stripped.startswith("tech:"):
+            current_service["tech"] = stripped.split(":", 1)[1].strip()
+        elif current_service and stripped.startswith("port:"):
+            current_service["port"] = stripped.split(":", 1)[1].strip()
+        elif current_service and stripped.startswith("version:"):
+            current_service["version"] = stripped.split(":", 1)[1].strip()
+
+    if current_service:
+        data["services"].append(current_service)
+
+    return data
+
+
+def _health_path(tech: str) -> str:
+    """Return the health check path for a skeleton tech."""
+    if "next-js" in tech:
+        return "/api/health"
+    return "/api/health"
+
+
+def _render_template(template_path: Path, replacements: dict) -> str:
+    content = template_path.read_text()
+    for key, value in replacements.items():
+        content = content.replace(f"{{{{{key}}}}}", value)
+    return content
+
+
+def _generate_services_values(services: list) -> str:
+    lines = []
+    for svc in services:
+        svc_id = svc["id"].replace("_", "-")  # K8s names: no underscores
+        port = svc.get("port", "8000")
+        kind = svc.get("kind", "backend")
+        tech = svc.get("tech", "")
+        hp = _health_path(tech) if kind == "backend" else ""
+
+        lines.append(f"  {svc_id}:")
+        lines.append(f"    kind: {kind}")
+        lines.append(f"    port: {port}")
+        lines.append(f"    replicas: 1")
+        if hp:
+            lines.append(f"    healthPath: {hp}")
+        if kind == "frontend":
+            lines.append(f"    containerPort: 80")
+
+    return "\n".join(lines)
+
+
+def cmd_helm_gen(args: argparse.Namespace) -> int:
+    wrapper = Path(args.wrapper_dir).resolve()
+    data = _read_project_yml(wrapper)
+
+    project_name = data["project"].get("name", wrapper.name)
+    namespace = data["kubernetes"].get("namespace", "devskel")
+    repository = data["images"].get("repository", "")
+
+    helm_dir = wrapper / "deploy" / "helm"
+    templates_dir = helm_dir / "templates" / "tests"
+    templates_dir.mkdir(parents=True, exist_ok=True)
+
+    replacements = {
+        "PROJECT_NAME": project_name,
+        "KUBE_NAMESPACE": namespace,
+        "IMAGE_REPOSITORY": repository,
+        "SERVICES_VALUES": _generate_services_values(data["services"]),
+    }
+
+    # Copy and render template files
+    for tpl in HELM_TEMPLATES.glob("*.tpl"):
+        out_name = tpl.name.removesuffix(".tpl")
+        content = _render_template(tpl, replacements)
+        (helm_dir / out_name).write_text(content)
+        print(f"  + deploy/helm/{out_name}")
+
+    # Copy static template files
+    src_templates = HELM_TEMPLATES / "templates"
+    dst_templates = helm_dir / "templates"
+    for src in src_templates.rglob("*"):
+        if src.is_file():
+            rel = src.relative_to(src_templates)
+            dst = dst_templates / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            print(f"  + deploy/helm/templates/{rel}")
+
+    # Write .helmignore
+    (helm_dir / ".helmignore").write_text(
+        ".git\n.gitignore\n__pycache__\n*.pyc\n"
+    )
+
+    print(f"\nHelm chart generated at: {helm_dir}")
+    print(f"  Install: helm install {project_name} {helm_dir} -n {namespace}")
+    print(f"  Local:   helm install {project_name} {helm_dir} -f {helm_dir}/values-local.yaml -n {namespace}")
+    return 0
+
+
+def cmd_up(args: argparse.Namespace) -> int:
+    wrapper = Path(args.wrapper_dir).resolve()
+    data = _read_project_yml(wrapper)
+    name = data["project"].get("name", wrapper.name)
+    ns = data["kubernetes"].get("namespace", "devskel")
+    helm_dir = wrapper / "deploy" / "helm"
+
+    if not helm_dir.is_dir():
+        print("No deploy/helm/ found — run `skel-deploy helm-gen` first.")
+        return 1
+
+    values_file = args.values or ""
+    cmd = ["helm", "upgrade", "--install", name, str(helm_dir),
+           "--namespace", ns, "--create-namespace"]
+    if values_file:
+        cmd.extend(["-f", values_file])
+
+    print(f"Running: {' '.join(cmd)}")
+    return subprocess.run(cmd).returncode
+
+
+def cmd_down(args: argparse.Namespace) -> int:
+    wrapper = Path(args.wrapper_dir).resolve()
+    data = _read_project_yml(wrapper)
+    name = data["project"].get("name", wrapper.name)
+    ns = data["kubernetes"].get("namespace", "devskel")
+
+    cmd = ["helm", "uninstall", name, "--namespace", ns]
+    print(f"Running: {' '.join(cmd)}")
+    return subprocess.run(cmd).returncode
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    wrapper = Path(args.wrapper_dir).resolve()
+    data = _read_project_yml(wrapper)
+    name = data["project"].get("name", wrapper.name)
+    ns = data["kubernetes"].get("namespace", "devskel")
+
+    print(f"=== Helm release: {name} (namespace: {ns}) ===")
+    subprocess.run(["helm", "status", name, "-n", ns])
+    print()
+    print(f"=== Pods ===")
+    subprocess.run(["kubectl", "get", "pods", "-n", ns, "-l",
+                     f"app.kubernetes.io/part-of={name}"])
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="skel-deploy",
+        description="Dev Skel Kubernetes/Helm deployment CLI.",
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    p = sub.add_parser("helm-gen", help="Generate Helm chart from project metadata")
+    p.add_argument("wrapper_dir", help="Path to the wrapper project")
+
+    p = sub.add_parser("up", help="Deploy via helm upgrade --install")
+    p.add_argument("wrapper_dir", help="Path to the wrapper project")
+    p.add_argument("-f", "--values", help="Extra values file override")
+
+    p = sub.add_parser("down", help="Tear down via helm uninstall")
+    p.add_argument("wrapper_dir", help="Path to the wrapper project")
+
+    p = sub.add_parser("status", help="Show release + pod status")
+    p.add_argument("wrapper_dir", help="Path to the wrapper project")
+
+    args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        return 0
+
+    return {"helm-gen": cmd_helm_gen, "up": cmd_up, "down": cmd_down,
+            "status": cmd_status}[args.command](args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

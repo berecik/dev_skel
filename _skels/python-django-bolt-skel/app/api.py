@@ -56,6 +56,12 @@ api = BoltAPI()
 # --------------------------------------------------------------------------- #
 
 
+@api.get("/api/health", guards=[AllowAny()])
+async def health_check(request: Request) -> dict:
+    """Health check endpoint — always returns 200."""
+    return {"status": "ok"}
+
+
 @api.post("/api/auth/register", guards=[AllowAny()])
 async def register(request: Request) -> dict:
     data = msgspec.json.decode(request.body, type=RegisterSchema)

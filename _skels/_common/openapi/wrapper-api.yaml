@@ -1,0 +1,502 @@
+openapi: "3.1.0"
+info:
+  title: Dev Skel Wrapper-Shared API
+  description: |
+    Canonical contract for the wrapper-shared endpoints that every
+    dev_skel backend skeleton must implement. Both frontends (React
+    and Flutter) call these endpoints via BACKEND_URL.
+
+    This spec is the single source of truth. The cross-stack
+    integration test (_bin/_frontend_backend_lib.py) validates every
+    backend against these endpoints at runtime.
+  version: "1.0.0"
+  contact:
+    name: dev_skel
+    url: https://github.com/berecik/dev_skel
+
+servers:
+  - url: "{backend_url}"
+    description: Wrapper-shared backend (from BACKEND_URL in .env)
+    variables:
+      backend_url:
+        default: http://localhost:8000
+
+tags:
+  - name: auth
+    description: User registration and JWT authentication
+  - name: categories
+    description: Shared category CRUD (auth-protected)
+  - name: items
+    description: Item CRUD with optional category FK (auth-protected)
+  - name: state
+    description: Per-user key/value state store (auth-protected)
+
+# ---------------------------------------------------------------------------
+#  Security
+# ---------------------------------------------------------------------------
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT signed with JWT_SECRET from <wrapper>/.env. Issuer is
+        "devskel". Access TTL defaults to 3600s.
+
+  # -----------------------------------------------------------------------
+  #  Schemas
+  # -----------------------------------------------------------------------
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+        email:
+          type: string
+      required: [id, username]
+
+    RegisterRequest:
+      type: object
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 150
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 1
+        password_confirm:
+          type: string
+          minLength: 1
+      required: [username, email, password, password_confirm]
+
+    LoginRequest:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+      required: [username, password]
+
+    LoginResponse:
+      type: object
+      properties:
+        access:
+          type: string
+          description: JWT access token
+      required: [access]
+
+    Category:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: ["string", "null"]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, name, created_at, updated_at]
+
+    NewCategory:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: ["string", "null"]
+      required: [name]
+
+    Item:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: ["string", "null"]
+        is_completed:
+          type: boolean
+        category_id:
+          type: ["integer", "null"]
+          description: FK to categories.id (nullable, ON DELETE SET NULL)
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, name, is_completed, created_at, updated_at]
+
+    NewItem:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: ["string", "null"]
+        is_completed:
+          type: boolean
+          default: false
+        category_id:
+          type: ["integer", "null"]
+      required: [name]
+
+    StateSlices:
+      type: object
+      additionalProperties:
+        type: string
+      description: |
+        Map of key → JSON-stringified value. The backend stores values
+        as opaque strings; the frontend handles encode/decode.
+
+    StateUpsert:
+      type: object
+      properties:
+        value:
+          type: string
+          description: JSON-stringified value
+      required: [value]
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+
+# ---------------------------------------------------------------------------
+#  Paths
+# ---------------------------------------------------------------------------
+
+paths:
+
+  # --- Auth ----------------------------------------------------------------
+
+  /api/auth/register:
+    post:
+      tags: [auth]
+      summary: Register a new user
+      operationId: registerUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: "#/components/schemas/User"
+                required: [user]
+        "409":
+          description: Username already exists
+
+  /api/auth/login:
+    post:
+      tags: [auth]
+      summary: Authenticate and receive a JWT
+      operationId: loginUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          description: Invalid credentials
+
+  # --- Categories ----------------------------------------------------------
+
+  /api/categories:
+    get:
+      tags: [categories]
+      summary: List all categories
+      operationId: listCategories
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Category list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Category"
+        "401":
+          description: Authentication required
+    post:
+      tags: [categories]
+      summary: Create a category
+      operationId: createCategory
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewCategory"
+      responses:
+        "201":
+          description: Category created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Category"
+        "401":
+          description: Authentication required
+        "409":
+          description: Category name already exists
+
+  /api/categories/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    get:
+      tags: [categories]
+      summary: Get a category by ID
+      operationId: getCategory
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Category found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Category"
+        "401":
+          description: Authentication required
+        "404":
+          description: Category not found
+    put:
+      tags: [categories]
+      summary: Update a category
+      operationId: updateCategory
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewCategory"
+      responses:
+        "200":
+          description: Category updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Category"
+        "401":
+          description: Authentication required
+        "404":
+          description: Category not found
+        "409":
+          description: Category name already exists
+    delete:
+      tags: [categories]
+      summary: Delete a category (items.category_id → null)
+      operationId: deleteCategory
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Category deleted
+        "401":
+          description: Authentication required
+        "404":
+          description: Category not found
+
+  # --- Items ---------------------------------------------------------------
+
+  /api/items:
+    get:
+      tags: [items]
+      summary: List all items
+      operationId: listItems
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Item list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Item"
+        "401":
+          description: Authentication required
+    post:
+      tags: [items]
+      summary: Create an item
+      operationId: createItem
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewItem"
+      responses:
+        "201":
+          description: Item created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Item"
+        "401":
+          description: Authentication required
+
+  /api/items/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    get:
+      tags: [items]
+      summary: Get an item by ID
+      operationId: getItem
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Item found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Item"
+        "401":
+          description: Authentication required
+        "404":
+          description: Item not found
+
+  /api/items/{id}/complete:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    post:
+      tags: [items]
+      summary: Mark an item as completed
+      operationId: completeItem
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Item completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Item"
+        "401":
+          description: Authentication required
+        "404":
+          description: Item not found
+
+  # --- State ---------------------------------------------------------------
+
+  /api/state:
+    get:
+      tags: [state]
+      summary: Load all state slices for the authenticated user
+      operationId: loadAllState
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: State slices
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StateSlices"
+        "401":
+          description: Authentication required
+
+  /api/state/{key}:
+    parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      tags: [state]
+      summary: Upsert a state slice
+      operationId: upsertState
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StateUpsert"
+      responses:
+        "200":
+          description: State saved
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: Authentication required
+    delete:
+      tags: [state]
+      summary: Delete a state slice
+      operationId: deleteState
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: State deleted
+        "204":
+          description: State deleted
+        "401":
+          description: Authentication required

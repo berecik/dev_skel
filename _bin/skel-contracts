@@ -1,0 +1,355 @@
+#!/usr/bin/env python3
+"""Dev Skel contract management CLI.
+
+Subcommands:
+
+    export [wrapper-dir]
+        Copy the canonical OpenAPI spec into a generated wrapper at
+        ``<wrapper>/contracts/openapi/wrapper-api.yaml``.
+
+    validate <backend-url>
+        Hit a running backend's endpoints and validate responses match
+        the canonical wrapper-shared API contract. Exercises the same
+        14-endpoint flow as the cross-stack integration test but
+        reports per-endpoint pass/fail against the spec.
+
+    diff <spec1> <spec2>
+        Compare two OpenAPI spec files and report breaking changes
+        (missing paths, missing fields, changed required status).
+
+    info
+        Print the canonical spec location and endpoint summary.
+
+Usage::
+
+    _bin/skel-contracts export myproj
+    _bin/skel-contracts validate http://127.0.0.1:8000
+    _bin/skel-contracts diff old-spec.yaml new-spec.yaml
+    _bin/skel-contracts info
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+CANONICAL_SPEC = REPO_ROOT / "_skels" / "_common" / "openapi" / "wrapper-api.yaml"
+
+# Reuse the HTTP helper from the cross-stack test library
+sys.path.insert(0, str(SCRIPT_DIR))
+try:
+    from _frontend_backend_lib import http_request
+except ImportError:
+    # Minimal fallback if the lib isn't importable
+    def http_request(method, url, *, body=None, headers=None, timeout=10):
+        req_headers = {"Accept": "application/json"}
+        if headers:
+            req_headers.update(headers)
+        data = None
+        if body is not None:
+            data = json.dumps(body).encode("utf-8")
+            req_headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+                return resp.status, json.loads(raw) if raw.strip() else None
+        except urllib.error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            try:
+                return exc.code, json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                return exc.code, raw
+
+
+# ---------------------------------------------------------------------------
+#  export
+# ---------------------------------------------------------------------------
+
+def cmd_export(args: argparse.Namespace) -> int:
+    wrapper = Path(args.wrapper_dir).resolve()
+    if not wrapper.is_dir():
+        print(f"Error: {wrapper} is not a directory", file=sys.stderr)
+        return 1
+
+    dest_dir = wrapper / "contracts" / "openapi"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / "wrapper-api.yaml"
+    shutil.copy2(CANONICAL_SPEC, dest)
+    print(f"Exported: {dest}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+#  validate
+# ---------------------------------------------------------------------------
+
+TEST_USERNAME = "contract-validate-user"
+TEST_PASSWORD = "contract-validate-pw-12345"
+TEST_EMAIL = "contract-validate@example.com"
+
+
+def cmd_validate(args: argparse.Namespace) -> int:
+    url = args.backend_url.rstrip("/")
+    print(f"Validating wrapper-shared API contract against {url}")
+    print()
+
+    checks = 0
+    failures = 0
+
+    def check(label: str, passed: bool, detail: str = ""):
+        nonlocal checks, failures
+        checks += 1
+        if passed:
+            print(f"  ✓ {label}")
+        else:
+            failures += 1
+            print(f"  ✗ {label}{' — ' + detail if detail else ''}")
+
+    # --- Auth ---
+    status, body = http_request("POST", f"{url}/api/auth/register", body={
+        "username": TEST_USERNAME, "email": TEST_EMAIL,
+        "password": TEST_PASSWORD, "password_confirm": TEST_PASSWORD,
+    })
+    check("POST /api/auth/register → 201 or 409",
+          status in (201, 409),
+          f"got {status}")
+
+    status, body = http_request("POST", f"{url}/api/auth/login", body={
+        "username": TEST_USERNAME, "password": TEST_PASSWORD,
+    })
+    check("POST /api/auth/login → 200", status == 200, f"got {status}")
+    token = ""
+    if isinstance(body, dict):
+        token = body.get("access") or body.get("token") or ""
+    check("login response has 'access' field", bool(token),
+          f"body keys: {list(body.keys()) if isinstance(body, dict) else '?'}")
+    auth = {"Authorization": f"Bearer {token}"}
+
+    # --- Categories ---
+    status, body = http_request("POST", f"{url}/api/categories", body={
+        "name": "contract-test-cat", "description": "contract validation",
+    }, headers=auth)
+    check("POST /api/categories → 201", status == 201, f"got {status}")
+    cat_id = body.get("id") if isinstance(body, dict) else None
+    if isinstance(body, dict):
+        check("category has 'id' field", bool(cat_id))
+        check("category has 'name' field", "name" in body)
+        check("category has 'created_at' field", "created_at" in body)
+
+    status, body = http_request("GET", f"{url}/api/categories", headers=auth)
+    check("GET /api/categories → 200", status == 200, f"got {status}")
+    check("categories response is array", isinstance(body, list),
+          f"type: {type(body).__name__}")
+
+    if cat_id:
+        status, body = http_request("GET", f"{url}/api/categories/{cat_id}", headers=auth)
+        check(f"GET /api/categories/{cat_id} → 200", status == 200)
+
+        status, body = http_request("PUT", f"{url}/api/categories/{cat_id}", body={
+            "name": "contract-test-cat-updated",
+        }, headers=auth)
+        check(f"PUT /api/categories/{cat_id} → 200", status == 200)
+
+        status, _ = http_request("DELETE", f"{url}/api/categories/{cat_id}", headers=auth)
+        check(f"DELETE /api/categories/{cat_id} → 204 or 200", status in (200, 204))
+
+    # --- Items ---
+    status, body = http_request("GET", f"{url}/api/items", headers=auth)
+    check("GET /api/items → 200", status == 200, f"got {status}")
+    check("items response is array", isinstance(body, list),
+          f"type: {type(body).__name__}")
+
+    status, body = http_request("POST", f"{url}/api/items", body={
+        "name": "contract-test-item", "description": "test", "is_completed": False,
+    }, headers=auth)
+    check("POST /api/items → 201", status == 201, f"got {status}")
+    item_id = body.get("id") if isinstance(body, dict) else None
+    if isinstance(body, dict):
+        check("item has 'id' field", bool(item_id))
+        check("item has 'is_completed' field", "is_completed" in body)
+        check("item.is_completed is boolean", isinstance(body.get("is_completed"), bool),
+              f"type: {type(body.get('is_completed')).__name__}")
+        check("item has 'category_id' field", "category_id" in body,
+              f"keys: {list(body.keys())}")
+
+    if item_id:
+        status, body = http_request("GET", f"{url}/api/items/{item_id}", headers=auth)
+        check(f"GET /api/items/{item_id} → 200", status == 200)
+
+        status, body = http_request("POST", f"{url}/api/items/{item_id}/complete", headers=auth)
+        check(f"POST /api/items/{item_id}/complete → 200", status in (200, 201))
+        if isinstance(body, dict):
+            check("completed item.is_completed is true",
+                  body.get("is_completed") is True)
+
+    # --- State ---
+    status, body = http_request("PUT", f"{url}/api/state/contract.test", body={
+        "value": '{"validated":true}',
+    }, headers=auth)
+    check("PUT /api/state/contract.test → 200", status == 200)
+
+    status, body = http_request("GET", f"{url}/api/state", headers=auth)
+    check("GET /api/state → 200", status == 200)
+    check("state response is dict", isinstance(body, dict))
+    if isinstance(body, dict):
+        check("state contains saved key", "contract.test" in body)
+
+    status, _ = http_request("DELETE", f"{url}/api/state/contract.test", headers=auth)
+    check("DELETE /api/state/contract.test → 200 or 204", status in (200, 204))
+
+    # --- Auth enforcement ---
+    status, _ = http_request("GET", f"{url}/api/items")
+    check("GET /api/items without token → 401/403", status in (401, 403),
+          f"got {status}")
+
+    status, _ = http_request("GET", f"{url}/api/items",
+                              headers={"Authorization": "Bearer invalid"})
+    check("GET /api/items with invalid token → 401/403", status in (401, 403),
+          f"got {status}")
+
+    # --- Summary ---
+    print()
+    if failures:
+        print(f"{failures}/{checks} checks failed.")
+        return 1
+    print(f"All {checks} checks passed.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+#  diff
+# ---------------------------------------------------------------------------
+
+def _parse_yaml_paths(content: str) -> dict:
+    """Extract path entries from a YAML spec (minimal parser)."""
+    import re
+    paths = {}
+    in_paths = False
+    current_path = None
+    for line in content.splitlines():
+        if line.startswith("paths:"):
+            in_paths = True
+            continue
+        if in_paths and not line.startswith(" ") and line.strip() and not line.startswith("#"):
+            break
+        if in_paths and re.match(r"^  /", line):
+            current_path = line.strip().rstrip(":")
+            paths[current_path] = set()
+        elif in_paths and current_path and re.match(r"^    (get|post|put|delete|patch|head|options):", line):
+            method = line.strip().rstrip(":")
+            paths[current_path].add(method)
+    return paths
+
+
+def cmd_diff(args: argparse.Namespace) -> int:
+    spec1 = Path(args.spec1)
+    spec2 = Path(args.spec2)
+    if not spec1.is_file():
+        print(f"Error: {spec1} not found", file=sys.stderr)
+        return 1
+    if not spec2.is_file():
+        print(f"Error: {spec2} not found", file=sys.stderr)
+        return 1
+
+    paths1 = _parse_yaml_paths(spec1.read_text())
+    paths2 = _parse_yaml_paths(spec2.read_text())
+
+    breaking = []
+    added = []
+
+    for path, methods in paths1.items():
+        if path not in paths2:
+            breaking.append(f"REMOVED path: {path}")
+        else:
+            for m in methods:
+                if m not in paths2[path]:
+                    breaking.append(f"REMOVED method: {m.upper()} {path}")
+
+    for path, methods in paths2.items():
+        if path not in paths1:
+            added.append(f"ADDED path: {path}")
+        else:
+            for m in methods:
+                if m not in paths1[path]:
+                    added.append(f"ADDED method: {m.upper()} {path}")
+
+    if breaking:
+        print("Breaking changes:")
+        for b in breaking:
+            print(f"  ✗ {b}")
+    if added:
+        print("Non-breaking additions:")
+        for a in added:
+            print(f"  + {a}")
+    if not breaking and not added:
+        print("No changes detected.")
+
+    return 1 if breaking else 0
+
+
+# ---------------------------------------------------------------------------
+#  info
+# ---------------------------------------------------------------------------
+
+def cmd_info(args: argparse.Namespace) -> int:
+    print(f"Canonical spec: {CANONICAL_SPEC}")
+    print(f"Exists: {CANONICAL_SPEC.is_file()}")
+    if CANONICAL_SPEC.is_file():
+        content = CANONICAL_SPEC.read_text()
+        paths = _parse_yaml_paths(content)
+        total_ops = sum(len(m) for m in paths.values())
+        print(f"Paths: {len(paths)}")
+        print(f"Operations: {total_ops}")
+        for path, methods in sorted(paths.items()):
+            for m in sorted(methods):
+                print(f"  {m.upper():7s} {path}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+#  main
+# ---------------------------------------------------------------------------
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="skel-contracts",
+        description="Dev Skel contract management — export, validate, diff.",
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    p_export = sub.add_parser("export", help="Export canonical spec to a wrapper")
+    p_export.add_argument("wrapper_dir", help="Path to the wrapper directory")
+
+    p_validate = sub.add_parser("validate", help="Validate a running backend against the spec")
+    p_validate.add_argument("backend_url", help="Backend URL (e.g. http://127.0.0.1:8000)")
+
+    p_diff = sub.add_parser("diff", help="Diff two OpenAPI specs for breaking changes")
+    p_diff.add_argument("spec1", help="Path to the first spec file")
+    p_diff.add_argument("spec2", help="Path to the second spec file")
+
+    sub.add_parser("info", help="Print spec location and endpoint summary")
+
+    args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        return 0
+
+    return {
+        "export": cmd_export,
+        "validate": cmd_validate,
+        "diff": cmd_diff,
+        "info": cmd_info,
+    }[args.command](args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

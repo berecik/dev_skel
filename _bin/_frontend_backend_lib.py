@@ -908,7 +908,7 @@ def exercise_categories_api(
     )
     assert status == 200
     cats = body if isinstance(body, list) else (
-        body.get("results", []) if isinstance(body, dict) else []
+        (body.get("results") or body.get("items") or []) if isinstance(body, dict) else []
     )
     cat_names = [c.get("name") for c in cats if isinstance(c, dict)]
     assert TEST_CATEGORY_NAME in cat_names, (
@@ -1014,7 +1014,7 @@ def exercise_items_api(backend_url: str) -> None:
     )
     assert status == 200, f"GET /api/items expected 200, got {status}: {body}"
     initial_items = body if isinstance(body, list) else (
-        body.get("results", []) if isinstance(body, dict) else []
+        (body.get("results") or body.get("items") or []) if isinstance(body, dict) else []
     )
     print(f"  ✓ GET /api/items → 200 (initial count={len(initial_items)})")
 
@@ -1051,7 +1051,7 @@ def exercise_items_api(backend_url: str) -> None:
     )
     assert status == 200
     items_after = body if isinstance(body, list) else (
-        body.get("results", []) if isinstance(body, dict) else []
+        (body.get("results") or body.get("items") or []) if isinstance(body, dict) else []
     )
     names = [i.get("name") for i in items_after if isinstance(i, dict)]
     assert TEST_ITEM_NAME in names, f"new item not in list after create: {names}"

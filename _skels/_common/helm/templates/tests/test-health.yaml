@@ -1,0 +1,31 @@
+{{/*
+Helm test: verify every backend's /api/health returns 200.
+Run: helm test <release> -n <namespace>
+*/}}
+{{- range $svcName, $svc := .Values.services }}
+{{- if $svc.healthPath }}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ $svcName }}-health-test
+  namespace: {{ $.Values.namespace }}
+  labels:
+    {{- include "devskel.labels" $ | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: busybox:1.36
+      command: ["sh", "-c"]
+      args:
+        - |
+          echo "Testing {{ $svcName }} at {{ $svc.healthPath }}..."
+          wget -qO- --timeout=10 http://{{ $svcName }}:{{ $svc.port | default 8000 }}{{ $svc.healthPath }}
+          echo ""
+          echo "{{ $svcName }}: OK"
+{{- end }}
+{{- end }}

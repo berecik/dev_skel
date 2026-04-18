@@ -52,7 +52,7 @@ from dev_skel_lib import slugify_service_name
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_MODEL = "qwen3-coder:30b"
 # seconds — local Ollama can be slow on big models. The default is sized
-# for ~30B-class instruction models like gemma4:31b (a single completion
+# for ~30B-class instruction models like qwen3-coder:30b (a single completion
 # can include a 30-40 s cold-load on the first call plus several minutes
 # of generation on long files). Override with OLLAMA_TIMEOUT in the
 # environment when running on faster hardware or against a smaller model.
@@ -522,7 +522,7 @@ class IntegrationManifest:
       placeholders as :func:`format_prompt`.
     * ``fix_timeout_m`` — maximum wall-clock minutes the test-and-fix
       loop is allowed to run before giving up. Defaults to ``120``
-      (two hours) so a ~30B-class model like ``gemma4:31b`` has enough
+      (two hours) so a ~30B-class model like ``qwen3-coder:30b`` has enough
       headroom for several iterations of file rewrites + test reruns.
       Override via ``FIX_TIMEOUT_M`` env var or per-manifest.
     """

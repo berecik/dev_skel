@@ -1,0 +1,99 @@
+{{/*
+Generate one Deployment + Service per entry in .Values.services.
+Each service maps to a dev_skel-generated backend/frontend.
+*/}}
+{{- range $svcName, $svc := .Values.services }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $svcName }}
+  namespace: {{ $.Values.namespace }}
+  labels:
+    {{- include "devskel.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: {{ $svcName }}
+    app.kubernetes.io/component: {{ $svc.kind | default "backend" }}
+spec:
+  replicas: {{ $svc.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $svcName }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $svcName }}
+        app.kubernetes.io/component: {{ $svc.kind | default "backend" }}
+    spec:
+      containers:
+        - name: {{ $svcName }}
+          image: {{ include "devskel.image" (dict "registry" $.Values.images.repository "name" $svcName "tag" ($.Values.images.tag | default "latest")) }}
+          imagePullPolicy: {{ $.Values.images.pullPolicy | default "IfNotPresent" }}
+          ports:
+            - containerPort: {{ $svc.containerPort | default $svc.port | default 8000 }}
+              protocol: TCP
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://{{ $.Values.postgres.credentials.user }}:{{ $.Values.postgres.credentials.password }}@{{ include "devskel.fullname" $ }}-postgres:5432/{{ $.Values.postgres.credentials.database }}"
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "devskel.fullname" $ }}-jwt
+                  key: secret
+            - name: JWT_ALGORITHM
+              value: "HS256"
+            - name: JWT_ISSUER
+              value: "devskel"
+            - name: LOG_FORMAT
+              value: "json"
+            - name: SERVICE_HOST
+              value: "0.0.0.0"
+            - name: SERVICE_PORT
+              value: {{ $svc.containerPort | default $svc.port | default 8000 | quote }}
+            {{- if eq ($svc.kind | default "backend") "frontend" }}
+            - name: BACKEND_URL
+              value: "http://{{ (index $.Values.services ($.Values.defaultBackend | default "backend")).name | default "backend" }}:{{ (index $.Values.services ($.Values.defaultBackend | default "backend")).port | default 8000 }}"
+            {{- end }}
+          {{- if $svc.resources }}
+          resources:
+            {{- toYaml $svc.resources | nindent 12 }}
+          {{- else }}
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          {{- end }}
+          {{- if $svc.healthPath }}
+          livenessProbe:
+            httpGet:
+              path: {{ $svc.healthPath }}
+              port: {{ $svc.containerPort | default $svc.port | default 8000 }}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: {{ $svc.healthPath }}
+              port: {{ $svc.containerPort | default $svc.port | default 8000 }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $svcName }}
+  namespace: {{ $.Values.namespace }}
+  labels:
+    {{- include "devskel.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: {{ $svcName }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ $svc.port | default 8000 }}
+      targetPort: {{ $svc.containerPort | default $svc.port | default 8000 }}
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: {{ $svcName }}
+{{- end }}

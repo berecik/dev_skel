@@ -65,8 +65,9 @@ export async function listCategories(
     headers: buildHeaders(options),
     signal: options.signal,
   });
-  const body = await unwrap<Category[] | { results: Category[] }>(response);
-  return Array.isArray(body) ? body : body.results;
+  const body = await unwrap<Category[] | { results?: Category[]; items?: Category[] }>(response);
+  if (Array.isArray(body)) return body;
+  return body.results ?? body.items ?? [];
 }
 
 export async function getCategory(

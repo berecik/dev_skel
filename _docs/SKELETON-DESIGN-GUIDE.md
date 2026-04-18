@@ -373,6 +373,24 @@ INTEGRATION_MANIFEST = {
 | `{wrapper_snapshot}` / `{retrieved_siblings}` | sibling service metadata (integration phase) |
 | `{backend_extra}` / `{frontend_extra}` / `{integration_extra}` | user-supplied custom prompts |
 
+### Quality features (automatic)
+
+The AI pipeline includes three quality mechanisms that run
+automatically during generation:
+
+* **Multi-phase context** — each target sees the outputs of all
+  earlier targets via the `{prior_outputs}` placeholder. Later
+  targets (tests, routes) see the exact code earlier targets (models,
+  schemas) produced, keeping field names and imports consistent.
+* **Auto-retry** (`--max-retries N`, default 1) — if the generated
+  code fails the per-skel validator (`cargo check`, `mvn package`,
+  `tsc --noEmit`, `flutter analyze`, `py_compile`), the runner cleans
+  up and re-runs the full generation.
+* **Structured critique loop** (`--critique`, default on) — after
+  generating each file, the model reviews it against the system
+  prompt's CRITICAL/Coding rules sections. On FAIL, the file is
+  re-generated with the critique reason appended as extra context.
+
 ### Rules for manifest authors
 
 1. **Never tell the LLM to hardcode** a database URL, JWT secret, or
@@ -383,6 +401,16 @@ INTEGRATION_MANIFEST = {
    restructure them.
 4. Targets are **additive** — Phase 1 files are never overwritten in
    Phase 3 (integration).
+5. **Include literal compilable code blocks** in prompts for
+   typed-language skeletons (Rust, Java, TypeScript, Dart). The model
+   follows concrete code examples much more reliably than abstract
+   descriptions. Show the exact struct/record/interface shape, the
+   exact import paths, and the exact function signatures.
+6. **Don't regenerate entry-point files** (`main.rs`, `main.dart`,
+   `App.tsx`) when the new entity would cause type mismatches with
+   parameters the entry point already declares. Instead, generate
+   the new module as a standalone file and let the user or the
+   INTEGRATION_MANIFEST wire it in.
 
 ---
 

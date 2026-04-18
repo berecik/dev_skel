@@ -6,7 +6,8 @@ set -euo pipefail
 # This script runs all tests required by the default maintenance scenario:
 #   1. make clean-test
 #   2. make test-generators
-#   3. ./test (per-skeleton e2e tests via test_skel)
+#   3. make test-shared-db-python (cross-language env contract)
+#   4. ./test (per-skeleton e2e tests via test_skel)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -34,7 +35,14 @@ if ! make test-generators; then
 fi
 
 echo ""
-echo -e "${YELLOW}>>> Step 3/3: ./test (per-skeleton e2e tests)${NC}"
+echo -e "${YELLOW}>>> Step 3/4: make test-shared-db-python${NC}"
+if ! make test-shared-db-python; then
+  echo -e "${RED}make test-shared-db-python failed${NC}"
+  exit 1
+fi
+
+echo ""
+echo -e "${YELLOW}>>> Step 4/4: ./test (per-skeleton e2e tests)${NC}"
 if ! ./test; then
   echo -e "${RED}./test failed${NC}"
   exit 1

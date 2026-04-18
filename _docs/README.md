@@ -104,6 +104,11 @@ service.
   to Claude Code, Cursor, Aider, Junie, etc.).
 * [**`../CLAUDE.md`**](../CLAUDE.md) — Claude Code-specific
   conventions (Plan/Task tooling, memory hygiene).
+* [**`../CHANGELOG.md`**](../CHANGELOG.md) — what shipped and when
+  (Phases 1–4 + infrastructure).
+* [**`../ROADMAP.md`**](../ROADMAP.md) — forward-looking phases
+  (5: K8s/Helm, 6: project UX).
+* [**`../TODO.md`**](../TODO.md) — concrete actionable tasks.
 
 ---
 
