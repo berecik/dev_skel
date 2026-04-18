@@ -39,17 +39,28 @@ relies on the same env vars from `<wrapper>/.env`):
 Authentication style requested by the user: `{auth_type}`. Notes:
 {auth_details}
 
-Coding rules:
+Coding rules (CRITICAL — violating these causes compilation failures):
 - Use Spring Boot 3.x with plain JDBC (`JdbcTemplate` / `JdbcClient`).
   Do NOT use JPA entities or annotations (`@Entity`, `@Table`,
-  `@Column`, `@PrePersist`, `@PreUpdate`) — the skeleton uses Java
-  records, NOT JPA classes. The model layer is a plain `record` class
-  (immutable value object) with a static `MAPPER` `RowMapper<>`.
+  `@Column`, `@Id`, `@GeneratedValue`, `@PrePersist`, `@PreUpdate`)
+  — the skeleton uses Java RECORDS, NOT JPA classes. The model layer
+  is a plain `record` (immutable value object). The repository is a
+  concrete `@Repository` class with a static `MAPPER` `RowMapper<>`.
+- Do NOT import `jakarta.persistence.*` — there is NO JPA on the
+  classpath (`spring-boot-starter-data-jpa` is NOT in pom.xml).
+- Do NOT import `jakarta.validation.constraints.*` — there is NO Bean
+  Validation on the classpath (`spring-boot-starter-validation` is NOT
+  in pom.xml). Use manual validation in the controller instead.
+- Records are IMMUTABLE — do NOT generate setter methods, `@PrePersist`
+  / `@PreUpdate` lifecycle callbacks, or builder patterns. Construct
+  records via their canonical all-args constructor only.
+- Do NOT use `JpaRepository`, `CrudRepository`, or any Spring Data
+  interface. The repository is a concrete class that injects
+  `JdbcTemplate` and `JdbcClient`.
 - Do NOT introduce new dependencies — the pom.xml already has everything
   you need (`spring-boot-starter-web`, `spring-boot-starter-jdbc`,
-  `spring-boot-starter-validation`, `spring-boot-starter-actuator`).
+  `spring-boot-starter-actuator`, `spring-security-crypto`, `jjwt-*`).
 - Use `org.springframework.web.bind.annotation.*` for the REST layer.
-  Do NOT use `jakarta.persistence.*` — there is no JPA in this project.
 - Match the indentation, brace style, and import order of the REFERENCE
   template exactly. Replace every `Item` / `item` / `items` token with
   `{item_class}` / `{item_name}` / `{items_plural}`.
@@ -68,27 +79,59 @@ MANIFEST = {
             "path": "src/main/java/com/example/skel/model/{item_class}.java",
             "template": "src/main/java/com/example/skel/model/Item.java",
             "language": "java",
-            "description": "model/{item_class}.java — JDBC record (table `{items_plural}`)",
+            "description": "model/{item_class}.java — plain Java record (table `{items_plural}`)",
             "prompt": """\
 Rewrite `model/Item.java` as `model/{item_class}.java` for the
 `{items_plural}` table.
 
-Required transformations:
-- Class name: `{item_class}`.
-- `@Table(name = "{items_plural}")`.
-- Keep the `id`, `name`, `description`, `createdAt`, `updatedAt` fields
-  exactly as the REFERENCE has them (this matches the canonical
-  `<items_plural>` schema used by `_bin/skel-test-shared-db`).
-- Add an `is_completed` boolean column (`@Column(name =
-  "is_completed", nullable = false) private boolean isCompleted =
-  false;`) and the matching getter/setter.
-- Keep the `@PrePersist` / `@PreUpdate` lifecycle callbacks unchanged.
-- Constructor signature: a no-arg constructor + a `(String name, String
-  description)` convenience constructor (mirror the REFERENCE).
+CRITICAL CONSTRAINTS (violating ANY of these causes a compilation failure):
+- This skeleton uses plain Java RECORDS, NOT JPA entity classes.
+- Do NOT import jakarta.persistence.* or jakarta.validation.* — there is
+  NO JPA and NO Bean Validation on the classpath.
+- Do NOT use @Entity, @Table, @Column, @Id, @GeneratedValue, @PrePersist,
+  @PreUpdate, @NotBlank, @Size, or ANY JPA/validation annotation.
+- Records are IMMUTABLE — do NOT add setter methods, @PrePersist hooks,
+  or any mutable lifecycle callbacks.
+- Use JdbcTemplate/JdbcClient for all database access (handled by the
+  repository, not the model).
 
-Imports: only `jakarta.persistence.*`,
-`jakarta.validation.constraints.NotBlank`,
-`jakarta.validation.constraints.Size`, `java.time.LocalDateTime`.
+Required transformations:
+- Record name: `{item_class}`.
+- Fields: `Long id`, `String name`, `String description`,
+  `boolean isCompleted`, `Long categoryId`, `String createdAt`,
+  `String updatedAt` — these match the canonical `{items_plural}`
+  schema used by the shared-DB integration test.
+- The record has NO annotations and NO additional methods beyond the
+  implicit record accessors.
+- Package: `com.example.skel.model`.
+
+Here is the EXACT pattern you MUST follow (replacing Item with
+{item_class}):
+
+```java
+package com.example.skel.model;
+
+/**
+ * Wrapper-shared {{@code {items_plural}}} resource.
+ *
+ * <p>Jackson serialises the camelCase Java fields to snake_case JSON
+ * keys because {{@code spring.jackson.property-naming-strategy=SNAKE_CASE}}
+ * is set globally in {{@code application.properties}}.
+ */
+public record {item_class}(
+    Long id,
+    String name,
+    String description,
+    boolean isCompleted,
+    Long categoryId,
+    String createdAt,
+    String updatedAt
+) {{
+}}
+```
+
+Output ONLY the Java source code above (with {item_class} substituted).
+No markdown fences, no commentary.
 
 REFERENCE (`model/Item.java`):
 ---
@@ -100,20 +143,144 @@ REFERENCE (`model/Item.java`):
             "path": "src/main/java/com/example/skel/repository/{item_class}Repository.java",
             "template": "src/main/java/com/example/skel/repository/ItemRepository.java",
             "language": "java",
-            "description": "repository/{item_class}Repository.java — JDBC repository",
+            "description": "repository/{item_class}Repository.java — plain JDBC repository (NOT JPA)",
             "prompt": """\
 Rewrite `repository/ItemRepository.java` as
 `repository/{item_class}Repository.java`.
 
+CRITICAL CONSTRAINTS (violating ANY of these causes a compilation failure):
+- This skeleton uses plain Java RECORDS, NOT JPA entity classes.
+- Do NOT import jakarta.persistence.* or jakarta.validation.* — there is
+  NO JPA on the classpath.
+- Do NOT use JpaRepository, CrudRepository, or any Spring Data interface.
+- This is a CONCRETE CLASS annotated with @Repository, NOT an interface.
+- Use JdbcTemplate and JdbcClient for all database access.
+- Records are IMMUTABLE — do NOT call setter methods on them.
+
 Required transformations:
-- Interface name: `{item_class}Repository`.
-- Extends `JpaRepository<{item_class}, Long>`.
-- Keep the `findByNameContainingIgnoreCase(String name)` finder
-  signature unchanged but with `{item_class}` as the return type.
-- Imports: `com.example.skel.model.{item_class}`,
-  `org.springframework.data.jpa.repository.JpaRepository`,
-  `org.springframework.stereotype.Repository`, `java.util.List`.
-- Match the REFERENCE indentation/blank-line style exactly.
+- Class name: `{item_class}Repository`.
+- All `Item` references become `{item_class}`.
+- Table name in SQL: `{items_plural}`.
+- The static `MAPPER` RowMapper builds a `{item_class}` via its record
+  constructor.
+
+Here is the EXACT pattern you MUST follow (replacing Item/{item_class}
+and items/{items_plural}):
+
+```java
+package com.example.skel.repository;
+
+import com.example.skel.model.{item_class};
+import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Repository;
+
+import java.sql.PreparedStatement;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+
+@Repository
+public class {item_class}Repository {{
+
+    private static final DateTimeFormatter ISO =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
+
+    private static final RowMapper<{item_class}> MAPPER = (rs, _row) -> {{
+        long catId = rs.getLong("category_id");
+        Long categoryId = rs.wasNull() ? null : catId;
+        return new {item_class}(
+            rs.getLong("id"),
+            rs.getString("name"),
+            rs.getString("description"),
+            rs.getBoolean("is_completed"),
+            categoryId,
+            rs.getString("created_at"),
+            rs.getString("updated_at")
+        );
+    }};
+
+    private final JdbcTemplate jdbc;
+    private final JdbcClient client;
+
+    public {item_class}Repository(JdbcTemplate jdbc) {{
+        this.jdbc = jdbc;
+        this.client = JdbcClient.create(jdbc);
+    }}
+
+    public List<{item_class}> findAll() {{
+        return client
+            .sql("SELECT id, name, description, is_completed, category_id, created_at, updated_at "
+                + "FROM {items_plural} ORDER BY created_at DESC, id DESC")
+            .query(MAPPER)
+            .list();
+    }}
+
+    public Optional<{item_class}> findById(long id) {{
+        try {{
+            return Optional.of(
+                client
+                    .sql("SELECT id, name, description, is_completed, category_id, created_at, updated_at "
+                        + "FROM {items_plural} WHERE id = ?")
+                    .param(id)
+                    .query(MAPPER)
+                    .single()
+            );
+        }} catch (EmptyResultDataAccessException e) {{
+            return Optional.empty();
+        }}
+    }}
+
+    public {item_class} insert(String name, String description, boolean isCompleted, Long categoryId) {{
+        String now = nowIso();
+        var keyHolder = new org.springframework.jdbc.support.GeneratedKeyHolder();
+        jdbc.update(connection -> {{
+            PreparedStatement ps = connection.prepareStatement(
+                "INSERT INTO {items_plural} (name, description, is_completed, category_id, created_at, updated_at) "
+                    + "VALUES (?, ?, ?, ?, ?, ?)",
+                new String[]{{"id"}}
+            );
+            ps.setString(1, name);
+            ps.setString(2, description);
+            ps.setBoolean(3, isCompleted);
+            if (categoryId != null) {{
+                ps.setLong(4, categoryId);
+            }} else {{
+                ps.setNull(4, java.sql.Types.BIGINT);
+            }}
+            ps.setString(5, now);
+            ps.setString(6, now);
+            return ps;
+        }}, keyHolder);
+        Number key = Objects.requireNonNull(keyHolder.getKey(), "INSERT did not return a generated key");
+        return new {item_class}(key.longValue(), name, description, isCompleted, categoryId, now, now);
+    }}
+
+    public Optional<{item_class}> markCompleted(long id) {{
+        String now = nowIso();
+        int updated = jdbc.update(
+            "UPDATE {items_plural} SET is_completed = ?, updated_at = ? WHERE id = ?",
+            true, now, id
+        );
+        if (updated == 0) {{
+            return Optional.empty();
+        }}
+        return findById(id);
+    }}
+
+    private static String nowIso() {{
+        return OffsetDateTime.now(ZoneOffset.UTC).format(ISO);
+    }}
+}}
+```
+
+Output the COMPLETE file following the pattern above exactly.
+No markdown fences, no commentary.
 
 REFERENCE (`repository/ItemRepository.java`):
 ---
@@ -125,21 +292,66 @@ REFERENCE (`repository/ItemRepository.java`):
             "path": "src/main/java/com/example/skel/service/{item_class}Service.java",
             "template": "src/main/java/com/example/skel/service/ItemService.java",
             "language": "java",
-            "description": "service/{item_class}Service.java — transactional service layer",
+            "description": "service/{item_class}Service.java — service layer delegating to JDBC repository",
             "prompt": """\
 Rewrite `service/ItemService.java` as `service/{item_class}Service.java`.
+
+CRITICAL CONSTRAINTS (violating ANY of these causes a compilation failure):
+- This skeleton uses plain Java RECORDS, NOT JPA entity classes.
+- Do NOT import jakarta.persistence.* or jakarta.validation.*.
+- Do NOT use @Transactional — the skeleton does not use JPA transactions.
+- The repository is a CONCRETE CLASS (not a Spring Data interface), so
+  the service calls `repository.insert(...)` and
+  `repository.markCompleted(...)`, NOT `repository.save(...)` or
+  `repository.deleteById(...)`.
+- Records are IMMUTABLE — do NOT call setter methods on them.
 
 Required transformations:
 - Class name: `{item_class}Service`.
 - Constructor takes `{item_class}Repository`.
 - All `Item` references become `{item_class}`.
-- Keep `findAll`, `findById`, `save`, `deleteById`, and `searchByName`
-  exactly as the REFERENCE.
-- Imports: `com.example.skel.model.{item_class}`,
-  `com.example.skel.repository.{item_class}Repository`,
-  `org.springframework.stereotype.Service`,
-  `org.springframework.transaction.annotation.Transactional`,
-  `java.util.List`, `java.util.Optional`.
+
+Here is the EXACT pattern you MUST follow (replacing Item/{item_class}):
+
+```java
+package com.example.skel.service;
+
+import com.example.skel.model.{item_class};
+import com.example.skel.repository.{item_class}Repository;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.Optional;
+
+@Service
+public class {item_class}Service {{
+
+    private final {item_class}Repository {item_name}s;
+
+    public {item_class}Service({item_class}Repository {item_name}s) {{
+        this.{item_name}s = {item_name}s;
+    }}
+
+    public List<{item_class}> findAll() {{
+        return {item_name}s.findAll();
+    }}
+
+    public Optional<{item_class}> findById(long id) {{
+        return {item_name}s.findById(id);
+    }}
+
+    public {item_class} create(String name, String description, boolean isCompleted, Long categoryId) {{
+        return {item_name}s.insert(name, description, isCompleted, categoryId);
+    }}
+
+    public Optional<{item_class}> complete(long id) {{
+        return {item_name}s.markCompleted(id);
+    }}
+}}
+```
+
+Output the COMPLETE file following the pattern above exactly.
+No markdown fences, no commentary.
 
 REFERENCE (`service/ItemService.java`):
 ---
@@ -151,34 +363,119 @@ REFERENCE (`service/ItemService.java`):
             "path": "src/main/java/com/example/skel/controller/{item_class}Controller.java",
             "template": "src/main/java/com/example/skel/controller/ItemController.java",
             "language": "java",
-            "description": "controller/{item_class}Controller.java — REST controller",
+            "description": "controller/{item_class}Controller.java — REST controller using JDBC-backed service",
             "prompt": """\
 Rewrite `controller/ItemController.java` as
 `controller/{item_class}Controller.java` for the `{item_class}` entity.
 
+CRITICAL CONSTRAINTS (violating ANY of these causes a compilation failure):
+- This skeleton uses plain Java RECORDS, NOT JPA entity classes.
+- Do NOT import jakarta.persistence.* or jakarta.validation.*.
+- Use JdbcTemplate/JdbcClient for all database access (via the service
+  and repository layers — the controller does NOT touch JDBC directly).
+- Records are IMMUTABLE — do NOT use setter methods or @PrePersist/@PreUpdate.
+- The controller uses `AuthUser` from the security package for JWT auth,
+  injected via `AuthUserArgumentResolver`. Every handler method accepts
+  an `AuthUser user` parameter.
+- The controller defines an inner `CreateItemRequest` record for POST
+  bodies and an inner `ApiException` class for error responses.
+
 Required transformations:
 - Class name: `{item_class}Controller`.
 - `@RequestMapping("/api/{items_plural}")`.
-- All `Item` / `itemService` references become `{item_class}` /
-  `{item_name}Service`.
-- Keep the GET-list, GET-by-id, POST-create, PUT-update, DELETE, and
-  GET /search endpoints exactly as the REFERENCE wires them.
+- All `Item` / `ItemService` references become `{item_class}` /
+  `{item_class}Service`.
+- The service field is named `{item_name}s`.
+- Keep the GET list, POST create, GET by id, and POST complete endpoints
+  exactly as the REFERENCE wires them.
+
+Here is the EXACT pattern you MUST follow (replacing Item/{item_class}
+and items/{items_plural}):
+
+```java
+package com.example.skel.controller;
+
+import com.example.skel.model.{item_class};
+import com.example.skel.security.AuthUser;
+import com.example.skel.service.{item_class}Service;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/{items_plural}")
+public class {item_class}Controller {{
+
+    private final {item_class}Service {item_name}s;
+
+    public {item_class}Controller({item_class}Service {item_name}s) {{
+        this.{item_name}s = {item_name}s;
+    }}
+
+    @GetMapping
+    public List<{item_class}> list(@SuppressWarnings("unused") AuthUser user) {{
+        return {item_name}s.findAll();
+    }}
+
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    public {item_class} create(@SuppressWarnings("unused") AuthUser user,
+                       @RequestBody Create{item_class}Request body) {{
+        if (body == null || body.name() == null || body.name().isBlank()) {{
+            throw new ApiException(HttpStatus.BAD_REQUEST, "{item_name} name cannot be empty");
+        }}
+        boolean isCompleted = body.isCompleted() != null && body.isCompleted();
+        return {item_name}s.create(body.name(), body.description(), isCompleted, body.categoryId());
+    }}
+
+    @GetMapping("/{{id}}")
+    public {item_class} get(@SuppressWarnings("unused") AuthUser user, @PathVariable long id) {{
+        return {item_name}s.findById(id)
+            .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "{item_name} " + id + " not found"));
+    }}
+
+    @PostMapping("/{{id}}/complete")
+    public {item_class} complete(@SuppressWarnings("unused") AuthUser user, @PathVariable long id) {{
+        return {item_name}s.complete(id)
+            .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "{item_name} " + id + " not found"));
+    }}
+
+    public record Create{item_class}Request(String name, String description, Boolean isCompleted, Long categoryId) {{
+    }}
+
+    public static class ApiException extends RuntimeException {{
+        private final HttpStatus status;
+
+        public ApiException(HttpStatus status, String message) {{
+            super(message);
+            this.status = status;
+        }}
+
+        public HttpStatus status() {{
+            return status;
+        }}
+    }}
+
+    @ExceptionHandler(ApiException.class)
+    public ResponseEntity<Map<String, Object>> handleApiException(ApiException ex) {{
+        return ResponseEntity.status(ex.status()).body(Map.of(
+            "detail", ex.getMessage(),
+            "status", ex.status().value()
+        ));
+    }}
+}}
+```
 
 Authentication style for this service: `{auth_type}`.
-- When `{auth_type}` is `none`: leave the controller as-is (no auth
-  annotations).
-- For any other `{auth_type}`: add a constructor parameter
-  `JwtProperties jwtProperties` and store it in a final field. Add a
-  one-line comment above each mutating endpoint
-  (`POST` / `PUT` / `DELETE`) noting that token verification against
-  `jwtProperties.getSecret()` belongs in a Spring Security
-  `OncePerRequestFilter` — wiring that filter is left to the user, but
-  the secret MUST come from `jwtProperties.getSecret()`, never a
-  hardcoded constant. Add the import
-  `import com.example.skel.config.JwtProperties;` to the imports list.
+- The AuthUser + JwtAuthInterceptor pattern is already wired globally.
+  The controller receives `AuthUser` on every method. No additional
+  auth wiring is needed in the controller itself.
 
-Imports beyond the REFERENCE: only `JwtProperties` when `{auth_type}` is
-not `none`.
+Output the COMPLETE file following the pattern above exactly.
+No markdown fences, no commentary.
 
 REFERENCE (`controller/ItemController.java`):
 ---
@@ -188,31 +485,121 @@ REFERENCE (`controller/ItemController.java`):
         },
         {
             "path": "src/test/java/com/example/skel/controller/{item_class}ControllerTest.java",
-            "template": "src/test/java/com/example/skel/controller/ItemControllerTest.java",
+            "template": "src/test/java/com/example/skel/ApplicationTests.java",
             "language": "java",
-            "description": "test/controller/{item_class}ControllerTest.java — MockMvc tests",
+            "description": "test/controller/{item_class}ControllerTest.java — MockMvc integration tests",
             "prompt": """\
-Rewrite `test/controller/ItemControllerTest.java` as
-`test/controller/{item_class}ControllerTest.java` for the
-`{item_class}` entity.
+Create `test/controller/{item_class}ControllerTest.java` for the
+`{item_class}` entity using the same testing pattern as
+`ApplicationTests.java`.
 
-Required transformations:
-- Class name: `{item_class}ControllerTest`.
-- `@MockBean private {item_class}Service {item_name}Service;`.
-- All `Item` references become `{item_class}`; URLs use
-  `/api/{items_plural}`.
-- Keep the four reference tests:
-  - `getAll{item_class}s_ReturnsList`
-  - `get{item_class}ById_WhenExists_Returns{item_class}`
-  - `get{item_class}ById_WhenNotExists_ReturnsNotFound`
-  - `create{item_class}_ReturnsCreated{item_class}`
-- Use `new {item_class}("Test {item_class}", "Description")` for
-  fixtures.
-- Imports: `com.example.skel.model.{item_class}`,
-  `com.example.skel.service.{item_class}Service`, plus the existing
-  Spring Boot test + Mockito + Jackson imports from the REFERENCE.
+CRITICAL CONSTRAINTS (violating ANY of these causes a compilation failure):
+- This skeleton uses plain Java RECORDS, NOT JPA entity classes.
+- Do NOT import jakarta.persistence.* or jakarta.validation.*.
+- Do NOT use @MockBean — this project does NOT use Spring Data JPA or
+  Mockito mocking of repositories. Use a REAL Spring context with an
+  H2 in-memory database instead.
+- Records are IMMUTABLE — you CANNOT call `new {item_class}("name",
+  "desc")` because the record has 7 fields. Use the full constructor:
+  `new {item_class}(null, "name", "desc", false, null, null, null)`.
+- Use JdbcTemplate/JdbcClient for all database access.
+- The controller requires JWT authentication via the JwtAuthInterceptor.
+  Tests must register a user, obtain a token, and pass it as a Bearer
+  header.
 
-REFERENCE (`test/controller/ItemControllerTest.java`):
+Here is the EXACT pattern you MUST follow (modelled after the existing
+ApplicationTests.java):
+
+```java
+package com.example.skel.controller;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+
+import java.util.UUID;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.junit.jupiter.api.Assertions.*;
+
+@SpringBootTest
+@AutoConfigureMockMvc
+@TestPropertySource(properties = {{
+    "spring.datasource.url=jdbc:h2:mem:{item_name}test;DB_CLOSE_DELAY=-1",
+    "spring.datasource.username=sa",
+    "spring.datasource.password="
+}})
+class {item_class}ControllerTest {{
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper mapper;
+
+    private String obtainAccessToken() throws Exception {{
+        String username = "test-" + UUID.randomUUID().toString().substring(0, 8);
+        String registerBody = String.format(
+            "{{\\"username\\":\\"%s\\",\\"email\\":\\"%s@example.com\\",\\"password\\":\\"test-password-1234\\"}}",
+            username, username
+        );
+        MvcResult result = mockMvc.perform(post("/api/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(registerBody))
+            .andExpect(status().isCreated())
+            .andReturn();
+        JsonNode json = mapper.readTree(result.getResponse().getContentAsString());
+        return json.path("access").asText();
+    }}
+
+    @Test
+    void list{item_class}s_ReturnsOk() throws Exception {{
+        String token = obtainAccessToken();
+        mockMvc.perform(get("/api/{items_plural}")
+                .header("Authorization", "Bearer " + token))
+            .andExpect(status().isOk());
+    }}
+
+    @Test
+    void create{item_class}_ReturnsCreated() throws Exception {{
+        String token = obtainAccessToken();
+        String body = "{{\\"name\\":\\"Test {item_class}\\",\\"description\\":\\"A test {item_name}\\"}}";
+        mockMvc.perform(post("/api/{items_plural}")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+            .andExpect(status().isCreated());
+    }}
+
+    @Test
+    void get{item_class}ById_WhenNotExists_ReturnsNotFound() throws Exception {{
+        String token = obtainAccessToken();
+        mockMvc.perform(get("/api/{items_plural}/99999")
+                .header("Authorization", "Bearer " + token))
+            .andExpect(status().isNotFound());
+    }}
+
+    @Test
+    void anonymousRequest_ReturnsUnauthorized() throws Exception {{
+        mockMvc.perform(get("/api/{items_plural}"))
+            .andExpect(status().isUnauthorized());
+    }}
+}}
+```
+
+Output the COMPLETE file following the pattern above exactly.
+No markdown fences, no commentary.
+
+REFERENCE (`ApplicationTests.java` — shows the auth flow and test style):
 ---
 {template}
 ---

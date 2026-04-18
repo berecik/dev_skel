@@ -1,57 +1,80 @@
 """AI manifest for the ``rust-axum-skel`` skeleton.
 
-The skeleton ships a minimal Axum service with `index` / `health`
-handlers and the wrapper-shared `Config` (in `src/config.rs`) carried
-inside `AppState`. This manifest tells ``_bin/skel-gen-ai`` how to add
-a `{item_class}` CRUD module — a `models` file, a `handlers` file, and
-an updated `main.rs` that registers the new routes — all while
-preserving the existing config plumbing.
+The skeleton ships an Axum service with ``auth``, ``categories``,
+``items``, and ``state`` handler modules, plus the wrapper-shared
+``Config`` (in ``src/config.rs``) carried inside ``AppState`` (defined
+in ``src/main.rs``).  Handlers access shared state via
+``State(state): State<Arc<AppState>>`` where ``state.pool`` is the
+``SqlitePool`` and ``state.config`` is the ``Config``.
 
-Mirrors the structure of ``rust-actix-skel.py``; the only differences
-are Axum's `Router` / `State` API instead of Actix's `App::new` /
-`web::Data`.
+This manifest tells ``_bin/skel-gen-ai`` how to add a ``{item_class}``
+CRUD handler file — with **inline** request/response structs (NO
+separate ``models`` module) — and wire it into
+``src/handlers/mod.rs``, exactly matching the patterns already used by
+``items.rs``.
 """
 
 SYSTEM_PROMPT = """\
 You are a senior Rust engineer regenerating one source file inside the
 dev_skel `{skeleton_name}` skeleton.
 
-Project layout:
+Project layout (CRITICAL — read carefully):
 - The Cargo crate root is `{service_subdir}/`. Source lives under
-  `src/`. The existing entry point is `src/main.rs` and the
-  wrapper-shared `Config` lives in `src/config.rs`.
+  `src/`. The existing entry point is `src/main.rs`.
 - The crate already depends on `axum`, `tokio`, `serde`, `serde_json`,
-  `tower`, `tower-http`, `tracing`, `tracing-subscriber`, and
-  `dotenvy`. Do NOT add new dependencies.
-- The reference handlers (`index`, `health`) live in `main.rs` and
-  pull the wrapper-shared `Config` out of `State<Arc<AppState>>`. The
-  new handlers MUST follow the same pattern.
+  `chrono`, `sqlx` (sqlite), `tower`, `tower-http`, `tracing`,
+  `tracing-subscriber`, `dotenvy`, `jsonwebtoken`, `argon2`,
+  `async-trait`, and `thiserror`. Do NOT add new dependencies.
+- `AppState` is defined in `src/main.rs` with fields `pool:
+  SqlitePool`, `config: Config`, `project_name: String`, `version:
+  String`. Handlers extract it via `State(state):
+  State<Arc<AppState>>` and access the DB pool as `state.pool` and
+  config as `state.config`.
+- There is **NO** top-level `src/models.rs` module. Model / payload
+  structs are defined **inline** in each handler file. For example,
+  `src/handlers/items.rs` defines `ItemRow` and `CreateItemPayload`
+  directly in the file. The new handler MUST follow the same pattern.
+  Do NOT import `crate::models` — it does not exist and will cause a
+  compile error.
+- Authentication is provided by the `AuthUser` extractor from
+  `crate::auth`. Adding `_user: AuthUser` to a handler's parameter
+  list automatically enforces JWT auth — the extractor reads the
+  `Authorization: Bearer <token>` header, verifies the JWT via
+  `crate::auth::verify_token`, and returns `ApiError::Unauthorized`
+  (401) if invalid. Do NOT manually parse auth headers.
+- Error handling uses `crate::error::ApiError` (derives `thiserror`,
+  implements `IntoResponse`). Handlers return
+  `Result<Json<T>, ApiError>` or `Result<impl IntoResponse, ApiError>`.
+  Variants: `Validation(String)`, `Unauthorized(String)`,
+  `NotFound(String)`, `Conflict(String)`, `Database(sqlx::Error)`,
+  `Internal(String)`.
 - The CRUD entity is `{item_class}` (snake_case `{item_name}`,
   plural `{items_plural}`). The DB table for the new entity MUST be
-  named `{items_plural}` (this matches the dev_skel shared-DB
-  integration test convention).
+  named `{items_plural}`.
 
-Shared environment (CRITICAL — every backend service in the wrapper
-relies on the same env vars from `<wrapper>/.env`):
-- `DATABASE_URL` — common database. Read it via `state.config.database_url`
-  (already populated by `Config::from_env()` in `src/config.rs`).
+Shared environment (CRITICAL — every backend in the wrapper relies on
+the same env vars from `<wrapper>/.env`):
+- `DATABASE_URL` — common database. Read via `state.config.database_url`.
 - `JWT_SECRET`, `JWT_ALGORITHM`, `JWT_ISSUER`, `JWT_ACCESS_TTL`,
-  `JWT_REFRESH_TTL` — also exposed via `state.config.jwt_*`. NEVER
-  re-read them from `std::env::var` in handler code.
+  `JWT_REFRESH_TTL` — read via `state.config.jwt_*`.
+  These are populated by `Config::from_env()` in `src/config.rs`.
+  NEVER re-read them from `std::env::var` in handler code.
 
 Authentication style requested by the user: `{auth_type}`. Notes:
 {auth_details}
 
 Coding rules:
-- Match the indentation, brace style, and import order of the
-  REFERENCE templates exactly.
-- Use `serde::{{Deserialize, Serialize}}` for the model struct.
-- Use `axum::{{extract::{{Path, State}}, http::StatusCode, response::IntoResponse,
-  routing::{{get, post}}, Json, Router}}` for handlers.
-- Async functions returning `impl IntoResponse` (or
-  `Result<Json<T>, StatusCode>` when an error path exists).
-- Error handling: log via `tracing::error!` and return
-  `StatusCode::INTERNAL_SERVER_ERROR` on failure. NEVER panic.
+- Match the indentation, brace style, and import order of the existing
+  `src/handlers/items.rs` exactly.
+- Use `serde::{{Deserialize, Serialize}}` for structs.
+- Use `axum::{{extract::{{Path, State}}, http::StatusCode,
+  response::IntoResponse, Json}}` for handlers.
+- Use `sqlx::query_as` / `sqlx::query` for database access with
+  `&state.pool`.
+- Async functions returning `Result<Json<T>, ApiError>` or
+  `Result<impl IntoResponse, ApiError>`.
+- Do NOT import `crate::models` — this module does not exist.
+- Do NOT create a `src/models.rs` file.
 - Output ONLY the file's contents. No markdown fences, no commentary.
 """
 
@@ -64,37 +87,6 @@ MANIFEST = {
     ),
     "targets": [
         {
-            "path": "src/models.rs",
-            "template": None,
-            "language": "rust",
-            "description": "src/models.rs — `{item_class}` struct + helpers",
-            "prompt": """\
-Create `src/models.rs` defining the `{item_class}` model used by the
-new CRUD handlers.
-
-Required content:
-- A `pub struct {item_class}` with these fields (all `pub`):
-  - `id: i64`
-  - `name: String`
-  - `description: Option<String>`
-  - `is_completed: bool`
-  - `created_at: String` (ISO 8601 timestamp)
-  - `updated_at: String`
-- Derive `Debug, Clone, serde::Serialize, serde::Deserialize`.
-- A `pub struct New{item_class}` (used for incoming POST bodies) with:
-  - `pub name: String`
-  - `pub description: Option<String>`
-  - `pub is_completed: Option<bool>`
-- Derive `Debug, serde::Deserialize` on `New{item_class}`.
-- Add a one-line module-level doc comment explaining that this module
-  represents rows in the wrapper-shared `{items_plural}` table.
-
-Imports: `use serde::{{Deserialize, Serialize}};` only.
-
-Output only the file's contents.
-""",
-        },
-        {
             "path": "src/handlers/{item_name}.rs",
             "template": None,
             "language": "rust",
@@ -106,56 +98,125 @@ creating a NEW sub-module at `src/handlers/{item_name}.rs`. Do NOT
 create `src/handlers.rs` — that would conflict with the existing
 `src/handlers/mod.rs`.
 
-Create `src/handlers/{item_name}.rs` with Axum handlers for the `{item_class}`
-entity. The handlers form a tiny CRUD layer mounted under
-`/api/{items_plural}`.
+CRITICAL CONSTRAINTS — violations cause `cargo check` failures:
+- Do NOT import `crate::models` — this module does NOT exist in the
+  skeleton. Define all structs INLINE in this file.
+- Do NOT manually parse `Authorization` headers or use
+  `axum::http::HeaderMap` for auth. The skeleton uses the `AuthUser`
+  extractor from `crate::auth` — just add `_user: AuthUser` as a
+  handler parameter and auth is enforced automatically.
+- Use `crate::error::ApiError` for errors, NOT raw `StatusCode`.
 
-Required content:
-- Module-level doc comment: "CRUD handlers for the wrapper-shared
-  `{items_plural}` table. Reads `DATABASE_URL` via
-  `state.config.database_url`."
-- Imports:
-  ```rust
-  use std::sync::Arc;
-  use axum::{{extract::{{Path, State}}, http::StatusCode,
-              response::IntoResponse, Json}};
+Create `src/handlers/{item_name}.rs` with Axum CRUD handlers for the
+`{item_class}` entity, mounted under `/api/{items_plural}`.
 
-  use crate::models::{{New{item_class}, {item_class}}};
-  use crate::AppState;
-  ```
-- A small private helper `fn db_path(state: &Arc<AppState>) ->
-  Option<std::path::PathBuf>` that converts the
-  `state.config.database_url` (`sqlite:///...`) into a filesystem path
-  relative to the wrapper directory (the parent of the service dir).
-  Return `None` if the URL is not sqlite — handlers should respond
-  with `StatusCode::NOT_IMPLEMENTED` in that case.
-- Three handlers:
-  - `pub async fn list_{items_plural}(State(state):
-    State<Arc<AppState>>) -> Result<Json<Vec<{item_class}>>,
-    StatusCode>` — opens the sqlite file via stdlib
-    `std::process::Command` invoking `sqlite3 <path> "SELECT id, name,
-    description, is_completed, created_at, updated_at FROM
-    {items_plural}"` and parses the pipe-delimited output into
-    `Vec<{item_class}>`. (The skeleton intentionally avoids the
-    `rusqlite` crate to keep the dependency list unchanged; users can
-    swap to `rusqlite` later.)
-  - `pub async fn get_{item_name}(State(state): State<Arc<AppState>>,
-    Path(id): Path<i64>) -> Result<Json<{item_class}>, StatusCode>` —
-    same approach, returns `StatusCode::NOT_FOUND` when missing.
-  - `pub async fn create_{item_name}(State(state):
-    State<Arc<AppState>>, Json(payload): Json<New{item_class}>) ->
-    Result<(StatusCode, Json<{item_class}>), StatusCode>` — runs
-    `sqlite3 <path> "INSERT INTO ..."` and returns
-    `(StatusCode::CREATED, Json(row))`.
-- All handlers respect the auth contract:
-  - When `{auth_type}` is `none`: no token check.
-  - For any other `{auth_type}`: at the top of each mutating handler
-    (POST), inspect the `Authorization` header (extracted via an
-    additional `axum::http::HeaderMap` parameter) and confirm it
-    starts with `Bearer `. Return `StatusCode::UNAUTHORIZED` when
-    missing. Use `state.config.jwt_secret` only as a placeholder for
-    the real verification — production wiring is left to the user.
-    NEVER re-read JWT material from `std::env::var`.
+Here is a COMPILABLE REFERENCE showing the exact patterns you MUST
+follow. This is from the existing `src/handlers/items.rs` — adapt it
+for `{item_class}`:
+
+```rust
+//! CRUD handlers for the `{items_plural}` table.
+
+use std::sync::Arc;
+
+use axum::{{
+    extract::{{Path, State}},
+    http::StatusCode,
+    response::IntoResponse,
+    Json,
+}};
+use chrono::Utc;
+use serde::{{Deserialize, Serialize}};
+
+use crate::auth::AuthUser;
+use crate::error::ApiError;
+use crate::AppState;
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct {item_class}Row {{
+    pub id: i64,
+    pub name: String,
+    pub description: Option<String>,
+    pub is_completed: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}}
+
+#[derive(Debug, Deserialize)]
+pub struct Create{item_class}Payload {{
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub is_completed: bool,
+}}
+
+pub async fn list_{items_plural}(
+    State(state): State<Arc<AppState>>,
+    _user: AuthUser,
+) -> Result<Json<Vec<{item_class}Row>>, ApiError> {{
+    let rows = sqlx::query_as::<_, {item_class}Row>(
+        "SELECT id, name, description, is_completed, created_at, updated_at \\
+         FROM {items_plural} ORDER BY created_at DESC, id DESC",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(rows))
+}}
+
+pub async fn create_{item_name}(
+    State(state): State<Arc<AppState>>,
+    _user: AuthUser,
+    Json(payload): Json<Create{item_class}Payload>,
+) -> Result<impl IntoResponse, ApiError> {{
+    if payload.name.trim().is_empty() {{
+        return Err(ApiError::Validation("{item_name} name cannot be empty".to_string()));
+    }}
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%.3fZ").to_string();
+    let row: (i64,) = sqlx::query_as(
+        "INSERT INTO {items_plural} (name, description, is_completed, created_at, updated_at) \\
+         VALUES (?, ?, ?, ?, ?) RETURNING id",
+    )
+    .bind(&payload.name)
+    .bind(&payload.description)
+    .bind(payload.is_completed)
+    .bind(&now)
+    .bind(&now)
+    .fetch_one(&state.pool)
+    .await?;
+    let item = {item_class}Row {{
+        id: row.0,
+        name: payload.name,
+        description: payload.description,
+        is_completed: payload.is_completed,
+        created_at: now.clone(),
+        updated_at: now,
+    }};
+    Ok((StatusCode::CREATED, Json(item)))
+}}
+
+pub async fn get_{item_name}(
+    State(state): State<Arc<AppState>>,
+    _user: AuthUser,
+    Path(id): Path<i64>,
+) -> Result<Json<{item_class}Row>, ApiError> {{
+    let row = sqlx::query_as::<_, {item_class}Row>(
+        "SELECT id, name, description, is_completed, created_at, updated_at \\
+         FROM {items_plural} WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await?;
+    let item = row.ok_or_else(|| ApiError::NotFound(format!("{item_name} {{id}} not found")))?;
+    Ok(Json(item))
+}}
+```
+
+Adapt the above for `{item_class}`. You may add extra fields or
+endpoints but the structure, imports, derive macros, and patterns
+MUST match exactly. When `{auth_type}` is `none`, remove the
+`_user: AuthUser` parameter and the `use crate::auth::AuthUser;`
+import.
 
 Output only the file's contents.
 """,
@@ -169,21 +230,79 @@ Output only the file's contents.
 Rewrite `src/handlers/mod.rs` to include the new `{item_name}` sub-module
 alongside the existing `auth`, `categories`, `items`, `state` modules.
 
-Required transformations:
-- Add `pub mod {item_name};` to the module declarations.
-- In the `wrapper_router()` function, add new `.route(...)` lines for
-  `/api/{items_plural}` (GET list + POST create) and
-  `/api/{items_plural}/:id` (GET retrieve).
-  Use `{item_name}::list_{items_plural}`, `{item_name}::create_{item_name}`,
-  `{item_name}::get_{item_name}`.
-- Keep every other line of the REFERENCE EXACTLY as-is — do NOT remove
-  the existing `auth`, `categories`, `items`, `state` routes.
-- The function must compile with `cargo check`.
+CRITICAL: Do NOT change the function signature, do NOT restructure the
+existing code. The ONLY changes are:
+1. Add `pub mod {item_name};` after the existing module declarations.
+2. Add new `.route(...)` lines for `/api/{items_plural}` and
+   `/api/{items_plural}/:id` inside `wrapper_router()`.
 
-REFERENCE (`src/handlers/mod.rs`):
+Here is the EXACT output you must produce (the REFERENCE with the new
+module added). Copy it verbatim, only adjusting if the reference
+template has changed:
+
+```rust
+//! HTTP handlers, grouped by resource.
+//!
+//! Routes are assembled into one `Router` by `wrapper_router()` so the
+//! main entrypoint can stay focused on bind / serve concerns.
+
+pub mod auth;
+pub mod categories;
+pub mod items;
+pub mod {item_name};
+pub mod state;
+
+use std::sync::Arc;
+
+use axum::{{
+    routing::{{get, post, put}},
+    Router,
+}};
+
+use crate::AppState;
+
+/// Build the wrapper-shared `/api/*` router. Mounted at `/` by
+/// `main.rs` so URLs end up at `/api/auth/login`, `/api/items/{{id}}`,
+/// `/api/categories/{{id}}`, `/api/state/{{key}}`, etc. — the contract
+/// every dev_skel backend honours.
+pub fn wrapper_router() -> Router<Arc<AppState>> {{
+    Router::new()
+        // Auth
+        .route("/api/auth/register", post(auth::register_handler))
+        .route("/api/auth/login", post(auth::login_handler))
+        // Categories
+        .route(
+            "/api/categories",
+            get(categories::list_categories).post(categories::create_category),
+        )
+        .route(
+            "/api/categories/:id",
+            get(categories::get_category)
+                .put(categories::update_category)
+                .delete(categories::delete_category),
+        )
+        // Items
+        .route("/api/items", get(items::list_items).post(items::create_item))
+        .route("/api/items/:id", get(items::get_item))
+        .route("/api/items/:id/complete", post(items::complete_item))
+        // {item_class}
+        .route("/api/{items_plural}", get({item_name}::list_{items_plural}).post({item_name}::create_{item_name}))
+        .route("/api/{items_plural}/:id", get({item_name}::get_{item_name}))
+        // State
+        .route("/api/state", get(state::list_state))
+        .route(
+            "/api/state/:key",
+            put(state::upsert_state).delete(state::delete_state),
+        )
+}}
+```
+
+REFERENCE (`src/handlers/mod.rs` — current content before your edit):
 ---
-{template}
+{{template}}
 ---
+
+Output only the file's contents.
 """,
         },
     ],
@@ -197,19 +316,22 @@ service into an existing dev_skel multi-service wrapper.
 The new service is `{service_label}` (slug `{service_slug}`, tech
 `rust-axum-skel`). It already ships:
 - The wrapper-shared `Item` model + handlers mounted at `/api/items`
-  using rusqlite + serde against the shared `DATABASE_URL`.
+  using sqlx + serde against the shared `DATABASE_URL`.
 - The wrapper-shared `ReactState` model + handlers mounted at `/api/state`
   and `/api/state/{{key}}`.
 - A user-chosen `{item_class}` model + handlers (the per-target manifest
-  rewrote `Item` to `{item_class}` for this run).
-- JWT auth via the `AuthUser` extractor from `AppState` — the secret
-  comes from `state.config.jwt_secret` (the wrapper-shared secret —
-  NEVER re-read from `std::env::var` in handler code).
+  rewrote `Item` to `{item_class}` for this run). Model structs are
+  defined INLINE in each handler file — there is NO `src/models.rs`.
+- JWT auth via the `AuthUser` extractor from `crate::auth` — handlers
+  add `_user: AuthUser` to their parameter list. The JWT secret comes
+  from `state.config.jwt_secret` (the wrapper-shared secret — NEVER
+  re-read from `std::env::var` in handler code).
 - The wrapper-shared `<wrapper>/.env` is loaded by `src/config.rs`
   (`Config::from_env()` + `load_dotenv()`) so `DATABASE_URL` and the JWT
   vars are identical to every other backend in the project.
 - Axum idioms: `State<Arc<AppState>>` for shared state, `Router` for
   route registration, `axum::extract::{{Path, State}}` for extractors.
+- Do NOT import `crate::models` — this module does not exist.
 
 Sibling services already in the wrapper (snapshot of their key files
 follows so you can ground your code in real signatures, not guesses):

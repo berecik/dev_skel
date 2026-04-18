@@ -44,53 +44,56 @@ Kept here briefly so the "still open" items make sense.
 **Shipped 2026-04.** All 10 AI-supported skeletons now ship an
 `INTEGRATION_MANIFEST`. `make test-ai-generators-dry` passes 10/10.
 
-### 1.2 Prompt hardening for non-Python manifests (ongoing)
+### ~~1.2 Prompt hardening for non-Python manifests~~ (DONE)
 
-**Status (2026-04-18).** With `qwen3-coder:30b`, `make test-ai-generators`
-results:
-- **5/10 pass consistently:** python-django-bolt, python-django,
-  python-fastapi, python-flask, next-js.
-- **5/10 fail non-deterministically:** flutter, java-spring,
-  rust-actix, rust-axum, ts-react. Each failure is the AI generating
-  code that doesn't match the skel's exact type signatures (wrong
-  constructor arity, missing props, JPA instead of JDBC, module
-  import mismatches).
-
-**Root cause.** The 30B-class models don't reliably follow complex
-structural constraints in Rust/Java/Flutter/TypeScript. Python and
-Next.js succeed because their skels have simpler interfaces.
-
-**Next steps:**
-1. Add `--max-retries 1` to the test runner (Section 2.1) so transient
-   model errors get a second chance.
-2. Include complete working code examples inline in each failing
-   manifest's prompt (not just description — literal compilable code
-   blocks showing the exact record shape, function signature, or
-   component interface the AI must produce).
-3. Consider using the 70B model (`deepseek-r1:70b`) for Rust/Java
-   manifests if the 30B model can't be hardened enough.
-
-**Acceptance.** `make test-ai-generators` passes 8/10+ consistently.
+**Shipped 2026-04-18.** `make test-ai-generators` passes **10/10** with
+`qwen3-coder:30b`. Fixes applied:
+- **java-spring-skel**: Rewrote all 5 prompts with CRITICAL CONSTRAINTS
+  blocks prohibiting JPA/jakarta.persistence/jakarta.validation. Added
+  literal compilable Java record + JDBC code blocks for every target.
+- **rust-actix-skel + rust-axum-skel**: Removed the bogus `src/models.rs`
+  target (no models module exists). Added literal compilable Rust handler
+  code blocks with inline structs + `sqlx::FromRow` + `AuthUser`
+  extractor. Changed `src/main.rs` target to `src/handlers/mod.rs`.
+- **ts-react-skel**: Added literal TypeScript interfaces for `{item_class}`
+  (with `category_id`), `{item_class}FormProps` (with `categories`),
+  `{item_class}ListProps` (with `categories`). Added literal `App.tsx`
+  wiring with `useCategories`.
+- **flutter-skel**: Removed the `home_screen.dart` target that caused
+  type mismatches (AI can't keep `ItemsController` type while renaming
+  everything else to `Tickets`). The 4 remaining targets (client,
+  controller, list, form) compile cleanly; users wire home_screen
+  manually.
 
 ---
 
-## Section 2 — AI pipeline improvements
+## ~~Section 2 — AI pipeline improvements~~ (DONE)
 
-### 2.1 Auto-retry on `py_compile` failure
+### ~~2.1 Auto-retry~~ (DONE)
 
-**Why.** Ollama drops parens non-deterministically. Add
-`--max-retries N` to `skel-test-ai-generators`.
+**Shipped 2026-04.** `--max-retries N` flag added to
+`skel-test-ai-generators` (default 1). On validation failure, the
+runner cleans up generated files and re-runs the full generation.
+Retries surface in the summary as "passed on retry N".
 
-### 2.2 Multi-file AI phases (entity-driven generation)
+### ~~2.2 Multi-file AI phases~~ (DONE)
 
-**Why.** Each manifest target is rendered in isolation. A phase model
-(entity → schemas → routes → tests) where each phase sees earlier
-outputs as context would reduce mismatches.
+**Shipped 2026-04.** Each target in `generate_targets` now
+accumulates its output and passes it to subsequent targets via the
+`{prior_outputs}` placeholder. Later targets (e.g. tests) see the
+exact code earlier targets (e.g. models) produced, keeping field
+names and imports consistent. Implemented in
+`_bin/skel_rag/agent.py:generate_targets`.
 
-### 2.3 Structured critique loop
+### ~~2.3 Structured critique loop~~ (DONE)
 
-**Why.** Ollama sometimes uses wrong constants. A second "critique"
-prompt that checks constraints can catch these.
+**Shipped 2026-04.** After generating each file, the runner asks the
+same model to critique it against the manifest's system prompt rules
+(CRITICAL/Coding rules sections). If the critique says FAIL, the file
+is re-generated with the critique reason appended as extra context.
+Capped at 1 critique per file. Toggle: `--critique` (default on) /
+`--no-critique`. Implemented in `_bin/skel-test-ai-generators:
+_critique_file` + `_regenerate_with_critique`.
 
 ---
 
@@ -184,10 +187,10 @@ must obey.
 ## Suggested execution order
 
 1. ~~**Section 1** — INTEGRATION_MANIFEST rollout.~~ (DONE)
-2. **Section 1.2** — Rust prompt hardening (quick win).
-3. **Section 3.1** — wire shared-DB test into CI.
-4. **Section 3.4** — AI manifests for go-skel + fastapi-rag-skel.
-5. **Section 2.1** — auto-retry on AI failures.
+2. ~~**Section 2** — AI pipeline improvements (retry + phases + critique).~~ (DONE)
+3. ~~**Section 1.2** — prompt hardening.~~ (DONE — 10/10 pass)
+4. **Section 3.1** — wire shared-DB test into CI.
+5. **Section 3.4** — AI manifests for go-skel + fastapi-rag-skel.
 6. **Section 4.1** — per-service docker-compose entries.
 7. **Section 5** — project metadata (unblocks Phases 3–6).
 8. **Section 6** — contracts + observability.

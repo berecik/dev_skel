@@ -104,11 +104,31 @@ Required transformations:
 - The new endpoint is
   `${{config.backendUrl}}/api/{items_plural}` instead of
   `/api/items`.
-- The exported `{item_class}` interface keeps the same field shape
-  as `Item` (`id`, `name`, `description`, `is_completed`,
-  `created_at`, `updated_at`) — this matches the canonical
-  shared-DB schema and lets the same backend serve the new client
-  without migrations.
+- The exported `{item_class}` interface MUST keep ALL fields from
+  the original `Item` interface, including `category_id`. The exact
+  shape is:
+  ```typescript
+  export interface {item_class} {{
+    id: number;
+    name: string;
+    description: string | null;
+    is_completed: boolean;
+    category_id: number | null;
+    created_at: string;
+    updated_at: string;
+  }}
+  ```
+  DO NOT omit `category_id` — it is used by {item_class}Form and
+  {item_class}List for the category selector and badge display.
+- The `New{item_class}` interface MUST include `category_id`:
+  ```typescript
+  export interface New{item_class} {{
+    name: string;
+    description?: string | null;
+    is_completed?: boolean;
+    category_id?: number | null;
+  }}
+  ```
 - Keep the `loginWithPassword`, `AuthError`, `RequestOptions`,
   `buildHeaders`, and `unwrap` helpers exactly as in the REFERENCE.
   They are framework-wide and do not change with the entity name.
@@ -171,8 +191,38 @@ Required transformations:
 - The `<section className="item-list">` className stays unchanged so
   the existing CSS keeps working — do NOT rename it. Same for the
   `item` / `done` / `badge` / `empty` / `status` classes.
-- Imports: `import {{ type {item_class} }} from
-  '../api/{items_plural}';`.
+- CRITICAL: The props interface MUST include `categories?`:
+  ```tsx
+  export interface {item_class}ListProps {{
+    {items_plural}: {item_class}[];
+    loading: boolean;
+    error: string | null;
+    refresh: () => Promise<void>;
+    complete: (id: number) => Promise<{item_class}>;
+    categories?: Category[];
+  }}
+  ```
+  The component uses `categories` to build a `categoryMap` and
+  render a category badge next to each item that has a
+  `category_id`. Without this prop, the `category_id` field on the
+  `{item_class}` type would be unused and the badge would never
+  render.
+- Import `Category` from `'../api/categories'`:
+  ```tsx
+  import {{ type {item_class} }} from '../api/{items_plural}';
+  import {{ type Category }} from '../api/categories';
+  ```
+- Build a `categoryMap` using `useMemo`:
+  ```tsx
+  const categoryMap = useMemo(
+    () => new Map(categories.map((c) => [c.id, c.name])),
+    [categories],
+  );
+  ```
+- Render the category badge on each item exactly as the REFERENCE
+  does (checking `item.category_id && categoryMap.has(item.category_id)`).
+- Keep the `useAppState` filter for `showCompleted` and all
+  `useAppState` imports.
 
 REFERENCE (`src/components/ItemList.tsx`):
 ---
@@ -197,8 +247,45 @@ Required transformations:
   `(payload: New{item_class}) => Promise<{item_class}>`.
 - The form className stays `item-form` (so the CSS keeps working) —
   do NOT rename it.
-- Imports: `import {{ AuthError, type {item_class}, type
-  New{item_class} }} from '../api/{items_plural}';`.
+- CRITICAL: The props interface MUST include `categories?` and
+  `createCategory?` — these are used for the category dropdown.
+  The exact interface is:
+  ```tsx
+  export interface {item_class}FormProps {{
+    create: (payload: New{item_class}) => Promise<{item_class}>;
+    onCreated?: (item: {item_class}) => void;
+    categories?: Category[];
+    createCategory?: (payload: NewCategory) => Promise<Category | null>;
+  }}
+  ```
+- Import `Category` and `NewCategory` from `'../api/categories'`:
+  ```tsx
+  import {{ AuthError, type {item_class}, type New{item_class} }} from '../api/{items_plural}';
+  import {{ type Category, type NewCategory }} from '../api/categories';
+  ```
+- The component MUST include a `categoryId` state variable
+  (`useState<number | null>(null)`) and pass it as `category_id`
+  when calling `create({{ name, description: description || null, category_id: categoryId }})`.
+- The component MUST render a `<select>` for the category dropdown
+  that iterates over the `categories` prop, exactly as the REFERENCE
+  `ItemForm.tsx` does:
+  ```tsx
+  <label>
+    Category
+    <select
+      name="category_id"
+      value={{categoryId ?? ''}}
+      onChange={{(event) => setCategoryId(event.target.value ? Number(event.target.value) : null)}}
+    >
+      <option value="">No category</option>
+      {{categories.map((cat) => (
+        <option key={{cat.id}} value={{cat.id}}>
+          {{cat.name}}
+        </option>
+      ))}}
+    </select>
+  </label>
+  ```
 
 REFERENCE (`src/components/ItemForm.tsx`):
 ---
@@ -227,13 +314,36 @@ Required transformations:
   import {item_class}List from './components/{item_class}List';
   import {{ use{item_class}s }} from './hooks/use-{items_plural}';
   ```
-- Inside the **inner** `AuthenticatedApp` component, swap the
-  `useItems()` call for `use{item_class}s()` and rename the
-  destructured `items` field to `{items_plural}`.
-- The `<{item_class}List>` invocation must pass
-  `{items_plural}={{{items_plural}}}` (the renamed prop) plus
-  `loading`, `error`, `refresh`, and `complete` exactly as the
-  REFERENCE wires them.
+- CRITICAL: You MUST also import `useCategories` — the categories
+  hook is NOT renamed, it stays as-is because categories are a
+  wrapper-shared concept:
+  ```tsx
+  import {{ useCategories }} from './hooks/use-categories';
+  ```
+- Inside the **inner** `AuthenticatedApp` component, call BOTH
+  hooks:
+  ```tsx
+  const {{ {items_plural}, loading, error, refresh, create, complete }} = use{item_class}s();
+  const {{ categories, create: createCategory }} = useCategories();
+  ```
+- CRITICAL: Pass `categories` and `createCategory` to
+  `{item_class}Form`, and `categories` to `{item_class}List`.
+  The exact JSX MUST be:
+  ```tsx
+  <{item_class}Form create={{create}} categories={{categories}} createCategory={{createCategory}} />
+  <{item_class}List
+    {items_plural}={{{items_plural}}}
+    loading={{loading}}
+    error={{error}}
+    refresh={{refresh}}
+    complete={{complete}}
+    categories={{categories}}
+  />
+  ```
+  Without `categories` and `createCategory`, the form will not show
+  a category dropdown and the list will not display category badges,
+  which causes a prop-type mismatch with {item_class}FormProps and
+  {item_class}ListProps.
 - KEEP the `<AppStateProvider>` wrapper around `<AuthenticatedApp>` —
   it hydrates the wrapper-shared React state on login and persists
   any UI slices the new components write via `useAppState`.

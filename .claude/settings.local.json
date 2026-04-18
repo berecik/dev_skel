@@ -366,7 +366,11 @@
       "Bash(_bin/skel-test-ai-generators --skel rust-actix-skel --skel rust-axum-skel --skel java-spring-skel --keep)",
       "Bash(echo \"PID: $!\")",
       "Bash(echo \"Started PID $!\")",
-      "Bash(echo \"Started round 2 PID $!\")"
+      "Bash(echo \"Started round 2 PID $!\")",
+      "Bash(_bin/skel-test-ai-generators --skel python-fastapi-skel --skel next-js-skel --max-retries 1)",
+      "Bash(_bin/skel-test-ai-generators --skel java-spring-skel --skel rust-actix-skel --skel rust-axum-skel --skel ts-react-skel --skel flutter-skel --max-retries 1 --keep)",
+      "Bash(_bin/skel-test-ai-generators --skel flutter-skel --max-retries 2 --keep)",
+      "Bash(_bin/skel-test-ai-generators --skel flutter-skel --max-retries 1 --keep)"
     ],
     "deny": [],
     "ask": []
