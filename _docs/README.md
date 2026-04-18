@@ -107,7 +107,7 @@ service.
 * [**`../CHANGELOG.md`**](../CHANGELOG.md) — what shipped and when
   (Phases 1–4 + infrastructure).
 * [**`../ROADMAP.md`**](../ROADMAP.md) — forward-looking phases
-  (5: K8s/Helm, 6: project UX).
+  (6: project UX, 7: whole-project K8s/Helm lifecycle).
 * [**`../TODO.md`**](../TODO.md) — concrete actionable tasks.
 
 ---

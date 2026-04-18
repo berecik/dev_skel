@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""Smoke test for project-level UX + stack generators.
+
+Usage:
+
+    _bin/skel-test-project-ux
+    _bin/skel-test-project-ux --keep
+"""
+
+from __future__ import annotations
+
+import argparse
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+EXIT_OK = 0
+EXIT_FAIL = 1
+
+
+def _run(argv, **kwargs):
+    return subprocess.run(argv, capture_output=True, text=True, **kwargs)
+
+
+def _assert_contains(haystack: str, needle: str, label: str) -> bool:
+    if needle in haystack:
+        return True
+    print(f"[project-ux-smoke] FAIL: expected {label}: {needle!r}", file=sys.stderr)
+    print("[project-ux-smoke] output follows:", file=sys.stderr)
+    print(haystack, file=sys.stderr)
+    return False
+
+
+def _services_in_wrapper(wrapper: Path) -> list[str]:
+    return sorted(
+        p.name
+        for p in wrapper.iterdir()
+        if p.is_dir() and p.name != "_shared" and not p.name.startswith(".")
+    )
+
+
+def _assert_required_services(services: list[str], required: set[str], label: str) -> bool:
+    missing = sorted(required - set(services))
+    if not missing:
+        return True
+    print(
+        f"[project-ux-smoke] FAIL: {label} missing required services: {missing}; found={services}",
+        file=sys.stderr,
+    )
+    return False
+
+
+def _check_stack_web(wrapper: Path) -> bool:
+    services = _services_in_wrapper(wrapper)
+    expected = {"items_api", "web_ui"}
+    if not _assert_required_services(services, expected, "stack-web"):
+        return False
+
+    graph = _run(["./project", "graph"], cwd=wrapper)
+    graph_out = graph.stdout + graph.stderr
+    if graph.returncode != 0:
+        print(graph_out, file=sys.stderr)
+        return False
+    if not _assert_contains(graph_out, "graph TD", "Mermaid header"):
+        return False
+    for svc in sorted(expected):
+        if not _assert_contains(graph_out, f"  {svc}[{svc}]", f"service node {svc}"):
+            return False
+
+    dot = _run(["./project", "graph", "--dot"], cwd=wrapper)
+    dot_out = dot.stdout + dot.stderr
+    if dot.returncode != 0:
+        print(dot_out, file=sys.stderr)
+        return False
+    if not _assert_contains(dot_out, "digraph dev_skel {", "DOT header"):
+        return False
+
+    for profile in ("dev", "staging", "prod"):
+        (wrapper / f".env.{profile}").write_text(
+            f"PROFILE={profile}\n", encoding="utf-8"
+        )
+
+    env_current = _run(["./env", "current"], cwd=wrapper)
+    if env_current.returncode != 0:
+        print(env_current.stdout + env_current.stderr, file=sys.stderr)
+        return False
+    if env_current.stdout.strip() != "default":
+        print(
+            "[project-ux-smoke] FAIL: expected default profile before switch, "
+            f"got {env_current.stdout!r}",
+            file=sys.stderr,
+        )
+        return False
+
+    use_staging = _run(["./env", "use", "staging"], cwd=wrapper)
+    use_staging_out = use_staging.stdout + use_staging.stderr
+    if use_staging.returncode != 0:
+        print(use_staging_out, file=sys.stderr)
+        return False
+    if not _assert_contains(
+        use_staging_out, "[env] active profile: staging", "env use output"
+    ):
+        return False
+
+    current_again = _run(["./env", "current"], cwd=wrapper)
+    if current_again.returncode != 0:
+        print(current_again.stdout + current_again.stderr, file=sys.stderr)
+        return False
+    if current_again.stdout.strip() != "staging":
+        print(
+            "[project-ux-smoke] FAIL: expected staging profile after switch, "
+            f"got {current_again.stdout!r}",
+            file=sys.stderr,
+        )
+        return False
+
+    copied = (wrapper / ".env").read_text(encoding="utf-8")
+    if "PROFILE=staging" not in copied:
+        print(
+            "[project-ux-smoke] FAIL: .env was not updated from .env.staging",
+            file=sys.stderr,
+        )
+        return False
+
+    for cmd in ("test", "lint", "build"):
+        proc = _run(["./project", cmd], cwd=wrapper)
+        combined = proc.stdout + proc.stderr
+        if proc.returncode != 0:
+            print(combined, file=sys.stderr)
+            return False
+        if cmd == "lint":
+            if (
+                f"[project] {cmd} summary" not in combined
+                and "[project] no service in this wrapper provides ./lint" not in combined
+            ):
+                print(
+                    "[project-ux-smoke] FAIL: lint output missing expected summary/skip message",
+                    file=sys.stderr,
+                )
+                print(combined, file=sys.stderr)
+                return False
+        else:
+            if not _assert_contains(
+                combined, f"[project] {cmd} summary", f"{cmd} summary header"
+            ):
+                return False
+
+    return True
+
+
+def _check_stack_enterprise(wrapper: Path) -> bool:
+    services = _services_in_wrapper(wrapper)
+    expected = {"core_api", "auth_api", "web_ui"}
+    if not _assert_required_services(services, expected, "stack-enterprise"):
+        return False
+
+    graph = _run(["./project", "graph"], cwd=wrapper)
+    graph_out = graph.stdout + graph.stderr
+    if graph.returncode != 0:
+        print(graph_out, file=sys.stderr)
+        return False
+    if not _assert_contains(graph_out, "graph TD", "Mermaid header"):
+        return False
+    for svc in sorted(expected):
+        if not _assert_contains(graph_out, f"  {svc}[{svc}]", f"service node {svc}"):
+            return False
+    return True
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--keep", action="store_true")
+    args = parser.parse_args()
+
+    web = REPO_ROOT / "test-project-ux-stack-web"
+    enterprise = REPO_ROOT / "test-project-ux-stack-enterprise"
+    for path in (web, enterprise):
+        if path.exists():
+            shutil.rmtree(path)
+
+    print("[project-ux-smoke] generating stack-web via Makefile target")
+    gen_web = _run(["make", "gen-stack-web", f"NAME={web.name}"], cwd=REPO_ROOT)
+    if gen_web.returncode != 0:
+        print(gen_web.stdout + gen_web.stderr, file=sys.stderr)
+        return EXIT_FAIL
+    if not _check_stack_web(web):
+        return EXIT_FAIL
+    print("[project-ux-smoke] stack-web checks passed ✓")
+
+    print("[project-ux-smoke] generating stack-enterprise via Makefile target")
+    gen_ent = _run(
+        ["make", "gen-stack-enterprise", f"NAME={enterprise.name}"],
+        cwd=REPO_ROOT,
+    )
+    if gen_ent.returncode != 0:
+        print(gen_ent.stdout + gen_ent.stderr, file=sys.stderr)
+        return EXIT_FAIL
+    if not _check_stack_enterprise(enterprise):
+        return EXIT_FAIL
+    print("[project-ux-smoke] stack-enterprise checks passed ✓")
+
+    if not args.keep:
+        for path in (web, enterprise):
+            if path.exists():
+                shutil.rmtree(path)
+    print("[project-ux-smoke] OK — project UX + stack generator smoke passed.")
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())

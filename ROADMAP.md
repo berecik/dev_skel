@@ -77,5 +77,4 @@ project as one deployable unit (AI create + check + update).
 
 1. ~~**Phase 5** — Kubernetes / Helm.~~ (DONE)
 2. **Phase 6** — project-level UX + stack generators.
-3. **Phase 7** — whole-project K8s lifecycle (AI-assisted).
-3. **Phase 7** — whole-project K8s/Helm create-or-update workflow.
+3. **Phase 7** — whole-project K8s/Helm lifecycle (AI-assisted).

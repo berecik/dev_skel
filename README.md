@@ -526,7 +526,7 @@ is only needed when running from inside a dev_skel checkout.
 | Create or update a skeleton | [`_docs/SKELETON-DESIGN-GUIDE.md`](_docs/SKELETON-DESIGN-GUIDE.md) |
 | Wrapper-shared API contract (OpenAPI 3.1) | [`_skels/_common/openapi/wrapper-api.yaml`](_skels/_common/openapi/wrapper-api.yaml) |
 | What shipped and when | [`CHANGELOG.md`](CHANGELOG.md) |
-| Forward-looking roadmap | [`ROADMAP.md`](ROADMAP.md) (Phases 5–6 open) |
+| Forward-looking roadmap | [`ROADMAP.md`](ROADMAP.md) (Phase 6–7 open) |
 | Design specs (originals) | [`SERVICE_REFACTOR_COMMAND.md`](SERVICE_REFACTOR_COMMAND.md), [`SKEL_BACKPORT_COMMAND.md`](SKEL_BACKPORT_COMMAND.md), [`UPDATE_SKEL_REFACTOR.md`](UPDATE_SKEL_REFACTOR.md) |
 
 ---

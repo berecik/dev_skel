@@ -3,6 +3,28 @@
 Claude-specific complement to `_skels/flutter-skel/AGENTS.md` and
 `_skels/flutter-skel/JUNIE-RULES.md`. Read those first.
 
+
+## Mandatory Test Artifact Location
+
+- **Mandatory:** Any testing projects, services, data, or files must be created only under `_test_projects/` (the dedicated directory for generated testing skeletons and related test artifacts).
+
+---
+
+## Maintenance Scenario ("let do maintenance" / "let do test-fix loop")
+
+Use this shared scenario whenever the user asks for maintenance (for example: `let do maintenance` or `let do test-fix loop`).
+
+- **1) Finish the requested implementation scenario first.**
+- **2) Run tests for changed scope first**, then run full relevant test suites.
+- **3) Test code safety** (security/safety checks relevant to the stack and changed paths).
+- **4) Simplify and clean up code** (remove dead code, reduce complexity, keep style consistent).
+- **5) Run all relevant tests again** after cleanup.
+- **6) Fix every issue found** (tests, lint, safety, build, runtime).
+- **7) Repeat steps 2–6 until no issues remain.**
+- **8) Only then update and synchronize documentation/rules** (`README`, `_docs/`, skeleton docs, agent instructions) to match final behaviour.
+
+This is the default maintenance/test-fix loop and should be commonly understood across all agent entrypoints.
+
 ---
 
 ## 1. Read These Files First (in order)

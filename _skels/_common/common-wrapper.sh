@@ -1001,7 +1001,248 @@ STOP_DEV_ALL
 chmod +x "$MAIN_DIR/stop-dev-all"
 
 # --------------------------------------------------------------------------- #
-#  9) ./deploy script — Kubernetes/Helm lifecycle
+#  9) ./project + ./env — project-level UX helpers
+# --------------------------------------------------------------------------- #
+
+cat >"$MAIN_DIR/project" <<'PROJECT_SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_YML="$SCRIPT_DIR/dev_skel.project.yml"
+SERVICE_URLS="$SCRIPT_DIR/_shared/service-urls.env"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+_discover_services_with_script() {
+  local script_name="$1"
+  shopt -s nullglob
+  for dir in "$SCRIPT_DIR"/*/; do
+    local svc
+    svc="$(basename "$dir")"
+    case "$svc" in _shared|.*|contracts) continue ;; esac
+    [[ -x "${dir%/}/$script_name" ]] && echo "$svc"
+  done
+}
+
+_run_aggregated() {
+  local script_name="$1"
+  local total=0
+  local ok=0
+  local fail=0
+  local -a lines=()
+
+  mapfile -t services < <(_discover_services_with_script "$script_name")
+  if [[ ${#services[@]} -eq 0 ]]; then
+    echo "[project] no service in this wrapper provides ./$script_name" >&2
+    exit 0
+  fi
+
+  for svc in "${services[@]}"; do
+    total=$((total + 1))
+    local started
+    started="$(python3 - <<'PY'
+import time
+print(time.monotonic())
+PY
+)"
+    local rc=0
+    echo "[project] >>> $script_name $svc"
+    if ! (cd "$SCRIPT_DIR/$svc" && "./$script_name"); then
+      rc=$?
+    fi
+    local ended
+    ended="$(python3 - <<'PY'
+import time
+print(time.monotonic())
+PY
+)"
+    local elapsed
+    elapsed="$(python3 - "$started" "$ended" <<'PY'
+import sys
+s=float(sys.argv[1]); e=float(sys.argv[2])
+print(f"{max(0.0, e-s):.2f}s")
+PY
+)"
+
+    if [[ $rc -eq 0 ]]; then
+      ok=$((ok + 1))
+      lines+=("${GREEN}✓${NC} ${svc} (${elapsed})")
+    else
+      fail=$((fail + 1))
+      lines+=("${RED}✗${NC} ${svc} (${elapsed}) rc=${rc}")
+    fi
+  done
+
+  echo ""
+  echo -e "${BLUE}[project] ${script_name} summary${NC}"
+  for line in "${lines[@]}"; do
+    echo -e "  $line"
+  done
+  echo -e "${CYAN}[project] total=${total} ok=${ok} fail=${fail}${NC}"
+  [[ $fail -eq 0 ]]
+}
+
+_emit_graph() {
+  local format="${1:-mermaid}"
+  if [[ ! -f "$PROJECT_YML" ]]; then
+    echo "[project graph] missing dev_skel.project.yml" >&2
+    return 1
+  fi
+
+  python3 - "$PROJECT_YML" "$SERVICE_URLS" "$format" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+project_yml = Path(sys.argv[1])
+service_urls = Path(sys.argv[2])
+out_fmt = sys.argv[3]
+
+services = []
+edges = set()
+
+for raw in project_yml.read_text(encoding="utf-8").splitlines():
+    line = raw.rstrip()
+    m = re.match(r"\s*-\s+id:\s+([a-zA-Z0-9_-]+)\s*$", line)
+    if m:
+        services.append(m.group(1))
+
+known = set(services)
+for env_file in [Path(".env"), Path(".env.example"), service_urls]:
+    if not env_file.exists():
+        continue
+    for line in env_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+        if "SERVICE_URL_" not in line:
+            continue
+        for target in known:
+            token = "SERVICE_URL_" + target.upper().replace("-", "_")
+            if token in line:
+                lhs = line.split("=", 1)[0].strip()
+                src = None
+                m = re.match(r"^SERVICE_URL_([A-Z0-9_]+)$", lhs)
+                if m:
+                    maybe = m.group(1).lower().replace("_", "-")
+                    if maybe in known:
+                        src = maybe
+                if src and src != target:
+                    edges.add((src, target))
+
+if out_fmt == "dot":
+    print("digraph dev_skel {")
+    print('  rankdir="LR";')
+    for svc in services:
+        print(f'  "{svc}";')
+    for src, dst in sorted(edges):
+        print(f'  "{src}" -> "{dst}";')
+    print("}")
+else:
+    print("graph TD")
+    for svc in services:
+        print(f"  {svc}[{svc}]")
+    for src, dst in sorted(edges):
+        print(f"  {src} --> {dst}")
+PY
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  test|lint|build)
+    shift
+    _run_aggregated "$cmd"
+    ;;
+  graph)
+    shift
+    fmt="mermaid"
+    if [[ "${1:-}" == "--dot" ]]; then
+      fmt="dot"
+    fi
+    _emit_graph "$fmt"
+    ;;
+  -h|--help|"")
+    cat <<'EOF'
+Usage: ./project <command>
+
+Commands:
+  test               Run ./test across all services with summary
+  lint               Run ./lint across all services with summary
+  build              Run ./build across all services with summary
+  graph [--dot]      Emit service graph (Mermaid by default, DOT with --dot)
+EOF
+    ;;
+  *)
+    echo "[project] unknown command: $cmd" >&2
+    echo "Use: ./project --help" >&2
+    exit 1
+    ;;
+esac
+PROJECT_SCRIPT
+chmod +x "$MAIN_DIR/project"
+
+cat >"$MAIN_DIR/env" <<'ENV_SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+_profile_file() {
+  local profile="$1"
+  echo "$SCRIPT_DIR/.env.$profile"
+}
+
+_validate_profile() {
+  case "$1" in
+    dev|staging|prod) ;;
+    *)
+      echo "[env] unsupported profile '$1' (expected: dev|staging|prod)" >&2
+      return 1
+      ;;
+  esac
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  use)
+    profile="${2:-}"
+    _validate_profile "$profile"
+    src="$(_profile_file "$profile")"
+    if [[ ! -f "$src" ]]; then
+      echo "[env] missing profile file: .env.$profile" >&2
+      echo "[env] create it first (you can copy from .env.example)." >&2
+      exit 1
+    fi
+    cp "$src" "$SCRIPT_DIR/.env"
+    echo "$profile" > "$SCRIPT_DIR/_shared/active-env"
+    echo "[env] active profile: $profile"
+    ;;
+  current)
+    if [[ -f "$SCRIPT_DIR/_shared/active-env" ]]; then
+      printf '%s\n' "$(cat "$SCRIPT_DIR/_shared/active-env")"
+    else
+      echo "default"
+    fi
+    ;;
+  -h|--help|"")
+    cat <<'EOF'
+Usage:
+  ./env use dev|staging|prod
+  ./env current
+EOF
+    ;;
+  *)
+    echo "[env] unknown command: $cmd" >&2
+    echo "Use: ./env --help" >&2
+    exit 1
+    ;;
+esac
+ENV_SCRIPT
+chmod +x "$MAIN_DIR/env"
+
+# --------------------------------------------------------------------------- #
+# 10) ./deploy script — Kubernetes/Helm lifecycle
 # --------------------------------------------------------------------------- #
 
 cat >"$MAIN_DIR/kube" <<'DEPLOY_SCRIPT'

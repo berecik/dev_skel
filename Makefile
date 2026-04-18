@@ -5,6 +5,7 @@
         ci-status ci-watch ci-log \
         contracts-info contracts-export \
         deploy-helm-gen \
+        gen-stack-web gen-stack-enterprise \
         gen-fastapi gen-fastapi-rag gen-flask gen-django gen-django-bolt gen-react gen-flutter gen-nextjs gen-spring gen-actix gen-axum gen-go \
         test-fastapi test-fastapi-rag test-flask test-django test-django-bolt test-react test-flutter test-nextjs test-spring test-actix test-axum test-go \
         test-ai-generators test-ai-generators-dry \
@@ -27,6 +28,7 @@
         test-ai-memory test-ai-memory-keep \
         test-ai-upgrade test-ai-upgrade-keep \
         test-ai-fanout test-ai-fanout-keep \
+        test-project-ux test-project-ux-keep \
         test-flutter-django-bolt test-flutter-django-bolt-keep \
         test-flutter-fastapi test-flutter-fastapi-keep test-flutter-cross-stack \
         test-cross-stack
@@ -119,6 +121,23 @@ gen-axum: ## Generate Rust Axum project (NAME=myapp [SERVICE="display name"])
 
 gen-go: ## Generate Go (net/http) project (NAME=myapp [SERVICE="display name"])
 	@$(MAKE) -C $(GO_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
+
+gen-stack-web: ## Generate opinionated web stack (FastAPI + React)
+	@bash -eu -c 'name="$(NAME)"; \
+	if [[ -z "$$name" ]]; then echo "Usage: make gen-stack-web NAME=<project-dir>" >&2; exit 1; fi; \
+	mkdir -p "$$name"; \
+	_bin/skel-gen-static --no-input "$$name" python-fastapi-skel "Items API"; \
+	python3 _bin/skel-add --static "$$name" ts-react-skel "Web UI"; \
+	echo "$(GREEN)Generated stack-web at $$name (FastAPI + React)$(NC)"'
+
+gen-stack-enterprise: ## Generate opinionated enterprise stack (Spring + Actix + React)
+	@bash -eu -c 'name="$(NAME)"; \
+	if [[ -z "$$name" ]]; then echo "Usage: make gen-stack-enterprise NAME=<project-dir>" >&2; exit 1; fi; \
+	mkdir -p "$$name"; \
+	_bin/skel-gen-static --no-input "$$name" java-spring-skel "Core API"; \
+	python3 _bin/skel-add --static "$$name" rust-actix-skel "Auth API"; \
+	python3 _bin/skel-add --static "$$name" ts-react-skel "Web UI"; \
+	echo "$(GREEN)Generated stack-enterprise at $$name (Spring + Actix + React)$(NC)"'
 
 #
 # === TEST ALL GENERATORS ===
@@ -469,6 +488,13 @@ test-ai-fanout: ## Smoke wrapper-level ./ai fan-out default (two services)
 
 test-ai-fanout-keep: ## Same, but leave the test wrapper on disk
 	@_bin/skel-test-ai-fanout --keep
+
+test-project-ux: ## Smoke project UX (`./project`, `./env`) + stack generators
+	@echo "$(GREEN)=== Project UX + stack generator smoke ===$(NC)"
+	@_bin/skel-test-project-ux
+
+test-project-ux-keep: ## Same, but leave generated wrappers on disk
+	@_bin/skel-test-project-ux --keep
 
 #
 # === FLUTTER + BACKEND CROSS-STACK INTEGRATION TESTS ===
