@@ -501,3 +501,72 @@ def generate_project(
 
     run_gen_command(skel_path, target, service_subdir)
     return service_subdir
+
+
+# --------------------------------------------------------------------------- #
+# dev_skel.project.yml — shared minimal parser
+# --------------------------------------------------------------------------- #
+
+
+def read_project_yml(wrapper: Path) -> Dict[str, object]:
+    """Parse the subset of ``dev_skel.project.yml`` we actually need.
+
+    Returns a dict with keys ``project``, ``kubernetes``, ``images``,
+    ``services``. Raises :class:`FileNotFoundError` when the file is
+    missing; callers decide how to surface that. We deliberately avoid
+    a ``pyyaml`` dependency — this parser covers the shape emitted by
+    ``_skels/_common/common-wrapper.sh`` and nothing else.
+    """
+    yml = wrapper / "dev_skel.project.yml"
+    if not yml.is_file():
+        raise FileNotFoundError(str(yml))
+
+    data: Dict[str, object] = {
+        "project": {},
+        "kubernetes": {},
+        "images": {},
+        "services": [],
+    }
+    current: Optional[Dict[str, str]] = None
+
+    for line in yml.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or not stripped:
+            continue
+        if line.startswith("  name:"):
+            data["project"]["name"] = stripped.split(":", 1)[1].strip()  # type: ignore[index]
+        elif line.startswith("  cluster:"):
+            data["kubernetes"]["cluster"] = stripped.split(":", 1)[1].strip()  # type: ignore[index]
+        elif line.startswith("  context:"):
+            data["kubernetes"]["context"] = stripped.split(":", 1)[1].strip()  # type: ignore[index]
+        elif line.startswith("  namespace:"):
+            data["kubernetes"]["namespace"] = stripped.split(":", 1)[1].strip()  # type: ignore[index]
+        elif line.startswith("  repository:"):
+            data["images"]["repository"] = stripped.split(":", 1)[1].strip()  # type: ignore[index]
+        elif stripped.startswith("- id:"):
+            if current:
+                data["services"].append(current)  # type: ignore[attr-defined]
+            current = {"id": stripped.split(":", 1)[1].strip()}
+        elif current and stripped.startswith("kind:"):
+            current["kind"] = stripped.split(":", 1)[1].strip()
+        elif current and stripped.startswith("tech:"):
+            current["tech"] = stripped.split(":", 1)[1].strip()
+        elif current and stripped.startswith("port:"):
+            current["port"] = stripped.split(":", 1)[1].strip()
+        elif current and stripped.startswith("version:"):
+            current["version"] = stripped.split(":", 1)[1].strip()
+
+    if current:
+        data["services"].append(current)  # type: ignore[attr-defined]
+    return data
+
+
+_SAFE_SERVICE_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_\-]*$")
+
+
+def is_safe_service_id(service_id: str) -> bool:
+    """Return True when ``service_id`` is safe as a filesystem path
+    component (no slashes, no leading dot, no ``..``)."""
+    if not service_id or service_id in {".", ".."}:
+        return False
+    return bool(_SAFE_SERVICE_ID.match(service_id))

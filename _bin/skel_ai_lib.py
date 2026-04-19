@@ -2347,49 +2347,15 @@ class _StrictDict(dict):
 
 
 def _read_project_yml_minimal(wrapper: Path) -> dict:
-    """Tiny hand-rolled parser for ``dev_skel.project.yml``.
+    """Thin alias kept for backwards compatibility.
 
-    Mirrors ``_bin/skel-deploy._read_project_yml`` so this module does
-    not grow a ``pyyaml`` dependency. If the file structure ever
-    diverges, keep both parsers in sync.
+    The canonical parser lives in :func:`dev_skel_lib.read_project_yml`.
+    This wrapper exists so in-tree callers that imported the underscore
+    name keep working; new code should use ``read_project_yml``
+    directly.
     """
-    yml = wrapper / "dev_skel.project.yml"
-    if not yml.is_file():
-        raise FileNotFoundError(str(yml))
-
-    data: dict = {"project": {}, "kubernetes": {}, "images": {}, "services": []}
-    current_service: "dict | None" = None
-
-    for line in yml.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if stripped.startswith("#") or not stripped:
-            continue
-        if line.startswith("  name:"):
-            data["project"]["name"] = stripped.split(":", 1)[1].strip()
-        elif line.startswith("  cluster:"):
-            data["kubernetes"]["cluster"] = stripped.split(":", 1)[1].strip()
-        elif line.startswith("  context:"):
-            data["kubernetes"]["context"] = stripped.split(":", 1)[1].strip()
-        elif line.startswith("  namespace:"):
-            data["kubernetes"]["namespace"] = stripped.split(":", 1)[1].strip()
-        elif line.startswith("  repository:"):
-            data["images"]["repository"] = stripped.split(":", 1)[1].strip()
-        elif stripped.startswith("- id:"):
-            if current_service:
-                data["services"].append(current_service)
-            current_service = {"id": stripped.split(":", 1)[1].strip()}
-        elif current_service and stripped.startswith("kind:"):
-            current_service["kind"] = stripped.split(":", 1)[1].strip()
-        elif current_service and stripped.startswith("tech:"):
-            current_service["tech"] = stripped.split(":", 1)[1].strip()
-        elif current_service and stripped.startswith("port:"):
-            current_service["port"] = stripped.split(":", 1)[1].strip()
-        elif current_service and stripped.startswith("version:"):
-            current_service["version"] = stripped.split(":", 1)[1].strip()
-
-    if current_service:
-        data["services"].append(current_service)
-    return data
+    import importlib
+    return importlib.import_module("dev_skel_lib").read_project_yml(wrapper)
 
 
 @dataclass
@@ -2464,8 +2430,16 @@ def run_kubernetes_phase(
 
     managed_root = wrapper_dir / "deploy" / "helm" / "templates" / "_managed"
     managed_root.mkdir(parents=True, exist_ok=True)
+    import importlib
+    _dsl = importlib.import_module("dev_skel_lib")
     for svc in project_yml.get("services", []) or []:
-        (managed_root / svc["id"]).mkdir(parents=True, exist_ok=True)
+        sid = svc.get("id", "")
+        if not _dsl.is_safe_service_id(sid):
+            return KubernetesResult(
+                ok=False,
+                error=f"rejecting unsafe service id {sid!r} in dev_skel.project.yml",
+            )
+        (managed_root / sid).mkdir(parents=True, exist_ok=True)
 
     generated_files: "list[Path]" = []
 

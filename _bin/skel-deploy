@@ -40,49 +40,21 @@ REPO_ROOT = SCRIPT_DIR.parent
 HELM_TEMPLATES = REPO_ROOT / "_skels" / "_common" / "helm"
 
 
+sys.path.insert(0, str(SCRIPT_DIR))
+from dev_skel_lib import read_project_yml as _shared_read_project_yml  # noqa: E402
+
+
 def _read_project_yml(wrapper: Path) -> dict:
-    """Minimal YAML-subset parser for dev_skel.project.yml."""
-    yml = wrapper / "dev_skel.project.yml"
-    if not yml.is_file():
-        print(f"Error: {yml} not found — run a gen script first.", file=sys.stderr)
+    """CLI-friendly wrapper around :func:`dev_skel_lib.read_project_yml`.
+
+    Prints + exits on missing file (preserves the long-standing
+    skel-deploy CLI contract).
+    """
+    try:
+        return _shared_read_project_yml(wrapper)
+    except FileNotFoundError as exc:
+        print(f"Error: {exc} not found — run a gen script first.", file=sys.stderr)
         sys.exit(1)
-
-    data: dict = {"project": {}, "kubernetes": {}, "images": {}, "services": []}
-    current_service: dict | None = None
-
-    for line in yml.read_text().splitlines():
-        stripped = line.strip()
-        if stripped.startswith("#") or not stripped:
-            continue
-
-        # Top-level keys
-        if line.startswith("  name:"):
-            data["project"]["name"] = stripped.split(":", 1)[1].strip()
-        elif line.startswith("  cluster:"):
-            data["kubernetes"]["cluster"] = stripped.split(":", 1)[1].strip()
-        elif line.startswith("  context:"):
-            data["kubernetes"]["context"] = stripped.split(":", 1)[1].strip()
-        elif line.startswith("  namespace:"):
-            data["kubernetes"]["namespace"] = stripped.split(":", 1)[1].strip()
-        elif line.startswith("  repository:"):
-            data["images"]["repository"] = stripped.split(":", 1)[1].strip()
-        elif stripped.startswith("- id:"):
-            if current_service:
-                data["services"].append(current_service)
-            current_service = {"id": stripped.split(":", 1)[1].strip()}
-        elif current_service and stripped.startswith("kind:"):
-            current_service["kind"] = stripped.split(":", 1)[1].strip()
-        elif current_service and stripped.startswith("tech:"):
-            current_service["tech"] = stripped.split(":", 1)[1].strip()
-        elif current_service and stripped.startswith("port:"):
-            current_service["port"] = stripped.split(":", 1)[1].strip()
-        elif current_service and stripped.startswith("version:"):
-            current_service["version"] = stripped.split(":", 1)[1].strip()
-
-    if current_service:
-        data["services"].append(current_service)
-
-    return data
 
 
 def _health_path(tech: str) -> str:
