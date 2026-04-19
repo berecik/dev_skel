@@ -174,14 +174,17 @@ def main() -> int:
     parser.add_argument("--keep", action="store_true")
     args = parser.parse_args()
 
-    web = REPO_ROOT / "test-project-ux-stack-web"
-    enterprise = REPO_ROOT / "test-project-ux-stack-enterprise"
+    test_root = REPO_ROOT / "_test_projects"
+    test_root.mkdir(exist_ok=True)
+    web = test_root / "project-ux-stack-web"
+    enterprise = test_root / "project-ux-stack-enterprise"
     for path in (web, enterprise):
         if path.exists():
             shutil.rmtree(path)
 
     print("[project-ux-smoke] generating stack-web via Makefile target")
-    gen_web = _run(["make", "gen-stack-web", f"NAME={web.name}"], cwd=REPO_ROOT)
+    web_rel = web.relative_to(REPO_ROOT)
+    gen_web = _run(["make", "gen-stack-web", f"NAME={web_rel}"], cwd=REPO_ROOT)
     if gen_web.returncode != 0:
         print(gen_web.stdout + gen_web.stderr, file=sys.stderr)
         return EXIT_FAIL
@@ -190,8 +193,9 @@ def main() -> int:
     print("[project-ux-smoke] stack-web checks passed ✓")
 
     print("[project-ux-smoke] generating stack-enterprise via Makefile target")
+    enterprise_rel = enterprise.relative_to(REPO_ROOT)
     gen_ent = _run(
-        ["make", "gen-stack-enterprise", f"NAME={enterprise.name}"],
+        ["make", "gen-stack-enterprise", f"NAME={enterprise_rel}"],
         cwd=REPO_ROOT,
     )
     if gen_ent.returncode != 0:

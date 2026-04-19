@@ -125,18 +125,22 @@ gen-go: ## Generate Go (net/http) project (NAME=myapp [SERVICE="display name"])
 gen-stack-web: ## Generate opinionated web stack (FastAPI + React)
 	@bash -eu -c 'name="$(NAME)"; \
 	if [[ -z "$$name" ]]; then echo "Usage: make gen-stack-web NAME=<project-dir>" >&2; exit 1; fi; \
+	repo_root="$$(pwd)"; \
+	parent="$$(dirname "$$name")"; leaf="$$(basename "$$name")"; \
 	mkdir -p "$$name"; \
-	_bin/skel-gen-static --no-input "$$name" python-fastapi-skel "Items API"; \
-	python3 _bin/skel-add --static "$$name" ts-react-skel "Web UI"; \
+	(cd "$$parent" && "$$repo_root/_bin/skel-gen-static" --no-input "$$leaf" python-fastapi-skel "Items API"); \
+	(cd "$$parent" && python3 "$$repo_root/_bin/skel-add" --static "$$leaf" ts-react-skel "Web UI"); \
 	echo "$(GREEN)Generated stack-web at $$name (FastAPI + React)$(NC)"'
 
 gen-stack-enterprise: ## Generate opinionated enterprise stack (Spring + Actix + React)
 	@bash -eu -c 'name="$(NAME)"; \
 	if [[ -z "$$name" ]]; then echo "Usage: make gen-stack-enterprise NAME=<project-dir>" >&2; exit 1; fi; \
+	repo_root="$$(pwd)"; \
+	parent="$$(dirname "$$name")"; leaf="$$(basename "$$name")"; \
 	mkdir -p "$$name"; \
-	_bin/skel-gen-static --no-input "$$name" java-spring-skel "Core API"; \
-	python3 _bin/skel-add --static "$$name" rust-actix-skel "Auth API"; \
-	python3 _bin/skel-add --static "$$name" ts-react-skel "Web UI"; \
+	(cd "$$parent" && "$$repo_root/_bin/skel-gen-static" --no-input "$$leaf" java-spring-skel "Core API"); \
+	(cd "$$parent" && python3 "$$repo_root/_bin/skel-add" --static "$$leaf" rust-actix-skel "Auth API"); \
+	(cd "$$parent" && python3 "$$repo_root/_bin/skel-add" --static "$$leaf" ts-react-skel "Web UI"); \
 	echo "$(GREEN)Generated stack-enterprise at $$name (Spring + Actix + React)$(NC)"'
 
 #

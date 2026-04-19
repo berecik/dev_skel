@@ -16,6 +16,7 @@ this document tracks the remaining phases. See
 | 3 | Cross-service contracts | OpenAPI 3.1 spec (14 ops), `skel-contracts` CLI (export/validate/diff/info) |
 | 4 | Observability baseline | `/api/health` (all backends), `LOG_FORMAT`, `OTEL_*`, Docker Compose `--profile observability` |
 | 5 | Kubernetes & Helm | Helm chart template, `skel-deploy` CLI (helm-gen/up/down/status), `./kube` wrapper, values profiles (local/cloud) |
+| 6 | Project-level UX | `./project test\|lint\|build\|graph`, `./env use dev\|staging\|prod`, `make gen-stack-web`/`gen-stack-enterprise`, `make test-project-ux` smoke |
 | — | Infrastructure | 12 skeletons, unified schema (items+categories+auth+state), per-service docker-compose, `./ai`+`./backport`, CI pipeline, Skeleton Design Guide |
 
 Full details: [`CHANGELOG.md`](CHANGELOG.md)
@@ -40,17 +41,26 @@ Full details: [`CHANGELOG.md`](CHANGELOG.md)
 
 ---
 
-## Phase 6 — Project-level UX
+## ~~Phase 6 — Project-level UX~~ (DONE)
 
-**Goal:** Treat the wrapper as a single product.
+**Shipped 2026-04.** Wrapper-level UX that treats the multi-service
+project as a single product.
 
-- [ ] `./project test` / `lint` / `build` — fan out across services
-      with a colour-coded aggregated summary.
-- [ ] `./project graph` — emit a Mermaid/DOT service dependency
-      diagram from `dev_skel.project.yml`.
-- [ ] `./env use dev|staging|prod` — switch environment profiles.
-- [ ] Opinionated stack generators (`make gen-stack-web`,
-      `make gen-stack-enterprise`).
+- [x] `./project test` / `lint` / `build` — fan out across services
+      with a colour-coded aggregated summary
+      (`_skels/_common/common-wrapper.sh`).
+- [x] `./project graph` — emit a Mermaid (`graph TD`) or DOT
+      (`--dot`) service dependency diagram from
+      `dev_skel.project.yml` + `_shared/service-urls.env`.
+- [x] `./env use dev|staging|prod` + `./env current` — switch
+      environment profiles (`.env.<profile>` → `.env`), persisted
+      in `_shared/active-env`.
+- [x] Opinionated stack generators — `make gen-stack-web`
+      (FastAPI + React), `make gen-stack-enterprise`
+      (Spring + Actix + React).
+- [x] Smoke test `make test-project-ux` (`_bin/skel-test-project-ux`)
+      exercises both stacks end-to-end; artifacts land in
+      `_test_projects/` per the mandatory test-location rule.
 
 ---
 
@@ -76,5 +86,5 @@ project as one deployable unit (AI create + check + update).
 ## Suggested order
 
 1. ~~**Phase 5** — Kubernetes / Helm.~~ (DONE)
-2. **Phase 6** — project-level UX + stack generators.
+2. ~~**Phase 6** — project-level UX + stack generators.~~ (DONE)
 3. **Phase 7** — whole-project K8s/Helm lifecycle (AI-assisted).

@@ -5,6 +5,50 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [2026-04-19] — Phase 6: Project-level UX
+
+### Added
+
+- **`./project` wrapper script** — aggregate dispatcher over every
+  service in the wrapper. `test` / `lint` / `build` fan out across
+  services that ship the matching script, with a colour-coded
+  summary (`✓` / `✗` per service, total/ok/fail counts, timings).
+  `graph` emits a Mermaid (`graph TD`) service dependency diagram;
+  `graph --dot` emits Graphviz DOT. Dependencies are discovered by
+  scanning `dev_skel.project.yml` for services and cross-referencing
+  `SERVICE_URL_*` tokens in `.env` / `.env.example` /
+  `_shared/service-urls.env`.
+- **`./env` wrapper script** — `./env use dev|staging|prod` copies
+  `.env.<profile>` → `.env` and records the active profile in
+  `_shared/active-env`; `./env current` prints the active profile
+  (defaults to `default` when no profile has been switched in).
+- **Opinionated stack generators** —
+  - `make gen-stack-web NAME=<dir>` generates FastAPI (`Items API`)
+    + React (`Web UI`) in one go.
+  - `make gen-stack-enterprise NAME=<dir>` generates Spring
+    (`Core API`) + Rust Actix (`Auth API`) + React (`Web UI`).
+  Both targets now accept nested paths like
+  `NAME=_test_projects/my-stack` (parent dir is used as cwd; leaf
+  name is passed to `skel-gen-static` / `skel-add`).
+- **Smoke test `make test-project-ux`** — backed by
+  `_bin/skel-test-project-ux`. Generates both stacks, verifies
+  service layout, Mermaid + DOT graph output, `./env` profile
+  switching (including `.env` rewrite), and
+  `./project test/lint/build` summaries. Artifacts live under
+  `_test_projects/` to respect the mandatory test-location rule.
+
+### Changed
+
+- `_bin/skel-test-project-ux` now materialises its test wrappers
+  under `_test_projects/project-ux-stack-{web,enterprise}` instead
+  of the repo root.
+- `gen-stack-web` / `gen-stack-enterprise` Makefile recipes split
+  `NAME` into `dirname` + `basename` so they work with nested
+  target paths while the underlying `skel-gen-static` CLI keeps its
+  leaf-only `proj_name` contract.
+
+---
+
 ## [2026-04-18] — Phase 5: Kubernetes & Helm
 
 ### Added
