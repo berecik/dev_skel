@@ -129,8 +129,21 @@ def cmd_helm_gen(args: argparse.Namespace) -> int:
     repository = data["images"].get("repository", "")
 
     helm_dir = wrapper / "deploy" / "helm"
-    templates_dir = helm_dir / "templates" / "tests"
-    templates_dir.mkdir(parents=True, exist_ok=True)
+    generated_dir = helm_dir / "templates" / "_generated"
+    managed_dir = helm_dir / "templates" / "_managed"
+    overrides_dir = helm_dir / "templates" / "overrides"
+
+    # Tier-1 is always wiped + rewritten; Tier-2 is scaffolded (AI may
+    # populate later); Tier-3 (overrides/) is scaffolded once and never
+    # touched afterwards.
+    if generated_dir.exists():
+        shutil.rmtree(generated_dir)
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    (generated_dir / "tests").mkdir(parents=True, exist_ok=True)
+    managed_dir.mkdir(parents=True, exist_ok=True)
+    overrides_dir.mkdir(parents=True, exist_ok=True)
+    if not (overrides_dir / ".gitkeep").exists():
+        (overrides_dir / ".gitkeep").touch()
 
     replacements = {
         "PROJECT_NAME": project_name,
@@ -139,25 +152,22 @@ def cmd_helm_gen(args: argparse.Namespace) -> int:
         "SERVICES_VALUES": _generate_services_values(data["services"]),
     }
 
-    # Copy and render template files
+    # Chart.yaml / values*.yaml live at the chart root (Tier-1 flat files)
     for tpl in HELM_TEMPLATES.glob("*.tpl"):
         out_name = tpl.name.removesuffix(".tpl")
-        content = _render_template(tpl, replacements)
-        (helm_dir / out_name).write_text(content)
+        (helm_dir / out_name).write_text(_render_template(tpl, replacements))
         print(f"  + deploy/helm/{out_name}")
 
-    # Copy static template files
+    # Static templates land under _generated/
     src_templates = HELM_TEMPLATES / "templates"
-    dst_templates = helm_dir / "templates"
     for src in src_templates.rglob("*"):
         if src.is_file():
             rel = src.relative_to(src_templates)
-            dst = dst_templates / rel
+            dst = generated_dir / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
-            print(f"  + deploy/helm/templates/{rel}")
+            print(f"  + deploy/helm/templates/_generated/{rel}")
 
-    # Write .helmignore
     (helm_dir / ".helmignore").write_text(
         ".git\n.gitignore\n__pycache__\n*.pyc\n"
     )

@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Smoke test: skel-deploy helm-gen writes the Phase 7 3-tier layout.
+
+Verifies:
+- Tier-1 static templates land under `deploy/helm/templates/_generated/`.
+- `_managed/` and `overrides/` directories are scaffolded.
+- Second run does not wipe user-authored files under `overrides/`.
+
+Exits 0 on success, 1 on layout mismatch.
+"""
+from __future__ import annotations
+
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+TEST_DIR = REPO_ROOT / "_test_projects" / "test-kube-layout"
+
+
+def _run(argv, **kw):
+    return subprocess.run(argv, capture_output=True, text=True, **kw)
+
+
+def main() -> int:
+    if TEST_DIR.exists():
+        shutil.rmtree(TEST_DIR)
+
+    gen = _run(
+        ["make", "gen-stack-web", f"NAME=_test_projects/{TEST_DIR.name}"],
+        cwd=REPO_ROOT,
+    )
+    if gen.returncode != 0:
+        print("[kube-layout] FAIL: gen-stack-web failed", file=sys.stderr)
+        print(gen.stdout + gen.stderr, file=sys.stderr)
+        return 1
+
+    dep = _run(["_bin/skel-deploy", "helm-gen", str(TEST_DIR)], cwd=REPO_ROOT)
+    if dep.returncode != 0:
+        print("[kube-layout] FAIL: skel-deploy helm-gen failed", file=sys.stderr)
+        print(dep.stdout + dep.stderr, file=sys.stderr)
+        return 1
+
+    templates = TEST_DIR / "deploy" / "helm" / "templates"
+    required = [
+        templates / "_generated" / "service-deployment.yaml",
+        templates / "_generated" / "namespace.yaml",
+        templates / "_generated" / "ingress.yaml",
+        templates / "_generated" / "postgres.yaml",
+        templates / "_managed",
+        templates / "overrides",
+    ]
+    missing = [str(p.relative_to(TEST_DIR)) for p in required if not p.exists()]
+    if missing:
+        print(f"[kube-layout] FAIL: missing {missing}", file=sys.stderr)
+        return 1
+
+    # Idempotency: user-authored overrides/ must survive a second helm-gen
+    marker = templates / "overrides" / "_marker.yaml"
+    marker.write_text("# user\n", encoding="utf-8")
+    dep2 = _run(["_bin/skel-deploy", "helm-gen", str(TEST_DIR)], cwd=REPO_ROOT)
+    if dep2.returncode != 0:
+        print("[kube-layout] FAIL: second helm-gen failed", file=sys.stderr)
+        print(dep2.stdout + dep2.stderr, file=sys.stderr)
+        return 1
+    if not marker.exists() or marker.read_text() != "# user\n":
+        print("[kube-layout] FAIL: overrides/_marker.yaml was wiped", file=sys.stderr)
+        return 1
+
+    shutil.rmtree(TEST_DIR)
+    print("[kube-layout] OK")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
