@@ -169,7 +169,7 @@ def cmd_helm_gen(args: argparse.Namespace) -> int:
             print(f"  + deploy/helm/templates/_generated/{rel}")
 
     (helm_dir / ".helmignore").write_text(
-        ".git\n.gitignore\n__pycache__\n*.pyc\n"
+        ".git\n.gitignore\n__pycache__\n*.pyc\n.gitkeep\n"
     )
 
     print(f"\nHelm chart generated at: {helm_dir}")

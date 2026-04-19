@@ -2346,6 +2346,159 @@ class _StrictDict(dict):
 # --------------------------------------------------------------------------- #
 
 
+def _read_project_yml_minimal(wrapper: Path) -> dict:
+    """Tiny hand-rolled parser for ``dev_skel.project.yml``.
+
+    Mirrors ``_bin/skel-deploy._read_project_yml`` so this module does
+    not grow a ``pyyaml`` dependency. If the file structure ever
+    diverges, keep both parsers in sync.
+    """
+    yml = wrapper / "dev_skel.project.yml"
+    if not yml.is_file():
+        raise FileNotFoundError(str(yml))
+
+    data: dict = {"project": {}, "kubernetes": {}, "images": {}, "services": []}
+    current_service: "dict | None" = None
+
+    for line in yml.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or not stripped:
+            continue
+        if line.startswith("  name:"):
+            data["project"]["name"] = stripped.split(":", 1)[1].strip()
+        elif line.startswith("  cluster:"):
+            data["kubernetes"]["cluster"] = stripped.split(":", 1)[1].strip()
+        elif line.startswith("  context:"):
+            data["kubernetes"]["context"] = stripped.split(":", 1)[1].strip()
+        elif line.startswith("  namespace:"):
+            data["kubernetes"]["namespace"] = stripped.split(":", 1)[1].strip()
+        elif line.startswith("  repository:"):
+            data["images"]["repository"] = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("- id:"):
+            if current_service:
+                data["services"].append(current_service)
+            current_service = {"id": stripped.split(":", 1)[1].strip()}
+        elif current_service and stripped.startswith("kind:"):
+            current_service["kind"] = stripped.split(":", 1)[1].strip()
+        elif current_service and stripped.startswith("tech:"):
+            current_service["tech"] = stripped.split(":", 1)[1].strip()
+        elif current_service and stripped.startswith("port:"):
+            current_service["port"] = stripped.split(":", 1)[1].strip()
+        elif current_service and stripped.startswith("version:"):
+            current_service["version"] = stripped.split(":", 1)[1].strip()
+
+    if current_service:
+        data["services"].append(current_service)
+    return data
+
+
+@dataclass
+class KubernetesResult:
+    """Outcome of :func:`run_kubernetes_phase`."""
+
+    ok: bool
+    error: "str | None" = None
+    helm_lint_output: str = ""
+    generated_files: "list[Path]" = field(default_factory=list)
+    failed_resources: "list[str]" = field(default_factory=list)
+    fix_iterations: int = 0
+
+
+def run_kubernetes_phase(
+    client,
+    wrapper_dir: "Path | str",
+    project_yml: "dict | None",
+    *,
+    fix_timeout_m: int = 30,
+    keep_kind: bool = False,
+    skip_kind: bool = False,
+    skip_ai: bool = False,
+) -> KubernetesResult:
+    """Phase 4: Tier-1 helm-gen + (optional) Tier-2 AI + (optional) kind E2E.
+
+    Parameters
+    ----------
+    client
+        An :class:`OllamaClient` (or ``None`` to construct a default
+        from env). Ignored when ``skip_ai=True``.
+    wrapper_dir
+        Path to the wrapper project. Must contain
+        ``dev_skel.project.yml``.
+    project_yml
+        Pre-parsed project metadata. When ``None``, the minimal parser
+        reads the YAML from disk.
+    skip_ai
+        Skip Tier-2 AI generation. ``_managed/<svc>/`` directories are
+        still scaffolded so downstream sync commands have a stable
+        layout.
+    skip_kind
+        Skip the kind-cluster E2E. ``helm lint`` still runs.
+
+    Current scope (Task 4)
+    ----------------------
+    Only the static path is implemented. Tier-2 AI generation (Task 5),
+    kind E2E (Task 6), and the fix loop (Task 7) are TODO.
+    """
+    import subprocess as _sp
+
+    wrapper_dir = Path(wrapper_dir).resolve()
+    repo_root = Path(__file__).resolve().parent.parent
+
+    # Tier-1: delegate to skel-deploy helm-gen
+    helm_gen = _sp.run(
+        [str(repo_root / "_bin" / "skel-deploy"), "helm-gen", str(wrapper_dir)],
+        capture_output=True,
+        text=True,
+    )
+    if helm_gen.returncode != 0:
+        return KubernetesResult(
+            ok=False,
+            error=f"helm-gen failed: {helm_gen.stderr.strip() or helm_gen.stdout.strip()}",
+        )
+
+    if project_yml is None:
+        try:
+            project_yml = _read_project_yml_minimal(wrapper_dir)
+        except FileNotFoundError as exc:
+            return KubernetesResult(ok=False, error=str(exc))
+
+    managed_root = wrapper_dir / "deploy" / "helm" / "templates" / "_managed"
+    managed_root.mkdir(parents=True, exist_ok=True)
+    for svc in project_yml.get("services", []) or []:
+        (managed_root / svc["id"]).mkdir(parents=True, exist_ok=True)
+
+    generated_files: "list[Path]" = []
+
+    if not skip_ai:
+        # Tier-2 generation lands in Task 5. Until then, skipping AI is
+        # the default behaviour for callers that only want the static
+        # shape.
+        pass
+
+    # helm lint always runs
+    lint = _sp.run(
+        ["helm", "lint", str(wrapper_dir / "deploy" / "helm")],
+        capture_output=True,
+        text=True,
+    )
+    if lint.returncode != 0:
+        return KubernetesResult(
+            ok=False,
+            error="helm lint failed",
+            helm_lint_output=lint.stdout + lint.stderr,
+        )
+
+    if not skip_kind:
+        # kind E2E + fix loop land in Tasks 6 + 7.
+        pass
+
+    return KubernetesResult(
+        ok=True,
+        helm_lint_output=lint.stdout,
+        generated_files=generated_files,
+    )
+
+
 def _kube_diagnose_from_json(
     *,
     pods: dict,
@@ -2477,8 +2630,10 @@ __all__ = [
     "ServiceSummary",
     "TargetResult",
     "TestRunResult",
+    "KubernetesResult",
     "_kube_diagnose",
     "_kube_diagnose_from_json",
+    "_read_project_yml_minimal",
     "build_system_prompt",
     "clean_response",
     "discover_manifests",
@@ -2492,6 +2647,7 @@ __all__ = [
     "prompt_fullstack_dialog",
     "prompt_user_dialog",
     "run_integration_phase",
+    "run_kubernetes_phase",
     "run_service_tests",
     "run_test_and_fix_loop",
     "split_skels_by_kind",

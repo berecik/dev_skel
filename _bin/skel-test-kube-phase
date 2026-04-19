@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""Smoke: run_kubernetes_phase() in static-only mode (skip_kind+skip_ai).
+
+Exercises:
+- Tier-1 helm-gen invocation end-to-end
+- `_managed/<svc>/` scaffolding for every service in the project
+- Second-run idempotency
+- `overrides/` preservation across consecutive runs
+
+Exits 2 ("skipped") when `helm` is not on PATH.
+"""
+from __future__ import annotations
+
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "_bin"))
+
+from skel_ai_lib import run_kubernetes_phase  # noqa: E402
+
+TEST_DIR = REPO_ROOT / "_test_projects" / "test-kube-phase"
+
+
+def _run(argv, **kw):
+    return subprocess.run(argv, capture_output=True, text=True, **kw)
+
+
+def _which(tool: str) -> bool:
+    return _run(["which", tool]).returncode == 0
+
+
+def main() -> int:
+    if not _which("helm"):
+        print("[kube-phase] SKIP — helm not installed", file=sys.stderr)
+        return 2
+
+    if TEST_DIR.exists():
+        shutil.rmtree(TEST_DIR)
+
+    gen = _run(
+        ["make", "gen-stack-web", f"NAME=_test_projects/{TEST_DIR.name}"],
+        cwd=REPO_ROOT,
+    )
+    if gen.returncode != 0:
+        print("[kube-phase] FAIL: gen-stack-web", file=sys.stderr)
+        print(gen.stdout + gen.stderr, file=sys.stderr)
+        return 1
+
+    result = run_kubernetes_phase(
+        client=None,
+        wrapper_dir=TEST_DIR,
+        project_yml=None,
+        skip_ai=True,
+        skip_kind=True,
+    )
+    if not result.ok:
+        print(f"[kube-phase] FAIL (static): {result.error}", file=sys.stderr)
+        return 1
+
+    templates = TEST_DIR / "deploy" / "helm" / "templates"
+    required_files = [
+        templates / "_generated" / "service-deployment.yaml",
+        templates / "_generated" / "namespace.yaml",
+    ]
+    for p in required_files:
+        if not p.exists():
+            print(f"[kube-phase] FAIL: missing {p.relative_to(TEST_DIR)}",
+                  file=sys.stderr)
+            return 1
+    for svc in ("items_api", "web_ui"):
+        svc_dir = templates / "_managed" / svc
+        if not svc_dir.is_dir():
+            print(f"[kube-phase] FAIL: _managed/{svc}/ not created",
+                  file=sys.stderr)
+            return 1
+
+    # Idempotency: second run is a clean no-op
+    result2 = run_kubernetes_phase(
+        client=None, wrapper_dir=TEST_DIR, project_yml=None,
+        skip_ai=True, skip_kind=True,
+    )
+    if not result2.ok:
+        print(f"[kube-phase] FAIL: second run: {result2.error}",
+              file=sys.stderr)
+        return 1
+
+    # Overrides preservation
+    marker = templates / "overrides" / "marker.yaml"
+    marker.write_text("# user-authored\n", encoding="utf-8")
+    for _ in range(3):
+        run_kubernetes_phase(
+            client=None, wrapper_dir=TEST_DIR, project_yml=None,
+            skip_ai=True, skip_kind=True,
+        )
+    if not marker.exists() or marker.read_text() != "# user-authored\n":
+        print("[kube-phase] FAIL: overrides/marker.yaml was disturbed",
+              file=sys.stderr)
+        return 1
+
+    shutil.rmtree(TEST_DIR)
+    print("[kube-phase] OK (static-only)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

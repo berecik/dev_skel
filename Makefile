@@ -29,7 +29,7 @@
         test-ai-upgrade test-ai-upgrade-keep \
         test-ai-fanout test-ai-fanout-keep \
         test-project-ux test-project-ux-keep \
-        test-kube-layout \
+        test-kube-layout test-kube-diagnose test-kube-manifest test-kube-phase \
         test-flutter-django-bolt test-flutter-django-bolt-keep \
         test-flutter-fastapi test-flutter-fastapi-keep test-flutter-cross-stack \
         test-cross-stack
@@ -504,6 +504,18 @@ test-project-ux-keep: ## Same, but leave generated wrappers on disk
 test-kube-layout: ## Smoke: skel-deploy helm-gen writes the Phase 7 3-tier layout
 	@echo "$(GREEN)=== Helm 3-tier layout smoke ===$(NC)"
 	@_bin/skel-test-kube-layout
+
+test-kube-diagnose: ## Smoke: _kube_diagnose_from_json parses kubectl fixtures
+	@echo "$(GREEN)=== _kube_diagnose parser smoke ===$(NC)"
+	@_bin/skel-test-kube-diagnose
+
+test-kube-manifest: ## Smoke: _kubernetes.py dispatch/prompts are well-formed
+	@echo "$(GREEN)=== _kubernetes.py manifest smoke ===$(NC)"
+	@_bin/skel-test-kube-manifest
+
+test-kube-phase: ## Smoke: run_kubernetes_phase() static+idempotency+overrides
+	@echo "$(GREEN)=== run_kubernetes_phase() static smoke ===$(NC)"
+	@_bin/skel-test-kube-phase
 
 #
 # === FLUTTER + BACKEND CROSS-STACK INTEGRATION TESTS ===
