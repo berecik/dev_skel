@@ -1149,6 +1149,25 @@ else:
 PY
 }
 
+_resolve_dev_skel_root() {
+  if [[ -n "${DEV_SKEL_ROOT:-}" ]] && [[ -x "${DEV_SKEL_ROOT}/_bin/skel-deploy" ]]; then
+    echo "$DEV_SKEL_ROOT"
+    return 0
+  fi
+  local candidate
+  for candidate in \
+    "$HOME/dev_skel" \
+    "$HOME/src/dev_skel" \
+    "/opt/dev_skel" \
+    "/usr/local/share/dev_skel"; do
+    if [[ -x "$candidate/_bin/skel-deploy" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 cmd="${1:-}"
 case "$cmd" in
   test|lint|build)
@@ -1163,6 +1182,18 @@ case "$cmd" in
     fi
     _emit_graph "$fmt"
     ;;
+  kube)
+    shift
+    root="$(_resolve_dev_skel_root || true)"
+    if [[ -z "$root" ]]; then
+      echo "[project kube] ERROR: cannot find a dev_skel checkout." >&2
+      echo "[project kube] Set DEV_SKEL_ROOT=<path>, or install dev_skel to" >&2
+      echo "[project kube] one of: \$HOME/dev_skel, \$HOME/src/dev_skel," >&2
+      echo "[project kube] /opt/dev_skel, /usr/local/share/dev_skel." >&2
+      exit 1
+    fi
+    exec python3 "$root/_bin/skel-deploy" "$@" "$SCRIPT_DIR"
+    ;;
   -h|--help|"")
     cat <<'EOF'
 Usage: ./project <command>
@@ -1172,6 +1203,8 @@ Commands:
   lint               Run ./lint across all services with summary
   build              Run ./build across all services with summary
   graph [--dot]      Emit service graph (Mermaid by default, DOT with --dot)
+  kube <subcmd>      Forward to skel-deploy: bootstrap / sync / diff / e2e /
+                     helm-gen / up / down / status
 EOF
     ;;
   *)
