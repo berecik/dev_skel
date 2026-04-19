@@ -2341,6 +2341,127 @@ class _StrictDict(dict):
         )
 
 
+# --------------------------------------------------------------------------- #
+# Phase 7: Kubernetes lifecycle helpers
+# --------------------------------------------------------------------------- #
+
+
+def _kube_diagnose_from_json(
+    *,
+    pods: dict,
+    events: dict,
+    describes: "dict[str, str]",
+    logs: "dict[str, str]",
+) -> str:
+    """Render a deterministic diagnostic bundle from parsed kubectl JSON.
+
+    Isolating the parser from a real kubectl invocation keeps the bundle
+    format testable against static fixtures (see
+    ``_bin/_fixtures/kube_diagnose/``) and keeps the fix-loop prompt
+    shape stable across iterations.
+    """
+    lines: list[str] = []
+    lines.append("FAILING_RESOURCES:")
+
+    failing: list[tuple[str, str, int]] = []
+    for item in pods.get("items", []) or []:
+        name = item.get("metadata", {}).get("name", "?")
+        for cs in item.get("status", {}).get("containerStatuses", []) or []:
+            waiting = cs.get("state", {}).get("waiting") or {}
+            reason = waiting.get("reason")
+            restarts = cs.get("restartCount", 0)
+            if reason:
+                failing.append((name, reason, restarts))
+                lines.append(
+                    f"  - pod/{name}  status={reason}   restarts={restarts}"
+                )
+    if not failing:
+        lines.append("  (none)")
+
+    lines.append("")
+    lines.append("EVENTS (last 20):")
+    event_items = (events.get("items") or [])[-20:]
+    if not event_items:
+        lines.append("  (none)")
+    else:
+        for ev in event_items:
+            typ = ev.get("type", "Normal")
+            reason = ev.get("reason", "")
+            msg = ev.get("message", "")
+            obj = (ev.get("involvedObject") or {}).get("name", "")
+            lines.append(f"  {typ} {reason}: {msg} ({obj})")
+
+    if describes:
+        lines.append("")
+        lines.append("DESCRIBE (truncated to 40 lines each):")
+        for name, text in describes.items():
+            lines.append(f"  === {name} ===")
+            for ln in text.splitlines()[:40]:
+                lines.append(f"  {ln}")
+
+    if logs:
+        lines.append("")
+        lines.append("LOGS (last 50 lines per failing container):")
+        for name, text in logs.items():
+            lines.append(f"  === {name} ===")
+            for ln in text.splitlines()[-50:]:
+                lines.append(f"  {ln}")
+
+    return "\n".join(lines) + "\n"
+
+
+def _kube_diagnose(wrapper_dir: Path, namespace: str) -> str:
+    """Collect live kubectl state and feed it through the parser.
+
+    Runs best-effort: individual kubectl calls that fail yield empty
+    sections rather than raising, so the bundle is always produced.
+    """
+    import json as _json
+    import subprocess as _sp
+
+    def _kj(args: "list[str]") -> dict:
+        r = _sp.run(args, capture_output=True, text=True)
+        if r.returncode != 0:
+            return {}
+        try:
+            return _json.loads(r.stdout)
+        except _json.JSONDecodeError:
+            return {}
+
+    pods = _kj(["kubectl", "get", "pods", "-n", namespace, "-o", "json"])
+    events = _kj(["kubectl", "get", "events", "-n", namespace, "-o", "json"])
+
+    describes: "dict[str, str]" = {}
+    logs: "dict[str, str]" = {}
+    for item in pods.get("items", []) or []:
+        name = item.get("metadata", {}).get("name", "")
+        if not name:
+            continue
+        for cs in item.get("status", {}).get("containerStatuses", []) or []:
+            if cs.get("state", {}).get("waiting"):
+                d = _sp.run(
+                    ["kubectl", "describe", "pod", name, "-n", namespace],
+                    capture_output=True,
+                    text=True,
+                )
+                describes[f"pod/{name}"] = d.stdout or ""
+                lg = _sp.run(
+                    [
+                        "kubectl", "logs", name,
+                        "-c", cs.get("name", ""),
+                        "-n", namespace, "--tail=50",
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                logs[f"{name}/{cs.get('name', '?')}"] = lg.stdout or ""
+                break
+
+    return _kube_diagnose_from_json(
+        pods=pods, events=events, describes=describes, logs=logs
+    )
+
+
 __all__ = [
     "AUTH_CHOICES",
     "BACKENDS_WITH_ITEMS_API",
@@ -2356,6 +2477,8 @@ __all__ = [
     "ServiceSummary",
     "TargetResult",
     "TestRunResult",
+    "_kube_diagnose",
+    "_kube_diagnose_from_json",
     "build_system_prompt",
     "clean_response",
     "discover_manifests",

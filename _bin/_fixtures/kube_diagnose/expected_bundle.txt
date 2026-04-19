@@ -1,0 +1,5 @@
+FAILING_RESOURCES:
+  - pod/items-api-abc123  status=CrashLoopBackOff   restarts=4
+
+EVENTS (last 20):
+  Warning BackOff: Back-off restarting failed container (items-api-abc123)

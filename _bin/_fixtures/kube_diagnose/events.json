@@ -1,0 +1,11 @@
+{
+  "items": [
+    {
+      "type": "Warning",
+      "reason": "BackOff",
+      "message": "Back-off restarting failed container",
+      "involvedObject": {"name": "items-api-abc123"},
+      "lastTimestamp": "2026-04-19T10:00:00Z"
+    }
+  ]
+}

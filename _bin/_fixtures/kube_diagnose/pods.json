@@ -1,0 +1,26 @@
+{
+  "items": [
+    {
+      "metadata": {"name": "items-api-abc123", "namespace": "devskel"},
+      "status": {
+        "phase": "Running",
+        "containerStatuses": [
+          {
+            "name": "api",
+            "restartCount": 4,
+            "state": {"waiting": {"reason": "CrashLoopBackOff", "message": "back-off"}}
+          }
+        ]
+      }
+    },
+    {
+      "metadata": {"name": "items-api-ok-zzz", "namespace": "devskel"},
+      "status": {
+        "phase": "Running",
+        "containerStatuses": [
+          {"name": "api", "restartCount": 0, "ready": true, "state": {"running": {}}}
+        ]
+      }
+    }
+  ]
+}
