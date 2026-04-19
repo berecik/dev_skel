@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Verify _kubernetes.py manifest shape:
+- DISPATCH covers every supported tech
+- Every filename referenced in DISPATCH has a prompt in FILE_PROMPTS
+- FIX_PROMPT contains required placeholders
+- SYSTEM_PROMPT is non-empty
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "_skels" / "_common" / "manifests"))
+
+import _kubernetes as km  # type: ignore  # noqa: E402
+
+
+REQUIRED_TECHS = {
+    "python-django",
+    "python-django-bolt",
+    "python-fastapi",
+    "python-flask",
+    "java-spring",
+    "rust-actix",
+    "rust-axum",
+    "next-js",
+    "ts-react",
+    "flutter",
+}
+
+
+def main() -> int:
+    missing = REQUIRED_TECHS - km.DISPATCH.keys()
+    if missing:
+        print(f"[kube-manifest] FAIL: missing tech keys: {sorted(missing)}",
+              file=sys.stderr)
+        return 1
+
+    referenced = {f for files in km.DISPATCH.values() for f in files}
+    undefined = referenced - km.FILE_PROMPTS.keys()
+    if undefined:
+        print(
+            f"[kube-manifest] FAIL: DISPATCH references files without prompts: "
+            f"{sorted(undefined)}",
+            file=sys.stderr,
+        )
+        return 1
+
+    for placeholder in ("{service_id}", "{diagnostic_bundle}"):
+        if placeholder not in km.FIX_PROMPT:
+            print(
+                f"[kube-manifest] FAIL: FIX_PROMPT missing placeholder "
+                f"{placeholder!r}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if not km.SYSTEM_PROMPT.strip():
+        print("[kube-manifest] FAIL: SYSTEM_PROMPT is empty", file=sys.stderr)
+        return 1
+
+    print(
+        f"[kube-manifest] OK — {len(km.DISPATCH)} techs, "
+        f"{len(km.FILE_PROMPTS)} file prompts"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
