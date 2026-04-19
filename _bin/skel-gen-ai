@@ -157,9 +157,54 @@ from skel_ai_lib import (
     prompt_user_dialog,
     run_docs_generation,
     run_integration_phase,
+    run_kubernetes_phase,
     run_test_and_fix_loop,
     split_skels_by_kind,
 )
+
+
+def _run_kube_phase_with_fallback(*, client, wrapper_dir, args) -> None:
+    """Run Phase 4 (Kubernetes lifecycle) and report outcome.
+
+    Never raises — any exception is logged so the user still sees the
+    happy-path summary for the services themselves. On failure the
+    service code is left on disk; the user can resume with
+    ``./project kube bootstrap`` or ``./project kube sync --e2e``.
+    """
+    print()
+    print("  ===== Kubernetes lifecycle (Phase 4) =====")
+    try:
+        result = run_kubernetes_phase(
+            client=client,
+            wrapper_dir=wrapper_dir,
+            project_yml=None,
+            fix_timeout_m=getattr(args, "kube_fix_timeout", 30),
+            keep_kind=getattr(args, "keep_kube", False),
+            skip_kind=False,
+            skip_ai=False,
+        )
+    except Exception as exc:  # noqa: BLE001 — keep the summary reachable
+        print(f"  Kubernetes phase raised: {exc!r}")
+        print(
+            "  (service code unaffected; re-run with "
+            "`./project kube bootstrap` once the issue is resolved)"
+        )
+        return
+
+    if result.ok:
+        print(
+            f"  Kubernetes phase OK "
+            f"({len(result.generated_files)} Tier-2 files, "
+            f"fix_iterations={result.fix_iterations})"
+        )
+    else:
+        print(f"  Kubernetes phase FAILED: {result.error}")
+        if result.generated_files:
+            print(
+                f"  ({len(result.generated_files)} Tier-2 files were written; "
+                "re-run with `./project kube sync --e2e` after fixing the "
+                "issue above)"
+            )
 
 
 def parse_args() -> argparse.Namespace:
@@ -336,6 +381,28 @@ def parse_args() -> argparse.Namespace:
             "CLAUDE.md, and JUNIE-RULES.md will contain the generic "
             "templates instead of project-specific content."
         ),
+    )
+
+    parser.add_argument(
+        "--no-kube",
+        action="store_true",
+        help=(
+            "Skip the Phase-4 Kubernetes lifecycle (Tier-1 helm-gen + "
+            "Tier-2 AI + kind E2E). Use on machines without `kind` or "
+            "when iterating on service code. You can still run the "
+            "lifecycle later with `./project kube bootstrap`."
+        ),
+    )
+    parser.add_argument(
+        "--keep-kube",
+        action="store_true",
+        help="Leave the kind cluster running after Phase 4 (debugging).",
+    )
+    parser.add_argument(
+        "--kube-fix-timeout",
+        type=int,
+        default=30,
+        help="Kubernetes fix-loop budget in minutes (default 30).",
     )
 
     return parser.parse_args()
@@ -822,6 +889,14 @@ def _run_single_skel_flow(
         if docs_written:
             print(f"  Generated {len(docs_written)} documentation files.")
 
+    # ----- 9. Kubernetes lifecycle (Phase 4) ------------------------------ #
+    if not args.no_kube:
+        _run_kube_phase_with_fallback(
+            client=client,
+            wrapper_dir=target,
+            args=args,
+        )
+
     print()
     print("  Done. Review the generated files and run the project's tests.")
 
@@ -1307,6 +1382,14 @@ def _run_fullstack_flow(
         print(
             "  (dry-run) Phase 5: would generate README.md, AGENTS.md, "
             "CLAUDE.md, JUNIE-RULES.md + per-service docs"
+        )
+
+    # ----- Phase 6: Kubernetes lifecycle -------------------------------- #
+    if not args.dry_run and not args.no_kube:
+        _run_kube_phase_with_fallback(
+            client=client,
+            wrapper_dir=target,
+            args=args,
         )
 
     print()
