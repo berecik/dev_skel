@@ -100,9 +100,70 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
+    print("[kube-phase] static path OK")
+
+    # Opportunistic AI branch — only when Ollama is reachable.
+    if _ollama_up():
+        print("[kube-phase] Ollama reachable — exercising AI Tier-2")
+        shutil.rmtree(TEST_DIR)
+        gen2 = _run(
+            ["make", "gen-stack-web", f"NAME=_test_projects/{TEST_DIR.name}"],
+            cwd=REPO_ROOT,
+        )
+        if gen2.returncode != 0:
+            print(gen2.stdout + gen2.stderr, file=sys.stderr)
+            return 1
+        ai_result = run_kubernetes_phase(
+            client=None,
+            wrapper_dir=TEST_DIR,
+            project_yml=None,
+            skip_ai=False,
+            skip_kind=True,
+        )
+        # ai_result.ok may be False because helm lint caught bad Tier-2
+        # output; that is expected until Task 7's fix-loop ships. The
+        # Task 5 bar is "AI actually wrote to _managed/<svc>/".
+        mgmt = TEST_DIR / "deploy" / "helm" / "templates" / "_managed"
+        required = [
+            mgmt / "items_api" / "configmap.yaml",
+            mgmt / "items_api" / "hpa.yaml",
+            mgmt / "web_ui" / "nginx-configmap.yaml",
+        ]
+        for p in required:
+            if not p.is_file() or p.stat().st_size < 10:
+                print(
+                    f"[kube-phase] FAIL (AI): {p.relative_to(TEST_DIR)} "
+                    "missing or suspiciously small",
+                    file=sys.stderr,
+                )
+                return 1
+        tier2_count = len(list(mgmt.rglob("*.yaml")))
+        if ai_result.ok:
+            print(f"[kube-phase] AI pass OK ({tier2_count} Tier-2 files, lint green)")
+        else:
+            print(
+                f"[kube-phase] AI pass OK ({tier2_count} Tier-2 files written; "
+                f"lint failure deferred to Task 7: {ai_result.error})"
+            )
+    else:
+        print("[kube-phase] Ollama unreachable — AI branch skipped")
+
     shutil.rmtree(TEST_DIR)
-    print("[kube-phase] OK (static-only)")
+    print("[kube-phase] OK")
     return 0
+
+
+def _ollama_up() -> bool:
+    import os
+    import urllib.error
+    import urllib.request
+
+    url = os.environ.get("OLLAMA_URL", "http://localhost:11434") + "/api/tags"
+    try:
+        with urllib.request.urlopen(url, timeout=2) as r:
+            return r.status == 200
+    except (urllib.error.URLError, OSError, TimeoutError):
+        return False
 
 
 if __name__ == "__main__":

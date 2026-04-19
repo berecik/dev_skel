@@ -2370,6 +2370,106 @@ class KubernetesResult:
     fix_iterations: int = 0
 
 
+def _load_kubernetes_manifest() -> Any:
+    """Load the shared ``_kubernetes.py`` AI manifest.
+
+    It lives at ``_skels/_common/manifests/_kubernetes.py`` and is the
+    single source of truth for Tier-2 dispatch + prompts.
+    """
+    import importlib.util
+
+    repo_root = Path(__file__).resolve().parent.parent
+    manifest_path = (
+        repo_root / "_skels" / "_common" / "manifests" / "_kubernetes.py"
+    )
+    spec = importlib.util.spec_from_file_location("_kubernetes", manifest_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load Kubernetes manifest at {manifest_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _ask_ollama_for_kubernetes(
+    client: "OllamaClient",
+    *,
+    service_id: str,
+    service_tech: str,
+    service_ctx: dict,
+    filename: str,
+    system_prompt: str,
+    file_prompt: str,
+) -> str:
+    """Render one Tier-2 file by asking the LLM once."""
+    user = (
+        f"SERVICE_ID: {service_id}\n"
+        f"SERVICE_TECH: {service_tech}\n"
+        f"SERVICE_CTX: {service_ctx}\n\n"
+        f"TASK: Generate `{filename}` for this service.\n\n"
+        f"{file_prompt}"
+    )
+    raw = client.chat(system=system_prompt, user=user)
+    return clean_response(raw, language="yaml")
+
+
+def _run_kubernetes_ai_generation(
+    *,
+    client: "OllamaClient | None",
+    wrapper_dir: Path,
+    project_yml: dict,
+    managed_root: Path,
+) -> "list[Path]":
+    """Tier-2 AI generation — one file per (service × dispatched filename).
+
+    Enforces the managed-tree-only write scope via a ``.resolve()``
+    prefix check; AI output that resolves outside the service's
+    ``_managed/<svc>/`` directory is silently dropped (the caller sees
+    the missing file and can report a mismatch).
+    """
+    km = _load_kubernetes_manifest()
+    if client is None:
+        client = OllamaClient(OllamaConfig.from_env())
+
+    written: "list[Path]" = []
+    managed_root_resolved = managed_root.resolve()
+
+    for svc in project_yml.get("services", []) or []:
+        svc_id = svc.get("id", "")
+        raw_tech = svc.get("tech", "")
+        # dev_skel.project.yml stores tech as "<name>-skel"; DISPATCH
+        # keys omit the suffix so new skeletons only need one entry.
+        tech = raw_tech.removesuffix("-skel")
+        files = km.DISPATCH.get(tech, [])
+        if not files:
+            continue
+        svc_dir = managed_root / svc_id
+        svc_dir.mkdir(parents=True, exist_ok=True)
+        svc_dir_resolved = svc_dir.resolve()
+        for fname in files:
+            prompt = km.FILE_PROMPTS.get(fname)
+            if prompt is None:
+                continue
+            yaml_text = _ask_ollama_for_kubernetes(
+                client,
+                service_id=svc_id,
+                service_tech=tech,
+                service_ctx=svc,
+                filename=fname,
+                system_prompt=km.SYSTEM_PROMPT,
+                file_prompt=prompt,
+            )
+            dst = (svc_dir / fname).resolve()
+            # Defense in depth: reject writes outside _managed/<svc>/.
+            try:
+                dst.relative_to(svc_dir_resolved)
+                dst.relative_to(managed_root_resolved)
+            except ValueError:
+                continue
+            dst.write_text(yaml_text, encoding="utf-8")
+            written.append(dst)
+    return written
+
+
 def run_kubernetes_phase(
     client,
     wrapper_dir: "Path | str",
@@ -2444,10 +2544,14 @@ def run_kubernetes_phase(
     generated_files: "list[Path]" = []
 
     if not skip_ai:
-        # Tier-2 generation lands in Task 5. Until then, skipping AI is
-        # the default behaviour for callers that only want the static
-        # shape.
-        pass
+        generated_files.extend(
+            _run_kubernetes_ai_generation(
+                client=client,
+                wrapper_dir=wrapper_dir,
+                project_yml=project_yml,
+                managed_root=managed_root,
+            )
+        )
 
     # helm lint always runs
     lint = _sp.run(
