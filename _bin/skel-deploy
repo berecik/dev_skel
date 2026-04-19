@@ -197,6 +197,210 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- #
+# Phase 7 subcommands: bootstrap / sync / diff / e2e
+# --------------------------------------------------------------------------- #
+
+
+def _import_skel_ai_lib():
+    """Import skel_ai_lib on demand (keeps basic skel-deploy fast)."""
+    if str(SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(SCRIPT_DIR))
+    import skel_ai_lib  # type: ignore
+    return skel_ai_lib
+
+
+def _tree_diff(a: Path, b: Path, *, ignore_subdirs: "list[str]") -> "list[str]":
+    """Return sorted relative paths that differ between two trees.
+
+    Skips any subdirectory whose first path component appears in
+    ``ignore_subdirs`` (e.g. ``overrides``). Missing-on-one-side files
+    count as differences.
+    """
+    changed: "set[str]" = set()
+
+    def _walk(base: Path, other: Path) -> None:
+        if not base.is_dir():
+            return
+        for p in base.rglob("*"):
+            if not p.is_file():
+                continue
+            rel = p.relative_to(base)
+            if rel.parts and rel.parts[0] in ignore_subdirs:
+                continue
+            o = other / rel
+            if not o.exists() or o.read_bytes() != p.read_bytes():
+                changed.add(str(rel))
+
+    _walk(a, b)
+    _walk(b, a)
+    return sorted(changed)
+
+
+def _staging_copy(wrapper: Path, dest: Path) -> None:
+    """Copy a wrapper into ``dest`` skipping heavy dirs we don't need."""
+    shutil.copytree(
+        wrapper,
+        dest,
+        ignore=shutil.ignore_patterns(
+            "node_modules", ".venv", "target", "dist", "build",
+            ".git", ".skel_rag_index", "__pycache__", ".pytest_cache",
+        ),
+    )
+
+
+def cmd_bootstrap(args: argparse.Namespace) -> int:
+    lib = _import_skel_ai_lib()
+    result = lib.run_kubernetes_phase(
+        client=None,
+        wrapper_dir=Path(args.wrapper_dir),
+        project_yml=None,
+        fix_timeout_m=args.fix_timeout,
+        keep_kind=args.keep_kube,
+        skip_kind=args.no_kube,
+        skip_ai=args.no_ai,
+    )
+    print(f"ok={result.ok} fix_iterations={result.fix_iterations} "
+          f"tier2_files={len(result.generated_files)}")
+    if not result.ok:
+        print(result.error or "", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_sync(args: argparse.Namespace) -> int:
+    """Regenerate `_generated/` + (optional) `_managed/` in-place.
+
+    `overrides/` is never touched. `--yes` skips the confirmation prompt.
+    """
+    import tempfile
+    wrapper = Path(args.wrapper_dir).resolve()
+    templates_dir = wrapper / "deploy" / "helm" / "templates"
+    if not templates_dir.is_dir():
+        print(f"Error: {templates_dir} not found — run "
+              f"`skel-deploy bootstrap` first.", file=sys.stderr)
+        return 1
+
+    with tempfile.TemporaryDirectory(prefix="skel-kube-sync-") as td:
+        staging = Path(td) / "wrapper"
+        _staging_copy(wrapper, staging)
+
+        # Rebuild managed trees in the staging copy.
+        lib = _import_skel_ai_lib()
+        result = lib.run_kubernetes_phase(
+            client=None,
+            wrapper_dir=staging,
+            project_yml=None,
+            skip_ai=args.no_ai,
+            skip_kind=True,
+        )
+        if not result.ok and args.no_ai:
+            # Hard-fail only when the static-only sync couldn't produce
+            # a valid Tier-1. AI lint failures are acceptable here (user
+            # can re-run with --e2e once Task 7 lands).
+            print(result.error or "", file=sys.stderr)
+            return 1
+
+        new_templates = staging / "deploy" / "helm" / "templates"
+        diff = _tree_diff(templates_dir, new_templates,
+                          ignore_subdirs=["overrides"])
+        if not diff:
+            print("No changes.")
+            return 0
+        print("Managed files that will change:")
+        for rel in diff:
+            print(f"  {rel}")
+        if not args.yes:
+            try:
+                resp = input("Apply? [y/N] ").strip().lower()
+            except EOFError:
+                resp = "n"
+            if resp != "y":
+                return 1
+
+        # Wipe + replace managed trees only.
+        for sub in ("_generated", "_managed"):
+            target = templates_dir / sub
+            source = new_templates / sub
+            if target.exists():
+                shutil.rmtree(target)
+            if source.exists():
+                shutil.copytree(source, target)
+    return 0
+
+
+def cmd_diff(args: argparse.Namespace) -> int:
+    """Preview a sync as either a file-tree diff or a helm-template diff."""
+    import tempfile
+    wrapper = Path(args.wrapper_dir).resolve()
+    with tempfile.TemporaryDirectory(prefix="skel-kube-diff-") as td:
+        staging = Path(td) / "wrapper"
+        _staging_copy(wrapper, staging)
+
+        lib = _import_skel_ai_lib()
+        lib.run_kubernetes_phase(
+            client=None,
+            wrapper_dir=staging,
+            project_yml=None,
+            skip_ai=True,
+            skip_kind=True,
+        )
+
+        current = wrapper / "deploy" / "helm" / "templates"
+        new = staging / "deploy" / "helm" / "templates"
+
+        if args.rendered:
+            r_cur = subprocess.run(
+                ["helm", "template", str(wrapper / "deploy" / "helm")],
+                capture_output=True, text=True,
+            )
+            r_new = subprocess.run(
+                ["helm", "template", str(staging / "deploy" / "helm")],
+                capture_output=True, text=True,
+            )
+            import difflib
+            for line in difflib.unified_diff(
+                r_cur.stdout.splitlines(keepends=True),
+                r_new.stdout.splitlines(keepends=True),
+                fromfile="current", tofile="new",
+            ):
+                sys.stdout.write(line)
+        else:
+            diff = _tree_diff(current, new, ignore_subdirs=["overrides"])
+            if not diff:
+                print("No changes.")
+            else:
+                for rel in diff:
+                    print(rel)
+    return 0
+
+
+def cmd_e2e(args: argparse.Namespace) -> int:
+    """Stand up a kind cluster, install the chart, run the smoke, tear
+    down.
+
+    The actual kind-lifecycle code lands in Phase 7 Task 6. Until then
+    this command exits with an actionable error so users aren't misled
+    by a silent no-op.
+    """
+    if not shutil.which("kind"):
+        print(
+            "Error: `kind` is not installed. Install it first:\n"
+            "  brew install kind       # macOS\n"
+            "  apt install kind docker.io  # Debian/Ubuntu",
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        "Error: skel-deploy e2e is not yet implemented.\n"
+        "Phase 7 Task 6 (kind E2E + helm install + health smoke) is "
+        "pending; see docs/superpowers/plans/2026-04-19-phase7-"
+        "kubernetes-lifecycle.md.",
+        file=sys.stderr,
+    )
+    return 2
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="skel-deploy",
@@ -217,13 +421,57 @@ def main() -> int:
     p = sub.add_parser("status", help="Show release + pod status")
     p.add_argument("wrapper_dir", help="Path to the wrapper project")
 
+    p = sub.add_parser(
+        "bootstrap",
+        help="Full Tier-1 + Tier-2 + (optional) kind E2E lifecycle",
+    )
+    p.add_argument("wrapper_dir", help="Path to the wrapper project")
+    p.add_argument("--no-kube", action="store_true",
+                   help="Skip the kind-cluster E2E (Task 6).")
+    p.add_argument("--no-ai", action="store_true",
+                   help="Skip Tier-2 AI generation; only write the static Tier-1.")
+    p.add_argument("--keep-kube", action="store_true",
+                   help="Leave the kind cluster running for debugging.")
+    p.add_argument("--fix-timeout", type=int, default=30,
+                   help="Fix-loop budget in minutes (default 30).")
+
+    p = sub.add_parser(
+        "sync",
+        help="Regenerate the managed Helm trees; preserve overrides/",
+    )
+    p.add_argument("wrapper_dir", help="Path to the wrapper project")
+    p.add_argument("--yes", action="store_true",
+                   help="Skip the confirmation prompt.")
+    p.add_argument("--no-ai", action="store_true",
+                   help="Regenerate only the Tier-1 static tree.")
+
+    p = sub.add_parser(
+        "diff",
+        help="Preview what `sync` would change",
+    )
+    p.add_argument("wrapper_dir", help="Path to the wrapper project")
+    p.add_argument("--rendered", action="store_true",
+                   help="Compare `helm template` output instead of raw files.")
+
+    p = sub.add_parser(
+        "e2e",
+        help="Stand up kind + helm install + health smoke (requires Task 6)",
+    )
+    p.add_argument("wrapper_dir", help="Path to the wrapper project")
+    p.add_argument("--keep-kube", action="store_true",
+                   help="Leave the kind cluster running for debugging.")
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
         return 0
 
-    return {"helm-gen": cmd_helm_gen, "up": cmd_up, "down": cmd_down,
-            "status": cmd_status}[args.command](args)
+    commands = {
+        "helm-gen": cmd_helm_gen, "up": cmd_up, "down": cmd_down,
+        "status": cmd_status, "bootstrap": cmd_bootstrap,
+        "sync": cmd_sync, "diff": cmd_diff, "e2e": cmd_e2e,
+    }
+    return commands[args.command](args)
 
 
 if __name__ == "__main__":
