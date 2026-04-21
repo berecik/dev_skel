@@ -42,6 +42,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -578,10 +579,28 @@ def _git(*args: str, cwd: Path, check: bool = True,
 
 
 def _has_git(path: Path) -> bool:
+    """True only when ``path`` is the toplevel of its own git repo.
+
+    A false return covers both "not under git at all" and "under an
+    outer git repo, but the service itself is not a repo" — the
+    latter was a foot-gun: ``./ai apply`` would stash + reset the
+    OUTER repo, silently losing untracked files belonging to whoever
+    owns that tree (typically a dev_skel checkout a user is dogfooding
+    against).
+    """
+
     try:
-        _git("rev-parse", "--is-inside-work-tree", cwd=path, check=True)
-        return True
+        out = _git(
+            "rev-parse", "--show-toplevel", cwd=path, capture=True,
+        )
     except subprocess.CalledProcessError:
+        return False
+    toplevel = out.strip()
+    if not toplevel:
+        return False
+    try:
+        return Path(toplevel).resolve() == path.resolve()
+    except OSError:
         return False
 
 
@@ -908,8 +927,14 @@ def _ollama_chat(
     base_url: Optional[str] = None,
     timeout: Optional[int] = None,
     temperature: Optional[float] = None,
+    progress: Any = None,
 ) -> str:
-    """Stdlib-only POST to Ollama's OpenAI-compatible chat endpoint."""
+    """Stdlib-only POST to Ollama's OpenAI-compatible chat endpoint.
+
+    When ``progress`` is a :class:`Progress` instance, a heartbeat
+    thread prints elapsed-seconds ticks while the HTTP call blocks
+    so the CLI never looks frozen during multi-minute inferences.
+    """
 
     model = model or os.environ.get("OLLAMA_MODEL", "qwen3-coder:30b")
     base_url = (base_url or os.environ.get(
@@ -940,8 +965,9 @@ def _ollama_chat(
         headers={"Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
+        with _heartbeat(progress, f"Ollama ({model})"):
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body_excerpt = ""
         try:
@@ -1052,7 +1078,9 @@ def _minimal_fix_loop(
             f"Output FILE/LANG/ENDFILE blocks (max {len(applied.written)})."
         )
         try:
-            raw = _ollama_chat(REFACTOR_FIX_SYSTEM_PROMPT_MIN, prompt_user)
+            raw = _ollama_chat(
+                REFACTOR_FIX_SYSTEM_PROMPT_MIN, prompt_user, progress=progress,
+            )
         except RefactorOllamaError as exc:
             if progress is not None:
                 progress.write(f"[ai] fix loop: Ollama error — {exc}\n")
@@ -1154,6 +1182,7 @@ class MinimalRunner:
         raw = _ollama_chat(
             REFACTOR_SYSTEM_PROMPT_MIN.format(max_files=self.ctx.max_files),
             prompt_user,
+            progress=self.progress,
         )
         return _split_refactor_response(raw, max_files=self.ctx.max_files)
 
@@ -1238,12 +1267,14 @@ class RagRunner:
         # AttributeError fallback covers the case where an older
         # skel_rag is on PYTHONPATH and the method has not been added
         # yet; we then fall through to the stdlib MinimalRunner.
+        model = os.environ.get("OLLAMA_MODEL", "qwen3-coder:30b")
         try:
-            return self.agent.refactor_files(
-                ctx=self.ctx,
-                retrieved=merged,
-                max_files=self.ctx.max_files,
-            )
+            with _heartbeat(self.progress, f"Ollama ({model})"):
+                return self.agent.refactor_files(
+                    ctx=self.ctx,
+                    retrieved=merged,
+                    max_files=self.ctx.max_files,
+                )
         except AttributeError:
             return MinimalRunner(self.ctx, progress=self.progress).propose(merged)
 
@@ -1346,6 +1377,112 @@ def build_runner(
 _SUBCOMMANDS = {"propose", "apply", "verify", "explain", "history", "undo", "upgrade"}
 
 
+class Progress:
+    """Level-aware progress writer.
+
+    Levels map to the `-v` count flag:
+
+    * 0 (default) — milestone lines only, plus an idle heartbeat
+      every 60s so the CLI never looks frozen during multi-minute
+      Ollama calls.
+    * 1 (``-v``)  — adds per-phase elapsed timers, retrieval file
+      list, fix-loop iteration markers. Heartbeat tightens to 15s.
+    * 2 (``-vv``) — adds prompt/response sizes, sidecar + devskel
+      detection trace, per-test-run rc+duration.
+    * 3 (``-vvv``) — adds full prompt/response dumps under
+      ``.ai/<run>/debug/``, subprocess argv vectors, HTTP headers.
+
+    Out-of-level calls are silently dropped so callers don't need
+    to branch. The write() method is kept for back-compat with the
+    pre-Progress progress objects (``sys.stderr``-shaped).
+    """
+
+    def __init__(self, stream: Any, level: int) -> None:
+        self.stream = stream
+        self.level = level
+
+    def write(self, s: str) -> int:
+        self.stream.write(s)
+        return len(s)
+
+    def info(self, s: str) -> None:
+        if self.level >= 1:
+            self.stream.write(s)
+
+    def detail(self, s: str) -> None:
+        if self.level >= 2:
+            self.stream.write(s)
+
+    def debug(self, s: str) -> None:
+        if self.level >= 3:
+            self.stream.write(s)
+
+    def flush(self) -> None:
+        self.stream.flush()
+
+
+class _NullProgress:
+    level = 0
+
+    def write(self, _s: str) -> int: return 0
+    def info(self, _s: str) -> None: pass
+    def detail(self, _s: str) -> None: pass
+    def debug(self, _s: str) -> None: pass
+    def flush(self) -> None: pass
+
+
+def _heartbeat_interval(level: int) -> float:
+    """Seconds between heartbeat ticks — tightens when verbose."""
+
+    override = os.environ.get("SKEL_AI_HEARTBEAT_SEC")
+    if override:
+        try:
+            return max(1.0, float(override))
+        except ValueError:
+            pass
+    return 15.0 if level >= 1 else 60.0
+
+
+@contextlib.contextmanager
+def _heartbeat(
+    progress: Any,
+    label: str,
+    *,
+    interval: Optional[float] = None,
+):
+    """Emit a `[ai] <label> Ns elapsed...` tick periodically.
+
+    Runs in a daemon thread so the HTTP/subprocess call keeps its
+    blocking semantics. Exits cleanly whether the wrapped block
+    returns normally or raises.
+    """
+
+    if isinstance(progress, _NullProgress) or progress is None:
+        yield
+        return
+    level = getattr(progress, "level", 0)
+    every = interval if interval is not None else _heartbeat_interval(level)
+    started = time.monotonic()
+    stop = threading.Event()
+
+    def _tick() -> None:
+        while not stop.wait(every):
+            elapsed = int(time.monotonic() - started)
+            try:
+                progress.write(f"[ai] {label} {elapsed}s elapsed...\n")
+                progress.flush()
+            except (ValueError, OSError):
+                return
+
+    thread = threading.Thread(target=_tick, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=1.0)
+
+
 def _parse_args(argv: List[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="./ai",
@@ -1391,7 +1528,13 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
         help="Fix-loop budget in minutes.")
     parser.add_argument("--allow-dirty", action="store_true",
         help="Allow apply on a non-clean git tree.")
-    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "-v", "--verbose",
+        action="count", default=0,
+        help="Increase verbosity. Repeat for more detail: -v heartbeat "
+             "+ phase timers; -vv prompt/response sizes + sidecar trace; "
+             "-vvv full prompt dumps under .ai/<run>/debug/.",
+    )
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument(
         "--self-test",
@@ -1417,11 +1560,12 @@ def _prompt_for_request(*, progress: Any) -> str:
 
 def _open_progress(args: argparse.Namespace) -> Any:
     if args.quiet:
-        class _Null:
-            def write(self, _s: str) -> int: return 0
-            def flush(self) -> None: pass
-        return _Null()
-    return sys.stderr
+        return _NullProgress()
+    level = int(args.verbose or 0)
+    env_level = os.environ.get("SKEL_AI_VERBOSE", "").strip()
+    if env_level.isdigit():
+        level = max(level, int(env_level))
+    return Progress(sys.stderr, level)
 
 
 def main(service_dir: Path, argv: List[str]) -> int:

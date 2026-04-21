@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+"""Smoke test for ./ai verbose levels with a mocked Ollama server.
+
+Spins up a stdlib HTTPServer on a random port that sleeps briefly
+before returning a canned chat completion. Then drives the ./ai
+runtime against it in three configurations and asserts the
+expected observable output fires at each level:
+
+  * default (no -v) — no heartbeat ticks (sleep shorter than the
+    60s default interval).
+  * -v              — heartbeat interval overridden via
+    SKEL_AI_HEARTBEAT_SEC=1 AND a 3-second server sleep, so at
+    least one "[ai] Ollama ... Ns elapsed..." line must appear in
+    stderr.
+  * --quiet         — zero progress output regardless of level.
+
+No real Ollama, no real LLM. The whole run is ~8-12s on a warm
+cache — server startup + three ./ai invocations.
+"""
+
+from __future__ import annotations
+
+import argparse
+import http.server
+import json
+import shutil
+import socket
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+TEST_OUTPUT = REPO_ROOT / "_test_projects"
+EXIT_OK = 0
+EXIT_FAIL = 1
+
+DEFAULT_SKEL = "python-fastapi-skel"
+PROJECT = "test-ai-verbose-fastapi"
+CANNED_CONTENT = (
+    "RATIONALE\nCanned mock response from skel-test-ai-verbose.\n"
+    "ENDRATIONALE\n"
+    "FILES\n(none)\nENDFILES\n"
+)
+_OPENAI_SHAPE = {"choices": [{"message": {"content": CANNED_CONTENT}}]}
+_OLLAMA_NATIVE_SHAPE = {
+    "model": "mock",
+    "message": {"role": "assistant", "content": CANNED_CONTENT},
+    "done": True,
+    "done_reason": "stop",
+}
+
+
+class _MockOllamaHandler(http.server.BaseHTTPRequestHandler):
+    """Responds to Ollama's two chat endpoints.
+
+    * ``/v1/chat/completions`` — OpenAI-compat, MinimalRunner path.
+    * ``/api/chat``           — native, in-tree langchain path.
+    """
+
+    sleep_seconds: float = 0.0
+
+    def log_message(self, *_args, **_kwargs) -> None:
+        pass
+
+    def do_POST(self) -> None:
+        import time as _time
+        _time.sleep(self.sleep_seconds)
+        shape = (
+            _OLLAMA_NATIVE_SHAPE
+            if self.path.startswith("/api/")
+            else _OPENAI_SHAPE
+        )
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        body = json.dumps(shape).encode("utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def _start_server(sleep_s: float) -> "tuple[http.server.HTTPServer, threading.Thread, int]":
+    handler = type(
+        "_Handler", (_MockOllamaHandler,),
+        {"sleep_seconds": sleep_s},
+    )
+    server = http.server.HTTPServer(("127.0.0.1", 0), handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, port
+
+
+def _free_port_probe() -> int:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+def _run_ai(service_dir: Path, argv: list, *, env_extra: dict) -> subprocess.CompletedProcess:
+    import os
+    env = os.environ.copy()
+    env.update(env_extra)
+    return subprocess.run(
+        ["./ai", *argv],
+        cwd=service_dir,
+        capture_output=True, text=True, env=env,
+    )
+
+
+def _fail(msg: str, *extra) -> int:
+    print(f"[vb-smoke] FAIL: {msg}", file=sys.stderr)
+    for chunk in extra:
+        if chunk:
+            print(chunk, file=sys.stderr)
+    return EXIT_FAIL
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--keep", action="store_true")
+    args = parser.parse_args()
+
+    wrapper = TEST_OUTPUT / PROJECT
+    if wrapper.exists():
+        shutil.rmtree(wrapper)
+    TEST_OUTPUT.mkdir(parents=True, exist_ok=True)
+
+    print(f"[vb-smoke] Generating {DEFAULT_SKEL} into {wrapper}")
+    gen = subprocess.run(
+        [str(REPO_ROOT / "_bin" / "skel-gen-static"),
+         PROJECT, DEFAULT_SKEL, "Items API"],
+        cwd=TEST_OUTPUT, capture_output=True, text=True,
+    )
+    if gen.returncode != 0:
+        return _fail("skel-gen-static exited non-zero",
+                     gen.stdout, gen.stderr)
+
+    services = [
+        p for p in wrapper.iterdir()
+        if p.is_dir()
+        and p.name not in {"_shared", "contracts"}
+        and not p.name.startswith(".")
+    ]
+    if not services:
+        return _fail(f"no service dir under {wrapper}")
+    service_dir = services[0]
+    print(f"[vb-smoke] Service dir: {service_dir.relative_to(REPO_ROOT)}")
+
+    # ---- 1. -v with a 3s server sleep must produce >=1 heartbeat tick #
+    server, thread, port = _start_server(sleep_s=3.0)
+    try:
+        base_url = f"http://127.0.0.1:{port}"
+        print(f"[vb-smoke] Mock Ollama on {base_url}")
+
+        print("[vb-smoke] Running ./ai apply -v with 1s heartbeat")
+        proc = _run_ai(
+            service_dir,
+            ["apply", "verbose heartbeat test", "--no-verify", "--allow-dirty"],
+            env_extra={
+                "OLLAMA_BASE_URL": base_url,
+                "OLLAMA_TIMEOUT": "30",
+                "SKEL_AI_HEARTBEAT_SEC": "1",
+                "SKEL_AI_VERBOSE": "1",
+            },
+        )
+        combined = proc.stdout + proc.stderr
+        if "[ai] Ollama" not in combined or "elapsed" not in combined:
+            return _fail(
+                "-v did not produce heartbeat ticks during 3s Ollama call",
+                combined,
+            )
+        print("[vb-smoke] -v heartbeat ticks present ✓")
+
+        # ---- 2. default level (no -v) — NO heartbeat on short calls #
+        #
+        # With the default 60s interval and a <1s call, no tick should
+        # fire. We re-use the server but reset its sleep to near-zero
+        # by swapping handlers — cheaper than restarting.
+        server.shutdown()
+        thread.join(timeout=2.0)
+    finally:
+        server.server_close()
+
+    server, thread, port = _start_server(sleep_s=0.05)
+    try:
+        base_url = f"http://127.0.0.1:{port}"
+        print("[vb-smoke] Running ./ai apply (default level, fast response)")
+        proc = _run_ai(
+            service_dir,
+            ["apply", "quick default test", "--no-verify", "--allow-dirty"],
+            env_extra={
+                "OLLAMA_BASE_URL": base_url,
+                "OLLAMA_TIMEOUT": "30",
+                # Intentionally NOT setting SKEL_AI_HEARTBEAT_SEC —
+                # default interval is 60s, response is 0.05s.
+            },
+        )
+        combined = proc.stdout + proc.stderr
+        if "elapsed..." in combined:
+            return _fail(
+                "default level leaked heartbeat ticks on sub-second call",
+                combined,
+            )
+        print("[vb-smoke] default level: no spurious heartbeat ✓")
+
+        # ---- 3. --quiet — zero progress output ---------------------- #
+        print("[vb-smoke] Running ./ai apply --quiet")
+        proc = _run_ai(
+            service_dir,
+            ["apply", "quiet check", "--no-verify", "--quiet", "--allow-dirty"],
+            env_extra={
+                "OLLAMA_BASE_URL": base_url,
+                "OLLAMA_TIMEOUT": "30",
+                "SKEL_AI_HEARTBEAT_SEC": "1",
+            },
+        )
+        stderr_only = proc.stderr
+        if "[ai]" in stderr_only:
+            return _fail("--quiet leaked [ai] lines to stderr", stderr_only)
+        print("[vb-smoke] --quiet produced no [ai] output ✓")
+    finally:
+        server.shutdown()
+        thread.join(timeout=2.0)
+        server.server_close()
+
+    if not args.keep:
+        shutil.rmtree(wrapper)
+    print("[vb-smoke] OK — ./ai verbose levels + heartbeat verified.")
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())

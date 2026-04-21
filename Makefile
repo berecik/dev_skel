@@ -29,6 +29,7 @@
         test-ai-upgrade test-ai-upgrade-keep \
         test-ai-fanout test-ai-fanout-keep \
         test-ai-react-django test-ai-react-django-keep \
+        test-ai-verbose test-ai-verbose-keep \
         test-project-ux test-project-ux-keep \
         test-kube-layout test-kube-diagnose test-kube-manifest test-kube-phase \
         test-flutter-django-bolt test-flutter-django-bolt-keep \
@@ -501,6 +502,13 @@ test-ai-react-django: ## Smoke ./ai + ./backport on a react+django wrapper (no O
 
 test-ai-react-django-keep: ## Same, but leave the test wrapper on disk
 	@_bin/skel-test-ai-react-django --keep
+
+test-ai-verbose: ## Smoke ./ai -v heartbeat against a mocked Ollama (no real LLM)
+	@echo "$(GREEN)=== ./ai verbose + heartbeat smoke ===$(NC)"
+	@_bin/skel-test-ai-verbose
+
+test-ai-verbose-keep: ## Same, but leave the test wrapper on disk
+	@_bin/skel-test-ai-verbose --keep
 
 test-project-ux: ## Smoke project UX (`./project`, `./env`) + stack generators
 	@echo "$(GREEN)=== Project UX + stack generator smoke ===$(NC)"
