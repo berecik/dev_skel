@@ -206,7 +206,66 @@ def main() -> int:
             )
         print("[vb-smoke] default level: no spurious heartbeat ✓")
 
-        # ---- 3. --quiet — zero progress output ---------------------- #
+        # ---- 3. -vv adds prompt/response size + phase timers -------- #
+        print("[vb-smoke] Running ./ai apply -vv (detail level)")
+        proc = _run_ai(
+            service_dir,
+            ["apply", "detail test", "--no-verify", "--allow-dirty", "-vv"],
+            env_extra={
+                "OLLAMA_BASE_URL": base_url,
+                "OLLAMA_TIMEOUT": "30",
+            },
+        )
+        combined = proc.stdout + proc.stderr
+        for needle in (
+            "[ai] prompt:",
+            "[ai] response:",
+            "[ai] retrieved in",
+            "[ai] proposed in",
+            "[ai] sidecar keys:",
+        ):
+            if needle not in combined:
+                return _fail(
+                    f"-vv output missing expected marker {needle!r}",
+                    combined,
+                )
+        print("[vb-smoke] -vv prompt/response sizes + timers present ✓")
+
+        # ---- 4. -vvv dumps prompts to .ai/<run>/debug/ -------------- #
+        ai_dir = service_dir / ".ai"
+        before_runs = {p.name for p in ai_dir.iterdir() if p.is_dir()}
+        print("[vb-smoke] Running ./ai apply -vvv (debug level)")
+        proc = _run_ai(
+            service_dir,
+            ["apply", "debug test", "--no-verify", "--allow-dirty", "-vvv"],
+            env_extra={
+                "OLLAMA_BASE_URL": base_url,
+                "OLLAMA_TIMEOUT": "30",
+            },
+        )
+        combined = proc.stdout + proc.stderr
+        after_runs = {p.name for p in ai_dir.iterdir() if p.is_dir()}
+        new_runs = after_runs - before_runs
+        if not new_runs:
+            return _fail(
+                "-vvv: could not identify a new run dir under .ai/",
+                combined,
+            )
+        run_dir = ai_dir / next(iter(new_runs))
+        debug_dir = run_dir / "debug"
+        expected = {"system.txt", "user.txt", "response.txt"}
+        if not debug_dir.is_dir():
+            return _fail(f"-vvv: debug dir {debug_dir} not created", combined)
+        present = {p.name for p in debug_dir.iterdir() if p.is_file()}
+        missing = expected - present
+        if missing:
+            return _fail(
+                f"-vvv: debug dir missing files {missing} (has {present})",
+                combined,
+            )
+        print(f"[vb-smoke] -vvv dumped {sorted(present)} to .ai/{run_dir.name}/debug/ ✓")
+
+        # ---- 5. --quiet — zero progress output ---------------------- #
         print("[vb-smoke] Running ./ai apply --quiet")
         proc = _run_ai(
             service_dir,

@@ -995,12 +995,16 @@ def _ollama_chat(
 # --------------------------------------------------------------------------- #
 
 
-def _run_test(ctx: RefactorContext) -> _TestRunResult:
+def _run_test(
+    ctx: RefactorContext, *, progress: Any = None,
+) -> _TestRunResult:
     cmd = shlex.split(ctx.test_command)
     if not cmd:
         raise RefactorAbort(f"empty test command: {ctx.test_command!r}")
     if cmd[0].startswith("./"):
         cmd[0] = str((ctx.service_dir / cmd[0][2:]).resolve())
+    if progress is not None:
+        progress.debug(f"[ai] subprocess: {shlex.join(cmd)}\n")
     start = time.monotonic()
     try:
         proc = subprocess.run(
@@ -1054,10 +1058,14 @@ def _minimal_fix_loop(
 
     deadline = time.monotonic() + ctx.fix_timeout_m * 60
     iteration = 0
-    last = _run_test(ctx)
+    last = _run_test(ctx, progress=progress)
     if progress is not None:
         status = "PASS" if last.passed else f"FAIL (exit {last.returncode})"
         progress.write(f"[ai] {status} in {last.duration_s:.1f}s\n")
+        progress.detail(
+            f"[ai] test: rc={last.returncode} "
+            f"duration={last.duration_s:.2f}s\n"
+        )
 
     allowed = {
         p.relative_to(ctx.service_dir.resolve()).as_posix()
@@ -1066,6 +1074,12 @@ def _minimal_fix_loop(
 
     while not last.passed and time.monotonic() < deadline:
         iteration += 1
+        if progress is not None:
+            remaining = deadline - time.monotonic()
+            progress.info(
+                f"[ai] fix loop: iteration {iteration} "
+                f"(rc={last.returncode}, {remaining:.0f}s budget remaining)\n"
+            )
         files_block = _render_files_block(applied.written, ctx.service_dir)
         prompt_user = (
             f"REQUEST: repair the most recent refactor so the test "
@@ -1115,12 +1129,16 @@ def _minimal_fix_loop(
                 )
         if applied_count == 0:
             break
-        last = _run_test(ctx)
+        last = _run_test(ctx, progress=progress)
         if progress is not None:
             status = "PASS" if last.passed else f"FAIL (exit {last.returncode})"
             progress.write(
                 f"[ai] {status} in {last.duration_s:.1f}s "
                 f"(iter {iteration})\n"
+            )
+            progress.detail(
+                f"[ai] test: rc={last.returncode} "
+                f"duration={last.duration_s:.2f}s iter={iteration}\n"
             )
 
     return last
@@ -1171,6 +1189,9 @@ class MinimalRunner:
             + f"\nRETRIEVED_CONTEXT:\n{retrieved}\n\n"
             f"Now produce RATIONALE / FILES / FILE blocks as instructed."
         )
+        system_prompt = REFACTOR_SYSTEM_PROMPT_MIN.format(
+            max_files=self.ctx.max_files,
+        )
         if self.progress is not None:
             model = os.environ.get("OLLAMA_MODEL", "qwen3-coder:30b")
             base_url = os.environ.get(
@@ -1179,11 +1200,19 @@ class MinimalRunner:
             self.progress.write(
                 f"[ai] Asking Ollama ({model} @ {base_url})...\n"
             )
-        raw = _ollama_chat(
-            REFACTOR_SYSTEM_PROMPT_MIN.format(max_files=self.ctx.max_files),
-            prompt_user,
-            progress=self.progress,
+            self.progress.detail(
+                f"[ai] prompt: system={len(system_prompt)} "
+                f"user={len(prompt_user)} chars\n"
+            )
+        _dump_prompt_at_debug(
+            self.progress, self.ctx, system_prompt, prompt_user,
         )
+        raw = _ollama_chat(
+            system_prompt, prompt_user, progress=self.progress,
+        )
+        if self.progress is not None:
+            self.progress.detail(f"[ai] response: {len(raw)} chars\n")
+        _dump_response_at_debug(self.progress, self.ctx, raw)
         return _split_refactor_response(raw, max_files=self.ctx.max_files)
 
     def apply(self, edits: List[FileEdit]) -> AppliedResult:
@@ -1268,15 +1297,38 @@ class RagRunner:
         # skel_rag is on PYTHONPATH and the method has not been added
         # yet; we then fall through to the stdlib MinimalRunner.
         model = os.environ.get("OLLAMA_MODEL", "qwen3-coder:30b")
+        if self.progress is not None:
+            self.progress.detail(
+                f"[ai] prompt: retrieved+memory={len(merged)} chars "
+                f"(in-tree langchain path)\n"
+            )
+        _dump_prompt_at_debug(
+            self.progress, self.ctx,
+            "(langchain path — system prompt managed by skel_rag.agent)",
+            f"REQUEST: {self.ctx.request}\n\nRETRIEVED:\n{merged}",
+        )
         try:
             with _heartbeat(self.progress, f"Ollama ({model})"):
-                return self.agent.refactor_files(
+                edits = self.agent.refactor_files(
                     ctx=self.ctx,
                     retrieved=merged,
                     max_files=self.ctx.max_files,
                 )
         except AttributeError:
             return MinimalRunner(self.ctx, progress=self.progress).propose(merged)
+        if self.progress is not None:
+            total_chars = sum(len(e.new_contents) for e in edits)
+            self.progress.detail(
+                f"[ai] response: {len(edits)} edit(s), "
+                f"{total_chars} chars total\n"
+            )
+        _dump_response_at_debug(
+            self.progress, self.ctx,
+            "\n\n---\n\n".join(
+                f"FILE: {e.rel_path}\n{e.new_contents}" for e in edits
+            ),
+        )
+        return edits
 
     def apply(self, edits: List[FileEdit]) -> AppliedResult:
         return _apply_edits_with_stash(self.ctx, edits, progress=self.progress)
@@ -1483,6 +1535,42 @@ def _heartbeat(
         thread.join(timeout=1.0)
 
 
+def _dump_prompt_at_debug(
+    progress: Any,
+    ctx: "RefactorContext",
+    system_prompt: str,
+    user_prompt: str,
+) -> None:
+    """At ``-vvv``, mirror the system+user prompt under ``.ai/<run>/debug/``."""
+
+    if getattr(progress, "level", 0) < 3:
+        return
+    debug_dir = ctx.output_dir / "debug"
+    try:
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        (debug_dir / "system.txt").write_text(system_prompt, encoding="utf-8")
+        (debug_dir / "user.txt").write_text(user_prompt, encoding="utf-8")
+        progress.debug(
+            f"[ai] debug: wrote prompts to "
+            f"{debug_dir.relative_to(ctx.service_dir)}/\n"
+        )
+    except OSError as exc:
+        progress.debug(f"[ai] debug: prompt dump failed: {exc}\n")
+
+
+def _dump_response_at_debug(
+    progress: Any, ctx: "RefactorContext", raw: str,
+) -> None:
+    if getattr(progress, "level", 0) < 3:
+        return
+    debug_dir = ctx.output_dir / "debug"
+    try:
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        (debug_dir / "response.txt").write_text(raw, encoding="utf-8")
+    except OSError as exc:
+        progress.debug(f"[ai] debug: response dump failed: {exc}\n")
+
+
 def _parse_args(argv: List[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="./ai",
@@ -1652,6 +1740,12 @@ def main(service_dir: Path, argv: List[str]) -> int:
     progress.write(
         f"[ai] RAG: {RagRunner.rag_label if ctx.mode == 'in-tree' else MinimalRunner.rag_label}\n"
     )
+    progress.detail(
+        f"[ai] sidecar keys: {sorted((sidecar or {}).keys())}\n"
+        f"[ai] devskel detect: {devskel}\n"
+        f"[ai] request: {request!r}\n"
+        f"[ai] max_files={ctx.max_files} fix_timeout_m={ctx.fix_timeout_m}\n"
+    )
 
     if args.ollama_model:
         os.environ["OLLAMA_MODEL"] = args.ollama_model
@@ -1662,6 +1756,7 @@ def main(service_dir: Path, argv: List[str]) -> int:
 
     runner = build_runner(ctx, progress=progress)
 
+    t_retrieve = time.monotonic()
     try:
         retrieved = runner.retrieve()
     except RefactorOllamaError as exc:
@@ -1670,6 +1765,10 @@ def main(service_dir: Path, argv: List[str]) -> int:
     except RefactorAbort as exc:
         progress.write(f"[ai] FAIL: {exc}\n")
         return 1
+    progress.info(
+        f"[ai] retrieved in {time.monotonic() - t_retrieve:.1f}s "
+        f"({len(retrieved)} chars)\n"
+    )
 
     ctx.output_dir.mkdir(parents=True, exist_ok=True)
     (ctx.output_dir / "request.txt").write_text(request, encoding="utf-8")
@@ -1682,6 +1781,7 @@ def main(service_dir: Path, argv: List[str]) -> int:
             retrieved, encoding="utf-8",
         )
 
+    t_propose = time.monotonic()
     try:
         edits = runner.propose(retrieved)
     except RefactorOllamaError as exc:
@@ -1690,6 +1790,10 @@ def main(service_dir: Path, argv: List[str]) -> int:
     except RefactorParseError as exc:
         progress.write(f"[ai] FAIL: {exc}\n")
         return 1
+    progress.info(
+        f"[ai] proposed in {time.monotonic() - t_propose:.1f}s "
+        f"({len(edits)} edit(s))\n"
+    )
 
     if not edits:
         progress.write("[ai] No edits proposed.\n")
