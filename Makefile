@@ -666,6 +666,7 @@ clean-all: ## Clean all skeleton projects
 clean-test: ## Clean test output directory
 	@echo "$(GREEN)Cleaning test output...$(NC)"
 	@rm -rf $(TEST_OUTPUT)
+	@mkdir -p $(TEST_OUTPUT)
 	@echo "$(GREEN)Test output cleaned$(NC)"
 
 #
