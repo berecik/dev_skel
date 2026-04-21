@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from dev_skel_lib import slugify_service_name
+from dev_skel_lib import is_safe_service_id, read_project_yml, slugify_service_name
 
 
 # --------------------------------------------------------------------------- #
@@ -2346,18 +2346,6 @@ class _StrictDict(dict):
 # --------------------------------------------------------------------------- #
 
 
-def _read_project_yml_minimal(wrapper: Path) -> dict:
-    """Thin alias kept for backwards compatibility.
-
-    The canonical parser lives in :func:`dev_skel_lib.read_project_yml`.
-    This wrapper exists so in-tree callers that imported the underscore
-    name keep working; new code should use ``read_project_yml``
-    directly.
-    """
-    import importlib
-    return importlib.import_module("dev_skel_lib").read_project_yml(wrapper)
-
-
 @dataclass
 class KubernetesResult:
     """Outcome of :func:`run_kubernetes_phase`."""
@@ -2524,17 +2512,15 @@ def run_kubernetes_phase(
 
     if project_yml is None:
         try:
-            project_yml = _read_project_yml_minimal(wrapper_dir)
+            project_yml = read_project_yml(wrapper_dir)
         except FileNotFoundError as exc:
             return KubernetesResult(ok=False, error=str(exc))
 
     managed_root = wrapper_dir / "deploy" / "helm" / "templates" / "_managed"
     managed_root.mkdir(parents=True, exist_ok=True)
-    import importlib
-    _dsl = importlib.import_module("dev_skel_lib")
     for svc in project_yml.get("services", []) or []:
         sid = svc.get("id", "")
-        if not _dsl.is_safe_service_id(sid):
+        if not is_safe_service_id(sid):
             return KubernetesResult(
                 ok=False,
                 error=f"rejecting unsafe service id {sid!r} in dev_skel.project.yml",
@@ -2711,7 +2697,6 @@ __all__ = [
     "KubernetesResult",
     "_kube_diagnose",
     "_kube_diagnose_from_json",
-    "_read_project_yml_minimal",
     "build_system_prompt",
     "clean_response",
     "discover_manifests",
