@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""Smoke test for ./ai + ./backport on a React + Django wrapper.
+
+End-to-end coverage of the "real user" scenario the CLI targets:
+
+  1. ``skel-gen-static`` generates ``python-django-skel`` into a
+     fresh wrapper.
+  2. ``skel-add`` (NOT the lower-level ``skel-gen-static``) adds
+     ``ts-react-skel`` as a sibling service. This exercises the
+     "second service" path users actually hit when expanding an
+     existing project, and catches regressions like a missing
+     exec bit on ``_bin/skel-add``.
+  3. ``./ai --no-llm`` runs against the Django service, the React
+     service, and the wrapper (bare, fan-out).
+  4. ``./ai history`` at wrapper level must aggregate both services.
+  5. ``./ai upgrade`` (no-op) fans out and reports both services
+     are current.
+  6. ``./backport propose`` against the Django service must NOT
+     surface Python build artefacts (``*.egg-info/``), which the
+     naive pre-2026-04 exclusion list let through.
+
+No LLM calls — every step uses ``--no-llm`` or static filesystem
+checks. Runs in ~30s on a warm cache (gen step dominates).
+
+Usage::
+
+    _bin/skel-test-ai-react-django
+    _bin/skel-test-ai-react-django --keep
+"""
+
+from __future__ import annotations
+
+import argparse
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+TEST_OUTPUT = REPO_ROOT / "_test_projects"
+
+EXIT_OK = 0
+EXIT_FAIL = 1
+
+PROJECT_NAME = "test-ai-react-django"
+BACKEND_SKEL = "python-django-skel"
+FRONTEND_SKEL = "ts-react-skel"
+BACKEND_SERVICE = "Items API"
+FRONTEND_SERVICE = "Web UI"
+BACKEND_SLUG = "items_api"
+FRONTEND_SLUG = "web_ui"
+
+
+def _run(argv, **kwargs):
+    return subprocess.run(argv, capture_output=True, text=True, **kwargs)
+
+
+def _fail(msg: str, *extra) -> int:
+    print(f"[rd-smoke] FAIL: {msg}", file=sys.stderr)
+    for chunk in extra:
+        if chunk:
+            print(chunk, file=sys.stderr)
+    return EXIT_FAIL
+
+
+def _assert_in(needle: str, haystack: str, label: str) -> bool:
+    if needle in haystack:
+        return True
+    print(f"[rd-smoke] FAIL: {label} missing {needle!r}", file=sys.stderr)
+    print(f"  output:\n{haystack!r}", file=sys.stderr)
+    return False
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--keep", action="store_true",
+        help="Leave the generated wrapper on disk after the test.")
+    args = parser.parse_args()
+
+    wrapper = TEST_OUTPUT / PROJECT_NAME
+    if wrapper.exists():
+        shutil.rmtree(wrapper)
+
+    # ---- 1. Generate Django backend ------------------------------------ #
+    print(f"[rd-smoke] Generating {BACKEND_SKEL} into {wrapper}")
+    gen = _run(
+        [str(REPO_ROOT / "_bin" / "skel-gen-static"),
+         PROJECT_NAME, BACKEND_SKEL, BACKEND_SERVICE],
+        cwd=TEST_OUTPUT,
+    )
+    if gen.returncode != 0:
+        return _fail("skel-gen-static (django) exited non-zero",
+                     gen.stdout, gen.stderr)
+
+    backend_dir = wrapper / BACKEND_SLUG
+    if not backend_dir.is_dir():
+        return _fail(f"expected {BACKEND_SLUG}/ under {wrapper}")
+
+    # ---- 2. Add React frontend via skel-add ---------------------------- #
+    #
+    # Using skel-add here (not skel-gen-static again) is intentional:
+    # it's the canonical "add a sibling service to an existing wrapper"
+    # path and would regress silently if the exec bit ever slipped
+    # off `_bin/skel-add` again.
+    print(f"[rd-smoke] Adding {FRONTEND_SKEL} via skel-add")
+    add = _run(
+        [str(REPO_ROOT / "_bin" / "skel-add"),
+         ".", FRONTEND_SKEL, FRONTEND_SERVICE, "--static"],
+        cwd=wrapper,
+    )
+    if add.returncode != 0:
+        return _fail("skel-add (ts-react) exited non-zero",
+                     add.stdout, add.stderr)
+    frontend_dir = wrapper / FRONTEND_SLUG
+    if not frontend_dir.is_dir():
+        return _fail(f"expected {FRONTEND_SLUG}/ under {wrapper}")
+    print(f"[rd-smoke] Services present: {BACKEND_SLUG}, {FRONTEND_SLUG} ✓")
+
+    # ---- 3. ./ai --no-llm against each service ------------------------- #
+    for label, svc_dir in (("django", backend_dir), ("react", frontend_dir)):
+        print(f"[rd-smoke] ./ai --no-llm against {label} service")
+        proc = _run(["./ai", "--no-llm", f"{label} smoke"], cwd=svc_dir)
+        if proc.returncode != 0:
+            return _fail(f"./ai in {svc_dir.name} exited non-zero",
+                         proc.stdout, proc.stderr)
+        ai_dir = svc_dir / ".ai"
+        if not ai_dir.is_dir():
+            return _fail(f"{svc_dir.name}/.ai not created")
+        runs = [
+            p for p in ai_dir.iterdir()
+            if p.is_dir() and p.name != ".lock"
+        ]
+        if not runs:
+            return _fail(f"no scratch run under {svc_dir.name}/.ai")
+        print(f"[rd-smoke] {svc_dir.name}: scratch dir .ai/{runs[0].name} ✓")
+
+    # ---- 4. Wrapper-level ./ai bare must fan out to BOTH services ------ #
+    print("[rd-smoke] wrapper-level ./ai fan-out")
+    fan = _run(["./ai", "--no-llm", "wrapper fanout"], cwd=wrapper)
+    if fan.returncode != 0:
+        return _fail("wrapper ./ai exited non-zero", fan.stdout, fan.stderr)
+    combined = fan.stdout + fan.stderr
+    for slug in (BACKEND_SLUG, FRONTEND_SLUG):
+        if not _assert_in(f"[ai] >>> {slug}", combined,
+                          f"wrapper ./ai fan-out to {slug}"):
+            return EXIT_FAIL
+    print("[rd-smoke] wrapper ./ai fan-out hit both services ✓")
+
+    # ---- 5. Wrapper ./ai history aggregates both services -------------- #
+    print("[rd-smoke] wrapper-level ./ai history")
+    hist = _run(["./ai", "history"], cwd=wrapper)
+    if hist.returncode != 0:
+        return _fail("wrapper ./ai history exited non-zero",
+                     hist.stdout, hist.stderr)
+    combined = hist.stdout + hist.stderr
+    for slug in (BACKEND_SLUG, FRONTEND_SLUG):
+        if not _assert_in(f"[ai] >>> {slug}", combined,
+                          f"wrapper ./ai history for {slug}"):
+            return EXIT_FAIL
+    print("[rd-smoke] wrapper ./ai history lists both services ✓")
+
+    # ---- 6. ./ai upgrade (no-op) at wrapper level ---------------------- #
+    print("[rd-smoke] wrapper-level ./ai upgrade (no-op)")
+    upgrade = _run(["./ai", "upgrade"], cwd=wrapper)
+    if upgrade.returncode != 0:
+        return _fail("wrapper ./ai upgrade exited non-zero",
+                     upgrade.stdout, upgrade.stderr)
+    combined = upgrade.stdout + upgrade.stderr
+    noop_hits = combined.count("nothing to upgrade")
+    if noop_hits < 2:
+        return _fail(
+            f"expected 2 'nothing to upgrade' hits, got {noop_hits}",
+            combined,
+        )
+    print(f"[rd-smoke] ./ai upgrade (no-op) hit both services ✓")
+
+    # ---- 7. ./backport propose must not surface *.egg-info/* ----------- #
+    print("[rd-smoke] ./backport propose (django) excludes egg-info")
+    bp = _run(["./backport", "propose"], cwd=backend_dir)
+    if bp.returncode != 0:
+        return _fail("./backport propose exited non-zero",
+                     bp.stdout, bp.stderr)
+    combined = bp.stdout + bp.stderr
+    if ".egg-info" in combined:
+        return _fail(
+            "./backport propose leaked *.egg-info/ build artefact",
+            combined,
+        )
+    print("[rd-smoke] ./backport propose skipped egg-info ✓")
+
+    if not args.keep:
+        shutil.rmtree(wrapper)
+    print("[rd-smoke] OK — react+django ./ai + ./backport flow verified.")
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())

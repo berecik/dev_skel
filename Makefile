@@ -28,6 +28,7 @@
         test-ai-memory test-ai-memory-keep \
         test-ai-upgrade test-ai-upgrade-keep \
         test-ai-fanout test-ai-fanout-keep \
+        test-ai-react-django test-ai-react-django-keep \
         test-project-ux test-project-ux-keep \
         test-kube-layout test-kube-diagnose test-kube-manifest test-kube-phase \
         test-flutter-django-bolt test-flutter-django-bolt-keep \
@@ -493,6 +494,13 @@ test-ai-fanout: ## Smoke wrapper-level ./ai fan-out default (two services)
 
 test-ai-fanout-keep: ## Same, but leave the test wrapper on disk
 	@_bin/skel-test-ai-fanout --keep
+
+test-ai-react-django: ## Smoke ./ai + ./backport on a react+django wrapper (no Ollama)
+	@echo "$(GREEN)=== ./ai + ./backport on react+django smoke ===$(NC)"
+	@_bin/skel-test-ai-react-django
+
+test-ai-react-django-keep: ## Same, but leave the test wrapper on disk
+	@_bin/skel-test-ai-react-django --keep
 
 test-project-ux: ## Smoke project UX (`./project`, `./env`) + stack generators
 	@echo "$(GREEN)=== Project UX + stack generator smoke ===$(NC)"

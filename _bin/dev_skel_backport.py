@@ -166,14 +166,23 @@ def _safe_relative(path: Path, root: Path) -> str:
     return rel.as_posix()
 
 
+_BUILD_DIRS = {
+    ".git", ".ai", "node_modules", "__pycache__",
+    "dist", "build", "target",
+}
+
+
 def _iter_service_files(service_dir: Path) -> Iterator[Path]:
     for path in sorted(service_dir.rglob("*")):
         if not path.is_file():
             continue
         rel = path.relative_to(service_dir)
-        if rel.parts[0].startswith("."):
+        top = rel.parts[0]
+        if top.startswith("."):
             continue
-        if rel.parts[0] in {".git", ".ai", "node_modules", "__pycache__"}:
+        if top in _BUILD_DIRS:
+            continue
+        if top.endswith(".egg-info"):
             continue
         yield path
 
