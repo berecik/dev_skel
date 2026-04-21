@@ -80,6 +80,7 @@ Dry run (no files written, no Ollama calls validated)::
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -405,6 +406,18 @@ def parse_args() -> argparse.Namespace:
         help="Kubernetes fix-loop budget in minutes (default 30).",
     )
 
+    parser.add_argument(
+        "-v", "--verbose",
+        action="count", default=0,
+        help=(
+            "Increase verbosity for every child AI invocation. Repeat "
+            "for more detail: -v adds per-phase timers + Ollama "
+            "heartbeat ticks; -vv adds prompt/response sizes + test "
+            "rc/duration; -vvv dumps prompts to .ai/<run>/debug/. "
+            "Propagates via SKEL_AI_VERBOSE to ./ai integration phases."
+        ),
+    )
+
     return parser.parse_args()
 
 
@@ -498,6 +511,19 @@ def _guard_swapped_args(proj_name: str | None, skels_dir: Path) -> None:
 
 def main() -> None:
     args = parse_args()
+
+    # Propagate verbosity to every child AI invocation (./ai from
+    # generated services, Kubernetes phase, fix loop) via the same
+    # env var the per-service runtime honors. Never shrink an outer
+    # setting: if the operator already set SKEL_AI_VERBOSE=2 and then
+    # runs with -v (1), keep the 2.
+    if args.verbose:
+        prior = os.environ.get("SKEL_AI_VERBOSE", "").strip()
+        try:
+            prior_n = int(prior) if prior.isdigit() else 0
+        except ValueError:
+            prior_n = 0
+        os.environ["SKEL_AI_VERBOSE"] = str(max(prior_n, args.verbose))
 
     cfg: DevSkelConfig = load_config()
     script_dir = Path(__file__).resolve().parent

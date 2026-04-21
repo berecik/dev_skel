@@ -28,6 +28,7 @@ is preserved verbatim because the RAG agent imports it.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import json
 import os
@@ -35,6 +36,8 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -42,6 +45,50 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from dev_skel_lib import is_safe_service_id, read_project_yml, slugify_service_name
+
+
+@contextlib.contextmanager
+def _heartbeat_env(label: str):
+    """Emit a `[ai] <label> Ns elapsed...` tick while the body runs.
+
+    Activated only when ``SKEL_AI_VERBOSE`` is a positive integer in
+    the environment. Interval defaults to 60s at level 1, tightens to
+    15s at level 1+ unless ``SKEL_AI_HEARTBEAT_SEC`` overrides. No-op
+    otherwise so the OllamaClient call path stays unchanged for
+    non-verbose callers.
+    """
+
+    raw_level = os.environ.get("SKEL_AI_VERBOSE", "").strip()
+    level = int(raw_level) if raw_level.isdigit() else 0
+    if level < 1:
+        yield
+        return
+
+    interval_env = os.environ.get("SKEL_AI_HEARTBEAT_SEC", "").strip()
+    try:
+        interval = max(1.0, float(interval_env)) if interval_env else 15.0
+    except ValueError:
+        interval = 15.0
+
+    started = time.monotonic()
+    stop = threading.Event()
+
+    def _tick() -> None:
+        while not stop.wait(interval):
+            elapsed = int(time.monotonic() - started)
+            try:
+                sys.stderr.write(f"[ai] {label} {elapsed}s elapsed...\n")
+                sys.stderr.flush()
+            except (ValueError, OSError):
+                return
+
+    thread = threading.Thread(target=_tick, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=1.0)
 
 
 # --------------------------------------------------------------------------- #
@@ -601,12 +648,17 @@ class OllamaClient:
         through ``langchain_ollama.ChatOllama``. The new path raises
         :class:`skel_rag.llm.OllamaError` on failure; we re-raise as the
         local :class:`OllamaError` so existing handlers keep matching.
+
+        Honors ``SKEL_AI_VERBOSE`` + ``SKEL_AI_HEARTBEAT_SEC`` env vars
+        to print an elapsed-time tick while the call blocks, so
+        long-running inferences in ``skel-gen-ai`` never look frozen.
         """
 
         from skel_rag.llm import OllamaError as _NewOllamaError
 
         try:
-            return self.agent.chat(system, user)
+            with _heartbeat_env(f"Ollama ({self.config.model})"):
+                return self.agent.chat(system, user)
         except _NewOllamaError as exc:
             raise OllamaError(str(exc)) from exc
 
