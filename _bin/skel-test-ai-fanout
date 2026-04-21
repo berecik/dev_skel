@@ -63,7 +63,9 @@ def main() -> int:
 
     services = sorted(
         p.name for p in wrapper.iterdir()
-        if p.is_dir() and p.name != "_shared" and not p.name.startswith(".")
+        if p.is_dir()
+        and p.name not in {"_shared", "contracts"}
+        and not p.name.startswith(".")
     )
     if len(services) < 2:
         print(

@@ -82,7 +82,9 @@ def main() -> int:
 
     services = [
         p for p in wrapper.iterdir()
-        if p.is_dir() and p.name != "_shared" and not p.name.startswith(".")
+        if p.is_dir()
+        and p.name not in {"_shared", "contracts"}
+        and not p.name.startswith(".")
     ]
     if not services:
         print(f"[up-smoke] FAIL: no service dir under {wrapper}")

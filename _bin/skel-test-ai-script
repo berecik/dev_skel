@@ -74,7 +74,9 @@ def main() -> int:
     # whose name isn't `_shared` and isn't a top-level script).
     services = [
         p for p in wrapper.iterdir()
-        if p.is_dir() and p.name != "_shared" and not p.name.startswith(".")
+        if p.is_dir()
+        and p.name not in {"_shared", "contracts"}
+        and not p.name.startswith(".")
     ]
     if not services:
         print(f"[ai-smoke] FAIL: no service dir under {wrapper}", file=sys.stderr)
