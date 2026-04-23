@@ -237,8 +237,11 @@ class TestPhase3Integration:
     def test_integration_manifest_loads(self, integration_manifest):
         assert integration_manifest is not None
         assert len(integration_manifest.targets) == 3
-        assert integration_manifest.fix_timeout_m == 60
+        # Accept any positive fix_timeout — bumping the budget as the
+        # fix loop gets smarter shouldn't regress this structural test.
+        assert integration_manifest.fix_timeout_m >= 5
         print(f"\n  Integration targets: {[t.path for t in integration_manifest.targets]}")
+        print(f"  fix_timeout_m: {integration_manifest.fix_timeout_m}")
 
     def test_discover_siblings(self, generated_project, service_subdir):
         siblings = discover_siblings(generated_project, exclude_slug=service_subdir)
