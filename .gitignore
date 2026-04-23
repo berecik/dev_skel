@@ -24,3 +24,14 @@ __pycache__/
 # _bin/skel-gen-ai). Persisted per skeleton at
 # `_skels/<name>/.skel_rag_index/`; never check in.
 **/.skel_rag_index/
+/.ai/backport/2026-04-21T150006Z-3f913d32/result.json
+/.ai/backport/2026-04-21T150009Z-edfe7e6f/result.json
+/.ai/backport/2026-04-21T150010Z-edfe7e6f/result.json
+/.ai/backport/2026-04-21T155636Z-3f913d32/result.json
+/.ai/backport/2026-04-21T155739Z-edfe7e6f/result.json
+/.ai/backport/2026-04-21T155740Z-edfe7e6f/result.json
+/.ai/backport/2026-04-21T161742Z-3f913d32/result.json
+/.ai/backport/2026-04-21T161846Z-edfe7e6f/result.json
+/.ai/backport/2026-04-23T101052Z-3f913d32/result.json
+/.ai/backport/2026-04-23T101157Z-edfe7e6f/result.json
+/.ai/backport/2026-04-23T101158Z-edfe7e6f/result.json
