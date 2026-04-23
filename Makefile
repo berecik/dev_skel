@@ -248,11 +248,11 @@ test-gen-go: ## Test Go generator
 
 test-ai-generators: ## Run skel-gen-ai against every AI-supported skeleton (needs Ollama)
 	@echo "$(GREEN)=== Running AI generators (requires Ollama) ===$(NC)"
-	@_bin/skel-test-ai-generators
+	@PYTHONUNBUFFERED=1 _bin/skel-test-ai-generators
 
 test-ai-generators-dry: ## Dry-run the AI test pipeline (no Ollama calls)
 	@echo "$(GREEN)=== Dry-run AI generators ===$(NC)"
-	@_bin/skel-test-ai-generators --dry-run
+	@PYTHONUNBUFFERED=1 _bin/skel-test-ai-generators --dry-run
 
 test-gen-ai-fastapi: ## AI-generate a FastAPI service in _test_projects/
 	@_bin/skel-test-ai-generators --skel python-fastapi-skel
