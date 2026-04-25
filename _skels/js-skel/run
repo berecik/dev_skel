@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run script for JavaScript/Node project
+# Usage: ./run [mode]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+MODE="${1:-dev}"
+PORT="3000"
+
+case $MODE in
+    dev)
+        echo "Starting development server..."
+        echo "  URL: http://localhost:$PORT"
+        echo ""
+
+        if command -v npx >/dev/null 2>&1; then
+            npx nodemon src/index.js 2>/dev/null || node --watch src/index.js 2>/dev/null || node src/index.js
+        else
+            node src/index.js
+        fi
+        ;;
+
+    prod)
+        echo "Starting production server..."
+        node src/index.js
+        ;;
+
+    docker)
+        echo "Running in Docker..."
+
+        if ! docker images js-app:latest --format "{{.Repository}}" | grep -q "js-app"; then
+            echo "Image not found. Building..."
+            ./build
+        fi
+
+        docker run --rm -p "${PORT}:3000" --name js-app js-app:latest
+        ;;
+
+    -h|--help)
+        echo "Usage: ./run [mode]"
+        echo ""
+        echo "Modes:"
+        echo "  dev     Development server with watch mode (default)"
+        echo "  prod    Production server"
+        echo "  docker  Run in Docker container"
+        exit 0
+        ;;
+
+    *)
+        echo "Unknown mode: $MODE"
+        exit 1
+        ;;
+esac

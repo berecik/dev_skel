@@ -59,7 +59,7 @@ def verify(config: OllamaConfig) -> None:
     except (urllib.error.URLError, TimeoutError) as exc:
         raise OllamaError(
             f"Could not reach Ollama at {config.base_url}: {exc}.\n"
-            "Make sure `ollama serve` is running, or set OLLAMA_BASE_URL."
+            "Make sure `ollama serve` is running, or set OLLAMA_HOST."
         ) from exc
 
     names = [m.get("name", "") for m in payload.get("models", [])]

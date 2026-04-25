@@ -1,0 +1,25 @@
+{
+  "name": "js-skel",
+  "version": "1.0.0",
+  "description": "JavaScript/Node.js skeleton project",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test src",
+    "lint": "eslint src/",
+    "format": "prettier --write src/",
+    "info": "node -e \"const p=require('./package.json');console.log('Project:',p.name,'v'+p.version,'|','Node:',process.version)\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "prettier": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

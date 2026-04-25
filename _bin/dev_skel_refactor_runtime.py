@@ -919,6 +919,17 @@ REFACTOR_FIX_SYSTEM_PROMPT_MIN = (
 )
 
 
+def _resolve_base_url() -> str:
+    """Derive Ollama base URL: OLLAMA_BASE_URL → OLLAMA_HOST → default."""
+    explicit = os.environ.get("OLLAMA_BASE_URL", "").strip()
+    if explicit:
+        return explicit
+    host = os.environ.get("OLLAMA_HOST", "").strip()
+    if host:
+        return f"http://{host}" if "://" not in host else host
+    return "http://localhost:11434"
+
+
 def _ollama_chat(
     system_prompt: str,
     user_prompt: str,
@@ -937,9 +948,7 @@ def _ollama_chat(
     """
 
     model = model or os.environ.get("OLLAMA_MODEL", "qwen3-coder:30b")
-    base_url = (base_url or os.environ.get(
-        "OLLAMA_BASE_URL", "http://localhost:11434",
-    )).rstrip("/")
+    base_url = (base_url or _resolve_base_url()).rstrip("/")
     if base_url.endswith("/v1"):
         base_url = base_url[:-3]
     timeout = timeout if timeout is not None else int(
@@ -1194,9 +1203,7 @@ class MinimalRunner:
         )
         if self.progress is not None:
             model = os.environ.get("OLLAMA_MODEL", "qwen3-coder:30b")
-            base_url = os.environ.get(
-                "OLLAMA_BASE_URL", "http://localhost:11434",
-            )
+            base_url = _resolve_base_url()
             self.progress.write(
                 f"[ai] Asking Ollama ({model} @ {base_url})...\n"
             )
@@ -1608,7 +1615,7 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument("--ollama-model", default=None,
         help="Override OLLAMA_MODEL for this run.")
     parser.add_argument("--ollama-url", default=None,
-        help="Override OLLAMA_BASE_URL.")
+        help="Override Ollama URL (takes precedence over OLLAMA_HOST).")
     parser.add_argument("--ollama-temperature", type=float, default=None,
         help="Sampling temperature.")
     parser.add_argument("--fix-timeout-m", type=int,
@@ -1922,7 +1929,7 @@ def _serialise_ctx(ctx: RefactorContext) -> str:
         "fix_timeout_m": ctx.fix_timeout_m,
         "ollama": {
             "model": os.environ.get("OLLAMA_MODEL", "qwen3-coder:30b"),
-            "base_url": os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"),
+            "base_url": _resolve_base_url(),
         },
         "sidecar": ctx.sidecar,
         "started_at_iso": datetime.now(timezone.utc).isoformat(),

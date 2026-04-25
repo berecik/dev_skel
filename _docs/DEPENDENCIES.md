@@ -48,7 +48,8 @@ ollama pull qwen2.5-coder:7b
 
 | Variable | Default | Notes |
 | -------- | ------- | ----- |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Override for a remote Ollama. |
+| `OLLAMA_HOST` | `localhost:11434` | Primary knob (`host:port`). Set this for a remote Ollama. |
+| `OLLAMA_BASE_URL` | _(derived from `OLLAMA_HOST`)_ | Optional override when you need a custom scheme or path. |
 | `OLLAMA_MODEL` | `qwen3-coder:30b` | Use a smaller model on slower hardware. |
 | `OLLAMA_TIMEOUT` | `1800` (s) | Sized for a 30B-class cold load + multi-minute completions on a long file. |
 | `SKEL_REFACTOR_FIX_TIMEOUT_M` | `15` (min) | Fix-loop budget for `./ai apply`. |

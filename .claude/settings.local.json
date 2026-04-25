@@ -407,7 +407,13 @@
       "Bash(ps -o state,time,command -p 72540 72950)",
       "Bash(make test-kube-layout *)",
       "Bash(ps -p 67839 -o state,time)",
-      "Bash(kill 67839)"
+      "Bash(kill 67839)",
+      "Bash(make test-react-spring-keep *)",
+      "Bash(make *)",
+      "Bash(flutter --version)",
+      "Bash(kill 52369)",
+      "Bash(pstree -p 54258)",
+      "Bash(ps -o pid,ppid,command)"
     ],
     "deny": [],
     "ask": []

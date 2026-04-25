@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run script for local development
+# Usage: ./run-dev
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Build if needed
+if [[ ! -d "node_modules" ]]; then
+    ./build-dev
+fi
+
+echo "Starting development server with watch mode..."
+echo ""
+
+npm run dev

@@ -16,7 +16,7 @@ export interface ItemFormProps {
   createCategory?: (payload: NewCategory) => Promise<Category | null>;
 }
 
-export default function ItemForm({ create, onCreated, categories = [], createCategory: _createCategory }: ItemFormProps): ReactElement {
+export default function ItemForm({ create, onCreated, categories = [] }: ItemFormProps): ReactElement {
   const [name, setName] = useState<string>('');
   const [description, setDescription] = useState<string>('');
   const [categoryId, setCategoryId] = useState<number | null>(null);

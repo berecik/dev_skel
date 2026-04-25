@@ -1,0 +1,826 @@
+#!/usr/bin/env python3
+"""End-to-end AI-generation test: FastAPI + Flutter pizzeria ordering app.
+
+Generates a wrapper containing ``python-fastapi-skel`` (backend) and
+``flutter-skel`` (frontend) via ``skel-gen-ai`` with domain-specific
+prompts that replace the generic items CRUD with a pizzeria ordering
+flow.  Then exercises the full order lifecycle over real HTTP:
+
+    menu -> positions -> order -> address -> submit -> approve/reject -> feedback
+
+This test proves the AI generation pipeline can produce a complete
+domain-specific application from instructions alone.
+
+Usage::
+
+    _bin/skel-test-pizzeria-orders              # full run
+    _bin/skel-test-pizzeria-orders --keep       # leave wrapper on disk
+    _bin/skel-test-pizzeria-orders --port 18790 # custom port
+    _bin/skel-test-pizzeria-orders --no-skip    # fail on missing toolchain
+
+Exit codes::
+
+    0 -- every check passed
+    1 -- at least one check failed
+    2 -- toolchain missing or Ollama unreachable (setup skip)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from dev_skel_lib import DevSkelConfig, detect_root, load_config  # noqa: E402
+
+from _frontend_backend_lib import (  # noqa: E402
+    EXIT_FAIL,
+    EXIT_OK,
+    EXIT_SETUP,
+    have_flutter,
+    http_request,
+    wait_for_server,
+)
+
+# ---------------------------------------------------------------------------
+#  Constants
+# ---------------------------------------------------------------------------
+
+PROJECT_NAME = "test-pizzeria-orders"
+BACKEND_SKEL = "python-fastapi-skel"
+FRONTEND_SKEL = "flutter-skel"
+BACKEND_SERVICE_NAME = "Orders API"
+FRONTEND_SERVICE_NAME = "Pizzeria App"
+ITEM_CLASS = "Order"
+AUTH_TYPE = "jwt"
+DEFAULT_PORT = 18790
+DEFAULT_STARTUP_TIMEOUT = 90
+
+# ---------------------------------------------------------------------------
+#  Domain prompts (from _docs/PIZZERIA-TEST-PLAYBOOK.md section 3B)
+# ---------------------------------------------------------------------------
+
+BACKEND_EXTRA = """\
+Replace generic item CRUD with a pizzeria ordering domain.
+Entities: MenuPosition (name, description, price, category, available),
+Order (user_id, status: draft/pending/approved/rejected, created_at, submitted_at),
+OrderPosition (order_id, menu_position_id, quantity, unit_price),
+OrderAddress (order_id, street, city, zip_code, phone, notes).
+API: GET/POST /api/menu, POST /api/orders (create draft),
+POST /api/orders/{id}/positions (add position), \
+DELETE /api/orders/{id}/positions/{pos_id},
+PUT /api/orders/{id}/address, POST /api/orders/{id}/submit (draft->pending),
+POST /api/orders/{id}/approve (set wait_minutes + feedback),
+POST /api/orders/{id}/reject (set feedback).
+Status flow: draft -> pending -> approved|rejected.
+Approve/reject must accept JSON body with wait_minutes (int, minutes) \
+and feedback (str) fields, and return the full order object including \
+status, wait_minutes, and feedback in the top-level response JSON.
+Keep wrapper-shared auth (register/login -> JWT). Keep DATABASE_URL env-driven.
+Generate pytest tests covering: menu listing, order creation, position add/remove,
+address set/update, submit, approve with wait_minutes, reject with feedback."""
+
+FRONTEND_EXTRA = """\
+Replace item screens with pizzeria ordering UX.
+Screens: MenuList (browse menu positions, filter by category),
+OrderBuilder (select positions, edit quantities, see subtotal),
+AddressForm (add or update delivery address during checkout),
+Confirmation (submit order, show pending status),
+StatusScreen (show approved/rejected + wait_minutes + feedback from restaurant).
+Navigation: menu list -> order builder -> address form -> confirmation -> status.
+Use existing auth/token infrastructure. Read BACKEND_URL from AppConfig.
+Generate tests for: menu rendering, position selection, address form,
+order submission, status display with wait-time feedback."""
+
+INTEGRATION_EXTRA = """\
+Verify the full pizzeria flow end-to-end:
+1) register user, 2) login, 3) list menu positions,
+4) create order draft, 5) add positions from menu,
+6) set delivery address, 7) submit order (status->pending),
+8) approve order (set wait_minutes=25, feedback="Your pizza is being prepared"),
+9) verify order status is approved with correct wait_minutes and feedback.
+Also test reject path: create second order, submit, reject with feedback."""
+
+# ---------------------------------------------------------------------------
+#  Test data
+# ---------------------------------------------------------------------------
+
+TEST_USERNAME = "pizzeria-test-user"
+TEST_PASSWORD = "test-password-12345"
+TEST_EMAIL = "pizza@example.com"
+
+MENU_ITEMS: List[Dict[str, Any]] = [
+    {"name": "Margherita", "price": 12.50, "category": "pizza"},
+    {"name": "Pepperoni", "price": 14.00, "category": "pizza"},
+    {"name": "Cola", "price": 3.50, "category": "drink"},
+]
+
+
+# ---------------------------------------------------------------------------
+#  Helpers
+# ---------------------------------------------------------------------------
+
+
+def ollama_reachable() -> bool:
+    """Return True if Ollama responds to /api/tags."""
+    try:
+        status, _ = http_request(
+            "GET", "http://localhost:11434/api/tags", timeout=5,
+        )
+        return status == 200
+    except Exception:
+        return False
+
+
+def _find_service_slug(wrapper: Path, service_name: str) -> str:
+    """Find the service directory slug inside a wrapper.
+
+    Scans .skel_context.json files; falls back to a slugified name guess.
+    """
+    for child in sorted(wrapper.iterdir()):
+        if not child.is_dir() or child.name.startswith((".", "_")):
+            continue
+        ctx = child / ".skel_context.json"
+        if ctx.is_file():
+            try:
+                data = json.loads(ctx.read_text(encoding="utf-8"))
+                if data.get("service_name") == service_name:
+                    return child.name
+            except (json.JSONDecodeError, OSError):
+                pass
+    # Fallback: slugify
+    slug = service_name.lower().replace(" ", "_")
+    if (wrapper / slug).is_dir():
+        return slug
+    raise RuntimeError(
+        f"Could not find service directory for '{service_name}' in {wrapper}"
+    )
+
+
+# ---------------------------------------------------------------------------
+#  Phase 1: AI generation
+# ---------------------------------------------------------------------------
+
+
+def generate_pizzeria_project(
+    repo_root: Path,
+    wrapper: Path,
+    port: int,
+    with_frontend: bool = True,
+) -> Tuple[str, Optional[str]]:
+    """Call skel-gen-ai to generate the pizzeria wrapper.
+
+    Returns ``(backend_slug, frontend_slug)``.  ``frontend_slug`` is
+    ``None`` when *with_frontend* is ``False``.
+    """
+    if wrapper.exists():
+        print(f"  cleaning previous {wrapper}")
+        shutil.rmtree(wrapper)
+    wrapper.parent.mkdir(parents=True, exist_ok=True)
+
+    backend_url = f"http://127.0.0.1:{port}"
+
+    # skel-gen-ai requires proj_name to be a leaf directory name (no /).
+    # We cwd into wrapper.parent so only the leaf name is passed.
+    cmd = [
+        sys.executable,
+        str(repo_root / "_bin" / "skel-gen-ai"),
+        wrapper.name,
+        "--backend", BACKEND_SKEL,
+        "--backend-service-name", BACKEND_SERVICE_NAME,
+        "--item-name", ITEM_CLASS,
+        "--auth-type", AUTH_TYPE,
+        "--backend-extra", BACKEND_EXTRA,
+        "--frontend-extra", FRONTEND_EXTRA,
+        "--integration-extra", INTEGRATION_EXTRA,
+        "--no-input",
+    ]
+    if with_frontend:
+        cmd.extend(["--frontend", FRONTEND_SKEL])
+        cmd.extend(["--frontend-service-name", FRONTEND_SERVICE_NAME])
+    else:
+        cmd.append("--no-frontend")
+
+    env = os.environ.copy()
+    env["SKEL_BACKEND_URL"] = backend_url
+    env["PYTHONUNBUFFERED"] = "1"
+
+    print(f"  running skel-gen-ai (this may take 10-30 minutes)...")
+    print(f"  SKEL_BACKEND_URL={backend_url}")
+    started = time.monotonic()
+    result = subprocess.run(
+        cmd,
+        env=env,
+        cwd=wrapper.parent,
+        capture_output=True,
+        text=True,
+        timeout=3600,  # 60-minute hard cap
+    )
+    elapsed = time.monotonic() - started
+
+    if result.returncode != 0:
+        print(
+            f"  \u2717 skel-gen-ai failed "
+            f"(exit {result.returncode}) after {elapsed:.0f}s"
+        )
+        tail = (result.stdout + "\n" + result.stderr).strip()[-3000:]
+        print(tail)
+        raise RuntimeError("skel-gen-ai failed")
+
+    print(f"  \u2713 skel-gen-ai completed in {elapsed:.0f}s")
+
+    backend_slug = _find_service_slug(wrapper, BACKEND_SERVICE_NAME)
+    print(f"  backend slug:  {backend_slug}")
+
+    frontend_slug: Optional[str] = None
+    if with_frontend:
+        frontend_slug = _find_service_slug(wrapper, FRONTEND_SERVICE_NAME)
+        print(f"  frontend slug: {frontend_slug}")
+    return backend_slug, frontend_slug
+
+
+# ---------------------------------------------------------------------------
+#  Phase 3: 14-step HTTP exercise
+# ---------------------------------------------------------------------------
+
+
+def exercise_pizzeria_api(backend_url: str) -> None:
+    """Run the 14-step pizzeria order lifecycle over real HTTP.
+
+    Raises :class:`AssertionError` on any sub-step failure.
+    See ``_docs/PIZZERIA-TEST-PLAYBOOK.md`` section 4.
+    """
+    passed = 0
+    total = 14
+
+    def step(n: int, label: str) -> None:
+        nonlocal passed
+        passed += 1
+        print(f"  \u2713 step {n}/{total}: {label}")
+
+    print()
+    print("Exercising the pizzeria order lifecycle API...")
+
+    # -- Step 1: Register --
+    status, body = http_request(
+        "POST",
+        f"{backend_url}/api/auth/register",
+        body={
+            "username": TEST_USERNAME,
+            "email": TEST_EMAIL,
+            "password": TEST_PASSWORD,
+            "password_confirm": TEST_PASSWORD,
+        },
+    )
+    assert status in (200, 201), f"register failed: {status} {body}"
+    step(1, "register")
+
+    # -- Step 2: Login --
+    status, body = http_request(
+        "POST",
+        f"{backend_url}/api/auth/login",
+        body={"username": TEST_USERNAME, "password": TEST_PASSWORD},
+    )
+    assert status == 200, f"login failed: {status} {body}"
+    token: Optional[str] = (
+        (body.get("access") or body.get("access_token") or body.get("token"))
+        if isinstance(body, dict)
+        else None
+    )
+    assert token, f"login response missing access token: {body}"
+    auth = {"Authorization": f"Bearer {token}"}
+    step(2, "login")
+
+    # -- Step 3: Seed menu positions --
+    created_menu: List[Dict[str, Any]] = []
+    for item in MENU_ITEMS:
+        status, menu_body = http_request(
+            "POST", f"{backend_url}/api/menu", body=item, headers=auth,
+        )
+        assert status in (200, 201), (
+            f"create menu position '{item['name']}' failed: {status} {menu_body}"
+        )
+        created_menu.append(menu_body)
+    step(3, f"seed {len(MENU_ITEMS)} menu positions")
+
+    # -- Step 4: List menu --
+    status, menu_resp = http_request(
+        "GET", f"{backend_url}/api/menu", headers=auth,
+    )
+    assert status == 200, f"list menu failed: {status} {menu_resp}"
+    menu_list: list = menu_resp if isinstance(menu_resp, list) else (
+        (menu_resp.get("results") or menu_resp.get("items") or [])
+        if isinstance(menu_resp, dict)
+        else []
+    )
+    assert len(menu_list) >= 3, (
+        f"expected >=3 menu positions, got {len(menu_list)}"
+    )
+    step(4, f"list menu ({len(menu_list)} positions)")
+
+    # -- Step 5: Create order draft --
+    status, order = http_request(
+        "POST", f"{backend_url}/api/orders", body={}, headers=auth,
+    )
+    assert status in (200, 201), f"create order draft failed: {status} {order}"
+    order_id = order.get("id") if isinstance(order, dict) else None
+    assert order_id is not None, f"order missing id: {order}"
+    assert order.get("status") == "draft", (
+        f"expected draft status, got: {order.get('status')}"
+    )
+    step(5, f"create order draft (id={order_id})")
+
+    # -- Step 6: Add positions to order --
+    def find_menu_id(name: str) -> Any:
+        for m in menu_list:
+            if isinstance(m, dict) and m.get("name") == name:
+                return m["id"]
+        raise AssertionError(
+            f"menu position '{name}' not found in: "
+            f"{[m.get('name') for m in menu_list if isinstance(m, dict)]}"
+        )
+
+    margherita_id = find_menu_id("Margherita")
+    cola_id = find_menu_id("Cola")
+
+    status, pos_body = http_request(
+        "POST",
+        f"{backend_url}/api/orders/{order_id}/positions",
+        body={"menu_position_id": margherita_id, "quantity": 2},
+        headers=auth,
+    )
+    assert status in (200, 201), f"add Margherita failed: {status} {pos_body}"
+
+    status, pos_body = http_request(
+        "POST",
+        f"{backend_url}/api/orders/{order_id}/positions",
+        body={"menu_position_id": cola_id, "quantity": 1},
+        headers=auth,
+    )
+    assert status in (200, 201), f"add Cola failed: {status} {pos_body}"
+    step(6, "add 2 positions to order")
+
+    # -- Step 7: Set delivery address --
+    status, addr_body = http_request(
+        "PUT",
+        f"{backend_url}/api/orders/{order_id}/address",
+        body={
+            "street": "ul. Marszalkowska 1",
+            "city": "Warszawa",
+            "zip_code": "00-001",
+            "phone": "+48 123 456 789",
+            "notes": "Ring twice",
+        },
+        headers=auth,
+    )
+    assert status in (200, 201), f"set address failed: {status} {addr_body}"
+    step(7, "set delivery address")
+
+    # -- Step 8: Verify order has positions + address --
+    status, full_order = http_request(
+        "GET", f"{backend_url}/api/orders/{order_id}", headers=auth,
+    )
+    assert status == 200, f"get order failed: {status} {full_order}"
+    positions = (
+        full_order.get("positions")
+        or full_order.get("order_positions")
+        or []
+    )
+    assert len(positions) == 2, (
+        f"expected 2 positions, got {len(positions)}: {positions}"
+    )
+    address = (
+        full_order.get("address") or full_order.get("order_address")
+    )
+    assert address is not None, f"order missing address: {full_order}"
+    addr_city = address.get("city") if isinstance(address, dict) else None
+    assert addr_city == "Warszawa", f"address city mismatch: {address}"
+    step(8, "verify order has 2 positions + address")
+
+    # -- Step 9: Update address --
+    status, _ = http_request(
+        "PUT",
+        f"{backend_url}/api/orders/{order_id}/address",
+        body={
+            "street": "ul. Nowy Swiat 15",
+            "city": "Warszawa",
+            "zip_code": "00-029",
+            "phone": "+48 987 654 321",
+        },
+        headers=auth,
+    )
+    assert status in (200, 201), f"update address failed: {status}"
+    step(9, "update delivery address")
+
+    # -- Step 10: Submit order --
+    status, submitted = http_request(
+        "POST",
+        f"{backend_url}/api/orders/{order_id}/submit",
+        body={},
+        headers=auth,
+    )
+    assert status == 200, f"submit order failed: {status} {submitted}"
+    assert submitted.get("status") == "pending", (
+        f"expected pending after submit: {submitted}"
+    )
+    step(10, "submit order (draft->pending)")
+
+    # -- Step 11: Approve order with wait time + feedback --
+    status, approved = http_request(
+        "POST",
+        f"{backend_url}/api/orders/{order_id}/approve",
+        body={
+            "wait_minutes": 25,
+            "feedback": "Your pizza is being prepared!",
+        },
+        headers=auth,
+    )
+    assert status == 200, f"approve order failed: {status} {approved}"
+    assert approved.get("status") == "approved", (
+        f"expected approved status: {approved}"
+    )
+    assert approved.get("wait_minutes") == 25, (
+        f"expected wait_minutes=25: {approved}"
+    )
+    feedback_text = approved.get("feedback", "")
+    assert "pizza" in feedback_text.lower(), (
+        f"expected 'pizza' in feedback: {feedback_text!r}"
+    )
+    step(11, "approve order (wait_minutes=25, feedback OK)")
+
+    # -- Step 12: Create second order -> reject path --
+    status, order2 = http_request(
+        "POST", f"{backend_url}/api/orders", body={}, headers=auth,
+    )
+    assert status in (200, 201), f"create second order failed: {status}"
+    order2_id = order2["id"]
+
+    # add a position, set address, submit
+    http_request(
+        "POST",
+        f"{backend_url}/api/orders/{order2_id}/positions",
+        body={"menu_position_id": margherita_id, "quantity": 1},
+        headers=auth,
+    )
+    http_request(
+        "PUT",
+        f"{backend_url}/api/orders/{order2_id}/address",
+        body={
+            "street": "ul. Krakowskie Przedmiescie 5",
+            "city": "Warszawa",
+            "zip_code": "00-068",
+        },
+        headers=auth,
+    )
+    http_request(
+        "POST",
+        f"{backend_url}/api/orders/{order2_id}/submit",
+        body={},
+        headers=auth,
+    )
+
+    status, rejected = http_request(
+        "POST",
+        f"{backend_url}/api/orders/{order2_id}/reject",
+        body={"feedback": "Sorry, we are closed for today."},
+        headers=auth,
+    )
+    assert status == 200, f"reject order failed: {status} {rejected}"
+    assert rejected.get("status") == "rejected", (
+        f"expected rejected status: {rejected}"
+    )
+    reject_fb = rejected.get("feedback", "")
+    assert "closed" in reject_fb.lower(), (
+        f"expected 'closed' in reject feedback: {reject_fb!r}"
+    )
+    step(12, "reject second order (feedback OK)")
+
+    # -- Step 13: Reject anonymous access --
+    status, _ = http_request("GET", f"{backend_url}/api/orders")
+    assert status in (401, 403), (
+        f"anonymous GET /api/orders expected 401/403, got {status}"
+    )
+    step(13, "anonymous access rejected")
+
+    # -- Step 14: Reject invalid token --
+    status, _ = http_request(
+        "GET",
+        f"{backend_url}/api/orders",
+        headers={"Authorization": "Bearer invalid-token-xyz"},
+    )
+    assert status in (401, 403), (
+        f"invalid token expected 401/403, got {status}"
+    )
+    step(14, "invalid token rejected")
+
+    print()
+    print(f"  === {passed}/{total} pizzeria API checks passed ===")
+
+
+# ---------------------------------------------------------------------------
+#  Argument parser
+# ---------------------------------------------------------------------------
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "AI-generation integration test: generates a FastAPI + Flutter "
+            "pizzeria ordering app via skel-gen-ai with domain-specific "
+            "prompts, then exercises the full order lifecycle over real HTTP."
+        ),
+    )
+    parser.add_argument(
+        "--keep",
+        action="store_true",
+        help="Leave the generated wrapper on disk after the test finishes.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=DEFAULT_PORT,
+        help=f"TCP port for the FastAPI backend (default: {DEFAULT_PORT}).",
+    )
+    parser.add_argument(
+        "--server-startup-timeout",
+        type=int,
+        default=DEFAULT_STARTUP_TIMEOUT,
+        help=(
+            "Seconds to wait for the backend to become reachable "
+            f"(default: {DEFAULT_STARTUP_TIMEOUT})."
+        ),
+    )
+    parser.add_argument(
+        "--no-skip",
+        action="store_true",
+        help="Treat missing toolchain as hard failure instead of skip.",
+    )
+    parser.add_argument(
+        "--skip-flutter-build",
+        action="store_true",
+        help=(
+            "Skip Flutter build + inspect (useful when iterating on "
+            "backend only)."
+        ),
+    )
+    return parser.parse_args()
+
+
+# ---------------------------------------------------------------------------
+#  Main orchestrator
+# ---------------------------------------------------------------------------
+
+
+def main() -> int:
+    args = parse_args()
+
+    cfg: DevSkelConfig = load_config()
+    repo_root = detect_root(SCRIPT_DIR, cfg.skel_dir)
+    wrapper = repo_root / "_test_projects" / PROJECT_NAME
+    port = args.port
+    backend_url = f"http://127.0.0.1:{port}"
+
+    print()
+    print("=== Pizzeria AI Generation + Integration Test ===")
+    print(f"  backend:  {BACKEND_SKEL}")
+    print(f"  frontend: {FRONTEND_SKEL}")
+    print(f"  wrapper:  {wrapper}")
+    print(f"  port:     {port}")
+    print()
+
+    # Phase 0: Toolchain probes
+    if not ollama_reachable():
+        msg = "Ollama is not reachable at localhost:11434"
+        if args.no_skip:
+            print(f"  \u2717 {msg}")
+            return EXIT_FAIL
+        print(f"  \u00b7 skipping ({msg})")
+        return EXIT_SETUP
+
+    has_flutter_sdk = have_flutter()
+    if not has_flutter_sdk and not args.skip_flutter_build:
+        if args.no_skip:
+            print("  \u2717 Flutter SDK not installed")
+            return EXIT_FAIL
+        print("  \u00b7 Flutter not found -- will skip Flutter build/tests")
+
+    final_exit = EXIT_OK
+    server_proc: Optional[subprocess.Popen] = None
+    log_fp = None
+    server_log: Optional[Path] = None
+
+    try:
+        # Phase 1: Generate the project via skel-gen-ai
+        # Only include the Flutter frontend if the SDK is installed and
+        # the user hasn't requested a backend-only run.
+        include_frontend = has_flutter_sdk and not args.skip_flutter_build
+        print()
+        print(f"Phase 1: AI generation (frontend={'yes' if include_frontend else 'no'})...")
+        backend_slug, frontend_slug = generate_pizzeria_project(
+            repo_root, wrapper, port,
+            with_frontend=include_frontend,
+        )
+
+        backend_dir = wrapper / backend_slug
+        frontend_dir = (wrapper / frontend_slug) if frontend_slug else None
+
+        # Phase 2: Run generated service tests
+        print()
+        print("Phase 2: Running generated service tests...")
+
+        # 2a: Backend tests
+        test_script = backend_dir / "test"
+        venv_pytest = backend_dir / ".venv" / "bin" / "pytest"
+        if test_script.is_file():
+            print(f"  running ./test in {backend_slug}/...")
+            result = subprocess.run(
+                ["./test"],
+                cwd=backend_dir,
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+            if result.returncode != 0:
+                print(
+                    f"  \u2717 backend tests failed "
+                    f"(exit {result.returncode})"
+                )
+                tail = (result.stdout + "\n" + result.stderr).strip()[-2000:]
+                print(tail)
+                print("  (continuing to HTTP exercise)")
+            else:
+                print("  \u2713 backend tests passed")
+        elif venv_pytest.is_file():
+            print(f"  running pytest in {backend_slug}/...")
+            result = subprocess.run(
+                [str(venv_pytest), "-x", "-q"],
+                cwd=backend_dir,
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+            if result.returncode != 0:
+                print(
+                    f"  \u2717 backend pytest failed "
+                    f"(exit {result.returncode})"
+                )
+                tail = (result.stdout + "\n" + result.stderr).strip()[-2000:]
+                print(tail)
+                print("  (continuing to HTTP exercise)")
+            else:
+                print("  \u2713 backend pytest passed")
+        else:
+            print(f"  \u00b7 no test runner found in {backend_slug}/, skipping")
+
+        # 2b: Flutter tests (optional)
+        if frontend_dir is not None and has_flutter_sdk:
+            flutter_test_dir = frontend_dir / "test"
+            if flutter_test_dir.is_dir():
+                print(f"  running flutter test in {frontend_slug}/...")
+                result = subprocess.run(
+                    ["flutter", "test"],
+                    cwd=frontend_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=600,
+                )
+                if result.returncode != 0:
+                    print(
+                        f"  \u2717 flutter tests failed "
+                        f"(exit {result.returncode})"
+                    )
+                    tail = (
+                        result.stdout + "\n" + result.stderr
+                    ).strip()[-2000:]
+                    print(tail)
+                    print("  (continuing to HTTP exercise)")
+                else:
+                    print("  \u2713 flutter tests passed")
+
+        # Phase 3: Start backend and exercise the pizzeria API
+        print()
+        print("Phase 3: HTTP integration exercise...")
+        print(f"  starting {BACKEND_SKEL} on 127.0.0.1:{port}...")
+
+        server_log = backend_dir / "test-server.log"
+        log_fp = open(server_log, "wb")  # noqa: SIM115
+
+        server_env = os.environ.copy()
+        server_env["BACKEND_URL"] = backend_url
+
+        server_proc = subprocess.Popen(
+            [
+                ".venv/bin/python",
+                "-m",
+                "uvicorn",
+                "app:get_app",
+                "--factory",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                "--log-level",
+                "warning",
+            ],
+            cwd=backend_dir,
+            stdout=log_fp,
+            stderr=subprocess.STDOUT,
+            env=server_env,
+        )
+
+        # Wait for the server.  The pizzeria app might not have /api/items,
+        # so probe several paths until one responds.
+        ready = False
+        for probe_path in ["/api/menu", "/api/health", "/docs"]:
+            if wait_for_server(
+                f"{backend_url}{probe_path}",
+                timeout_s=args.server_startup_timeout,
+            ):
+                ready = True
+                break
+        if not ready:
+            print("  \u2717 server did not become ready in time")
+            print()
+            print("  ----- server log (last 4000 chars) -----")
+            try:
+                print(server_log.read_text(encoding="utf-8")[-4000:])
+            except OSError:
+                pass
+            return EXIT_FAIL
+        print("  \u2713 server is up")
+
+        # Run the 14-step exercise
+        exercise_pizzeria_api(backend_url)
+
+        print()
+        print("=== ALL CHECKS PASSED ===")
+
+    except AssertionError as exc:
+        print()
+        print(f"  \u2717 assertion failed: {exc}")
+        if server_log and server_log.is_file():
+            print()
+            print("  ----- server log (last 4000 chars) -----")
+            try:
+                print(server_log.read_text(encoding="utf-8")[-4000:])
+            except OSError:
+                pass
+        final_exit = EXIT_FAIL
+    except subprocess.TimeoutExpired as exc:
+        print()
+        print(f"  \u2717 timeout: {exc}")
+        final_exit = EXIT_FAIL
+    except RuntimeError as exc:
+        print()
+        print(f"  \u2717 {exc}")
+        final_exit = EXIT_FAIL
+    except Exception as exc:  # noqa: BLE001
+        print()
+        print(f"  \u2717 unexpected error: {exc!r}")
+        final_exit = EXIT_FAIL
+    finally:
+        # Stop the server
+        if server_proc is not None and server_proc.poll() is None:
+            print()
+            print(f"Stopping server (pid {server_proc.pid})...")
+            try:
+                server_proc.terminate()
+                try:
+                    server_proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    print("  (SIGTERM timed out, sending SIGKILL)")
+                    server_proc.kill()
+                    try:
+                        server_proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        pass
+            except OSError:
+                pass
+
+        if log_fp is not None:
+            try:
+                log_fp.close()
+            except OSError:
+                pass
+
+        if args.keep:
+            print()
+            print(f"  --keep: wrapper left at {wrapper}")
+        elif wrapper.exists():
+            print(f"  cleaning {wrapper}")
+            shutil.rmtree(wrapper, ignore_errors=True)
+
+    return final_exit
+
+
+if __name__ == "__main__":
+    sys.exit(main())

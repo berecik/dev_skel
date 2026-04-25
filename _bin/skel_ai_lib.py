@@ -96,7 +96,11 @@ def _heartbeat_env(label: str):
 # --------------------------------------------------------------------------- #
 
 
-DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+from skel_rag.config import (  # noqa: E402 — stdlib-only, safe at top level
+    DEFAULT_OLLAMA_BASE_URL,
+    _resolve_base_url,
+)
+
 DEFAULT_OLLAMA_MODEL = "qwen3-coder:30b"
 # seconds — local Ollama can be slow on big models. The default is sized
 # for ~30B-class instruction models like qwen3-coder:30b (a single completion
@@ -119,12 +123,13 @@ class OllamaConfig:
     def from_env(cls) -> "OllamaConfig":
         """Build a config from ``OLLAMA_*`` environment variables.
 
-        ``OLLAMA_BASE_URL`` may be either ``http://host:port`` or
-        ``http://host:port/v1`` — the trailing ``/v1`` is normalised away
-        because the rest of this module appends the route segments itself.
+        Resolution: ``OLLAMA_BASE_URL`` (explicit) → ``OLLAMA_HOST``
+        (``host:port``) → default ``localhost:11434``. A trailing
+        ``/v1`` is normalised away because the rest of this module
+        appends the route segments itself.
         """
 
-        base = os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
+        base = _resolve_base_url()
         if base.endswith("/v1"):
             base = base[: -len("/v1")]
         if base.endswith("/"):

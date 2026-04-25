@@ -92,7 +92,15 @@ service.
 * [**`../UPDATE_SKEL_REFACTOR.md`**](../UPDATE_SKEL_REFACTOR.md) —
   original design doc for `./ai upgrade`.
 
-### 4. Operator reference
+### 4. Complex test playbooks
+
+* [**PIZZERIA-TEST-PLAYBOOK.md**](PIZZERIA-TEST-PLAYBOOK.md) — end-to-end
+  playbook for generating and testing a complete pizzeria ordering app
+  (FastAPI + Flutter) from AI prompts alone. Domain model, 14-step HTTP
+  integration flow, prompt engineering, scripted generation, 3-tier test
+  matrix, fix-loop decision tree, and definition of done.
+
+### 5. Operator reference
 
 * [**MAKEFILE.md**](MAKEFILE.md) — every Make target grouped by
   purpose (gen, test, AI smokes, cross-stack HTTP tests, sync).

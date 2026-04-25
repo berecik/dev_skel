@@ -52,57 +52,43 @@ export default function AppStateProvider({
 }: AppStateProviderProps): ReactElement {
   const { token, isAuthenticated, clearToken } = useAuthToken();
 
-  const [loading, setLoading] = useState<boolean>(false);
+  // Start as loading — the effect below fires immediately on mount.
+  const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
   // Load every state slice from the backend whenever the token
-  // changes (login or refresh). On logout, reset the store.
+  // changes (login or refresh). On unmount (logout), reset the
+  // external store so the next user starts clean.
   useEffect(() => {
-    if (!isAuthenticated) {
-      reset();
-      setLoading(false);
-      setError(null);
-      return;
-    }
-
     const controller = new AbortController();
     let cancelled = false;
 
-    async function load(): Promise<void> {
-      setLoading(true);
-      setError(null);
-      try {
-        const snapshot = await loadAllState({
-          token,
-          signal: controller.signal,
-        });
-        if (!cancelled) {
-          hydrate(snapshot);
-        }
-      } catch (err) {
+    loadAllState({ token, signal: controller.signal })
+      .then((snapshot) => {
+        if (!cancelled) hydrate(snapshot);
+      })
+      .catch((err) => {
         if (cancelled || (err instanceof DOMException && err.name === 'AbortError')) {
           return;
         }
         if (err instanceof AuthError) {
-          // Stale token — clear it so the LoginForm shows up again.
           clearToken();
           return;
         }
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
         if (!cancelled) {
-          setLoading(false);
+          setError(err instanceof Error ? err.message : String(err));
         }
-      }
-    }
-
-    void load();
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
 
     return () => {
       cancelled = true;
       controller.abort();
+      reset();
     };
-  }, [token, isAuthenticated, clearToken]);
+  }, [token, clearToken]);
 
   const reload = async (): Promise<void> => {
     if (!isAuthenticated) return;

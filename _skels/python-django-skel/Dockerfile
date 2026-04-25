@@ -17,18 +17,16 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
-# Copy project metadata for dependency resolution
+# Copy project metadata and source (needed for editable install)
 COPY pyproject.toml .
-
-# Install dependencies with uv
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system --target=/app/deps -e ".[dev]"
-
-# Copy application code
 COPY app/ app/
 COPY myproject/ myproject/
 COPY tests/ tests/
 COPY manage.py conftest.py ./
+
+# Install dependencies with uv
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system --target=/app/deps -e ".[dev]"
 
 # Production stage
 ARG PYTHON_VERSION=3.14
@@ -100,8 +98,12 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-# Copy project metadata
+# Copy project metadata and source (needed for editable install)
 COPY pyproject.toml .
+COPY app/ app/
+COPY myproject/ myproject/
+COPY tests/ tests/
+COPY manage.py conftest.py ./
 
 # Install Python dependencies with uv (including dev extras)
 RUN --mount=type=cache,target=/root/.cache/uv \

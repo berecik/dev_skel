@@ -160,7 +160,8 @@ Skip individual phases with `--no-integrate`, `--no-test-fix`,
 
 | Env | Default | Notes |
 | --- | ------- | ----- |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | |
+| `OLLAMA_HOST` | `localhost:11434` | Primary knob (`host:port`). The runtime derives the full URL. |
+| `OLLAMA_BASE_URL` | _(derived from `OLLAMA_HOST`)_ | Optional override when you need a custom scheme or path. Takes precedence over `OLLAMA_HOST`. |
 | `OLLAMA_MODEL` | `qwen3-coder:30b` | drop to `qwen2.5-coder:7b` on slow hardware |
 | `OLLAMA_TIMEOUT` | `1800` (s) | sized for a 30 B-class model + cold load |
 

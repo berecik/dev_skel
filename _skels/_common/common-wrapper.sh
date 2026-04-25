@@ -138,6 +138,14 @@ LOG_FORMAT=console
 # reads these vars.
 # OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 # OTEL_SERVICE_NAME=\${SERVICE_NAME:-devskel}
+
+# ----- AI / Ollama --------------------------------------------------------- #
+# Used by ./ai, ./backport, and skel-gen-ai for LLM-driven code generation.
+# OLLAMA_HOST is the primary knob (host:port). The AI runtime derives the
+# full URL automatically. Set OLLAMA_BASE_URL only if you need a custom
+# scheme or path (it takes precedence over OLLAMA_HOST when set).
+# OLLAMA_HOST=localhost:11434
+# OLLAMA_MODEL=qwen3-coder:30b
 EOF
 
 if [[ ! -f "$MAIN_DIR/.env" ]]; then

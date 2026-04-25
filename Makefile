@@ -34,6 +34,7 @@
         test-kube-layout test-kube-diagnose test-kube-manifest test-kube-phase \
         test-flutter-django-bolt test-flutter-django-bolt-keep \
         test-flutter-fastapi test-flutter-fastapi-keep test-flutter-cross-stack \
+        test-pizzeria-orders test-pizzeria-orders-keep \
         test-cross-stack
 
 # Skeleton directories
@@ -591,6 +592,13 @@ test-cross-stack: ## Run every cross-stack integration test in sequence
 	@$(MAKE) test-react-cross-stack
 	@$(MAKE) test-flutter-cross-stack
 	@echo "$(GREEN)All cross-stack tests passed.$(NC)"
+
+test-pizzeria-orders: ## AI-gen pizzeria integration test (FastAPI + Flutter, requires Ollama)
+	@echo "$(GREEN)=== Pizzeria AI Generation + Integration test ===$(NC)"
+	@_bin/skel-test-pizzeria-orders
+
+test-pizzeria-orders-keep: ## Same, but leave _test_projects/test-pizzeria-orders on disk
+	@_bin/skel-test-pizzeria-orders --keep
 
 #
 # === SKELETON TEST TARGETS ===

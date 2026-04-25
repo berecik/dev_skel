@@ -51,6 +51,7 @@ describe('ItemForm', () => {
       expect(mockCreate).toHaveBeenCalledWith({
         name: 'New thing',
         description: 'Details',
+        category_id: null,
       });
     });
 

@@ -330,7 +330,7 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument("--ollama-model", help="Override OLLAMA_MODEL for this run")
-    parser.add_argument("--ollama-url", help="Override OLLAMA_BASE_URL for this run")
+    parser.add_argument("--ollama-url", help="Override Ollama URL (takes precedence over OLLAMA_HOST)")
     parser.add_argument(
         "--ollama-temperature",
         type=float,

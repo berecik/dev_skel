@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Test script for running project tests
+# Usage: ./test [options]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --coverage)
+            npm test -- --coverage
+            exit 0
+            ;;
+        -h|--help)
+            echo "Usage: ./test [options]"
+            echo "Options:"
+            echo "  --coverage   Run with coverage"
+            exit 0
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+npm test

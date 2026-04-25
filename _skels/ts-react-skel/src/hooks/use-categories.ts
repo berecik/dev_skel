@@ -30,7 +30,7 @@ export interface UseCategoriesResult {
 export function useCategories(): UseCategoriesResult {
   const { token } = useAuthToken();
   const tokenRef = useRef(token);
-  tokenRef.current = token;
+  useEffect(() => { tokenRef.current = token; }, [token]);
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(false);

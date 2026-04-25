@@ -26,7 +26,27 @@ from pathlib import Path
 # --------------------------------------------------------------------------- #
 
 
-DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+DEFAULT_OLLAMA_HOST = "localhost:11434"
+DEFAULT_OLLAMA_BASE_URL = f"http://{DEFAULT_OLLAMA_HOST}"
+
+
+def _resolve_base_url() -> str:
+    """Derive the Ollama base URL from environment variables.
+
+    Resolution order:
+    1. ``OLLAMA_BASE_URL`` if set explicitly (full URL).
+    2. ``OLLAMA_HOST`` if set (``host:port`` → ``http://host:port``).
+    3. Default ``http://localhost:11434``.
+    """
+    explicit = os.environ.get("OLLAMA_BASE_URL", "").strip()
+    if explicit:
+        return explicit
+    host = os.environ.get("OLLAMA_HOST", "").strip()
+    if host:
+        return f"http://{host}" if "://" not in host else host
+    return DEFAULT_OLLAMA_BASE_URL
+
+
 DEFAULT_OLLAMA_MODEL = "gemma4:31b"
 # Seconds. Local Ollama can be slow on big models. The default is sized for
 # ~30B-class instruction models like ``gemma4:31b`` — a single completion
@@ -50,13 +70,13 @@ class OllamaConfig:
     def from_env(cls) -> "OllamaConfig":
         """Build a config from ``OLLAMA_*`` environment variables.
 
-        ``OLLAMA_BASE_URL`` may be either ``http://host:port`` or
-        ``http://host:port/v1`` — the trailing ``/v1`` is normalised away
-        because the rest of the package appends the route segments
-        itself (LangChain's ``ChatOllama`` does the same internally).
+        Resolution: ``OLLAMA_BASE_URL`` (explicit) → ``OLLAMA_HOST``
+        (``host:port``) → default ``localhost:11434``. A trailing
+        ``/v1`` is normalised away because the rest of the package
+        appends the route segments itself.
         """
 
-        base = os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
+        base = _resolve_base_url()
         if base.endswith("/v1"):
             base = base[: -len("/v1")]
         if base.endswith("/"):

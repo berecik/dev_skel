@@ -48,6 +48,7 @@ from skel_ai_lib import (  # noqa: E402
     discover_siblings,
 )
 from dev_skel_lib import generate_project, render_agents_template  # noqa: E402
+from skel_rag.config import _resolve_base_url  # noqa: E402
 
 SKEL_NAME = "python-django-bolt-skel"
 PROJECT_NAME = "test-phase4"
@@ -56,8 +57,8 @@ ITEM_NAME = "task"
 AUTH_TYPE = "jwt"
 TEST_DIR = _REPO / "_test_projects" / PROJECT_NAME
 
-OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:32b")
+OLLAMA_BASE_URL = _resolve_base_url()
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3-coder:30b")
 
 
 def _ollama_reachable() -> bool:

@@ -393,6 +393,27 @@ When the user asks Claude to "use Ollama" / "AI-generate a service" / etc:
    holds. Skips gracefully when Node/npm is missing. Takes ~3 minutes
    on a cold cache (npm install + pip install dominate the runtime).
 
+## 6.2 Complex AI Generation Test: Pizzeria Orders (FastAPI + Flutter)
+
+Full playbook for generating and testing a complete pizzeria ordering
+application (FastAPI backend + Flutter frontend) from AI prompts alone.
+
+**Read:** [`_docs/PIZZERIA-TEST-PLAYBOOK.md`](_docs/PIZZERIA-TEST-PLAYBOOK.md)
+
+Covers: domain model (MenuPosition, Order, OrderPosition, OrderAddress),
+14-step HTTP integration flow, AI prompt engineering, scripted
+non-interactive generation, 3-tier test matrix, fix-loop decision tree,
+and a 9-point definition of done. The test proves `dev_skel` can
+generate a domain-specific app automatically with instructions only.
+
+Quick commands:
+
+```bash
+make test-pizzeria-orders          # full run (requires Ollama + Flutter)
+make test-pizzeria-orders-keep     # same, keep _test_projects/ on disk
+_bin/skel-test-pizzeria-orders     # direct script invocation
+```
+
 ---
 
 ## 6.3 Backporting Service Edits Into the Skeleton (`./backport`)

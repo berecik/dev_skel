@@ -974,14 +974,16 @@ Every `RagConfig` field has a corresponding env var:
 | `SKEL_RAG_CHUNK_MAX_CHARS` | `2000` | Per-chunk truncation. |
 | `SKEL_RAG_FALLBACK_CHUNK_SIZE` / `SKEL_RAG_FALLBACK_CHUNK_OVERLAP` | `1500` / `150` | RecursiveCharacterTextSplitter parameters for unknown file types. |
 
-The Ollama side keeps its existing env vars (`OLLAMA_MODEL`,
-`OLLAMA_BASE_URL`, `OLLAMA_TIMEOUT`, `OLLAMA_TEMPERATURE`).
+The Ollama side uses `OLLAMA_HOST` as the primary knob (`host:port`);
+`OLLAMA_BASE_URL` is an optional override that takes precedence when set.
+Other env vars: `OLLAMA_MODEL`, `OLLAMA_TIMEOUT`, `OLLAMA_TEMPERATURE`.
 
 #### Legacy entry points (preserved by the shim)
 
-- `OllamaConfig.from_env()` — read `OLLAMA_MODEL`, `OLLAMA_BASE_URL`,
-  `OLLAMA_TIMEOUT`, `OLLAMA_TEMPERATURE`. The `/v1` suffix on
-  `OLLAMA_BASE_URL` is normalised away because the rest of the package
+- `OllamaConfig.from_env()` — reads `OLLAMA_HOST` (primary),
+  `OLLAMA_BASE_URL` (optional override), `OLLAMA_MODEL`,
+  `OLLAMA_TIMEOUT`, `OLLAMA_TEMPERATURE`. The `/v1` suffix on the
+  resolved base URL is normalised away because the rest of the package
   appends the route segment itself.
 - `OllamaClient.verify()` — proxies to `skel_rag.llm.verify`, which
   pings `/api/tags` and confirms the configured model is loaded

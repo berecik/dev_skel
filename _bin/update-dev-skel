@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+"""Update DEV_DIR from SKEL_DIR using Python implementation."""
+
+from dev_skel_lib import load_config, update_dev_dir
+
+
+def main() -> None:
+    cfg = load_config()
+    print(f"Updating {cfg.dev_dir} from dev_skel...")
+    update_dev_dir(cfg, require_existing=True)
+    print("Update complete!")
+    print(f"{cfg.dev_dir} has been synchronized with dev_skel")
+
+
+if __name__ == "__main__":
+    main()

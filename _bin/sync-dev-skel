@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""Sync a directory to a remote host using rsync."""
+
+import argparse
+from pathlib import Path
+
+from dev_skel_lib import load_config, sync_to_remote
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Sync a directory to a remote host using rsync over ssh.",
+    )
+    parser.add_argument("host", help="Remote host (e.g. user@server)")
+    parser.add_argument(
+        "source_dir",
+        nargs="?",
+        help="Source directory to sync (default: SKEL_DIR)",
+    )
+    parser.add_argument(
+        "dest_dir",
+        nargs="?",
+        help="Destination directory on host (default: basename of source_dir)",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    cfg = load_config()
+
+    src_dir = Path(args.source_dir) if args.source_dir else cfg.skel_dir
+    if not src_dir.is_absolute():
+        src_dir = (Path.cwd() / src_dir).resolve()
+
+    if not src_dir.is_dir():
+        raise SystemExit(f"Error: source_dir '{src_dir}' does not exist or is not a directory.")
+
+    dest_dir = args.dest_dir if args.dest_dir else src_dir.name
+
+    print(f"Syncing {src_dir} -> {args.host}:{dest_dir}")
+    sync_to_remote(args.host, src_dir, dest_dir, cfg.excludes_file)
+    print("Sync complete.")
+
+
+if __name__ == "__main__":
+    main()
