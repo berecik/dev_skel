@@ -257,6 +257,27 @@ Unless the user specifies otherwise:
 
 ---
 
+## 6.2 Complex AI Generation Test: Pizzeria Orders (FastAPI + Flutter)
+
+Full playbook for generating and testing a complete pizzeria ordering
+application (FastAPI backend + Flutter frontend) from AI prompts alone.
+
+**Read:** [`_docs/PIZZERIA-TEST-PLAYBOOK.md`](_docs/PIZZERIA-TEST-PLAYBOOK.md)
+
+Quick commands:
+
+```bash
+make test-pizzeria-orders          # full run (requires Ollama; Flutter optional)
+make test-pizzeria-orders-keep     # same, keep _test_projects/ on disk
+_bin/skel-test-pizzeria-orders     # direct invocation
+_bin/skel-test-pizzeria-orders --skip-flutter-build  # backend-only
+```
+
+Exits with code 2 when Ollama is unreachable. Falls back to
+backend-only mode when Flutter SDK is missing.
+
+---
+
 ## 6.3 Backporting Service Edits Into the Skeleton (`./backport`)
 
 The sibling of `./ai` for the **service → template** direction.

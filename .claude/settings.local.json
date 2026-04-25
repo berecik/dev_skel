@@ -413,7 +413,12 @@
       "Bash(flutter --version)",
       "Bash(kill 52369)",
       "Bash(pstree -p 54258)",
-      "Bash(ps -o pid,ppid,command)"
+      "Bash(ps -o pid,ppid,command)",
+      "Bash(ps -p 54913 -o pid,ppid,state,etime,command)",
+      "Bash(ps -p 54258 -o pid,ppid,state,etime,command)",
+      "Bash(ps -p 54258 -o state,etime)",
+      "Bash(ps *)",
+      "Bash(pkill -f \"skel-gen-ai.*test-pizzeria\")"
     ],
     "deny": [],
     "ask": []

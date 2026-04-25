@@ -409,10 +409,17 @@ generate a domain-specific app automatically with instructions only.
 Quick commands:
 
 ```bash
-make test-pizzeria-orders          # full run (requires Ollama + Flutter)
+make test-pizzeria-orders          # full run (requires Ollama; Flutter optional)
 make test-pizzeria-orders-keep     # same, keep _test_projects/ on disk
-_bin/skel-test-pizzeria-orders     # direct script invocation
+_bin/skel-test-pizzeria-orders     # direct invocation
+_bin/skel-test-pizzeria-orders --skip-flutter-build  # backend-only (no Flutter)
 ```
+
+Exits with code 2 when Ollama is unreachable (safe for CI). When
+Flutter SDK is missing, automatically falls back to backend-only
+mode (passes `--no-frontend` to `skel-gen-ai`). The 14-step HTTP
+exercise hits the backend directly, so the core test works without
+Flutter.
 
 ---
 

@@ -25,8 +25,8 @@ domain-specific application from instructions alone — the prompts in the
 manifests must be strong enough that the LLM replaces the generic
 "items" CRUD with a fully functional pizzeria ordering flow.
 
-**Success** means all nine criteria in [Section 10 (Definition of
-Done)](#10-definition-of-done) are met.
+**Success** means all nine criteria in [Section 11 (Definition of
+Done)](#11-definition-of-done) are met.
 
 ---
 

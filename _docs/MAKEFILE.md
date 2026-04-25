@@ -121,6 +121,16 @@ Skips when the Flutter SDK isn't on the PATH.
 | `make test-shared-db-python` | Same, but Python-only (~25 s). |
 | `make test-shared-db-keep` | Keeps the wrapper. |
 
+### AI-generation integration test (Pizzeria)
+
+| Target | What it covers |
+| ------ | -------------- |
+| `make test-pizzeria-orders` | Generates a FastAPI + Flutter pizzeria ordering app via `skel-gen-ai` with domain-specific prompts, then exercises the full order lifecycle (menu → positions → order → address → submit → approve/reject → feedback) over real HTTP. Requires Ollama. Flutter optional. |
+| `make test-pizzeria-orders-keep` | Same, keeps `_test_projects/test-pizzeria-orders` on disk. |
+
+Exits with code 2 when Ollama is unreachable. Falls back to backend-only
+when Flutter SDK is missing. See `_docs/PIZZERIA-TEST-PLAYBOOK.md`.
+
 | Target | What it covers |
 | ------ | -------------- |
 | `make test-cross-stack` | Aggregator — every cross-stack HTTP test in one run. |

@@ -130,12 +130,22 @@ MENU_ITEMS: List[Dict[str, Any]] = [
 # ---------------------------------------------------------------------------
 
 
+def _ollama_base_url() -> str:
+    """Resolve the Ollama base URL from environment (same logic as skel_ai_lib)."""
+    base = os.environ.get("OLLAMA_BASE_URL", "")
+    if base:
+        return base.rstrip("/")
+    host = os.environ.get("OLLAMA_HOST", "localhost:11434")
+    if not host.startswith(("http://", "https://")):
+        host = f"http://{host}"
+    return host.rstrip("/")
+
+
 def ollama_reachable() -> bool:
     """Return True if Ollama responds to /api/tags."""
+    url = f"{_ollama_base_url()}/api/tags"
     try:
-        status, _ = http_request(
-            "GET", "http://localhost:11434/api/tags", timeout=5,
-        )
+        status, _ = http_request("GET", url, timeout=5)
         return status == 200
     except Exception:
         return False
@@ -599,7 +609,7 @@ def main() -> int:
 
     # Phase 0: Toolchain probes
     if not ollama_reachable():
-        msg = "Ollama is not reachable at localhost:11434"
+        msg = f"Ollama is not reachable at {_ollama_base_url()}"
         if args.no_skip:
             print(f"  \u2717 {msg}")
             return EXIT_FAIL
@@ -737,17 +747,12 @@ def main() -> int:
             env=server_env,
         )
 
-        # Wait for the server.  The pizzeria app might not have /api/items,
-        # so probe several paths until one responds.
-        ready = False
-        for probe_path in ["/api/menu", "/api/health", "/docs"]:
-            if wait_for_server(
-                f"{backend_url}{probe_path}",
-                timeout_s=args.server_startup_timeout,
-            ):
-                ready = True
-                break
-        if not ready:
+        # Wait for the server.  Probe /docs (Swagger UI — always present
+        # on a FastAPI app) since the AI-generated routes are unpredictable.
+        if not wait_for_server(
+            f"{backend_url}/docs",
+            timeout_s=args.server_startup_timeout,
+        ):
             print("  \u2717 server did not become ready in time")
             print()
             print("  ----- server log (last 4000 chars) -----")
