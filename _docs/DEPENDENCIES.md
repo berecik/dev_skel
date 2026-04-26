@@ -55,6 +55,12 @@ ollama pull qwen2.5-coder:7b
 | `SKEL_REFACTOR_FIX_TIMEOUT_M` | `15` (min) | Fix-loop budget for `./ai apply`. |
 | `SKEL_REFACTOR_MAX_FILES` | `8` | Hard cap on files the LLM may edit per `./ai` run. |
 | `DEV_SKEL_ROOT` | unset | Force the in-service `./ai` into in-tree mode against a specific dev_skel checkout. |
+| `USER_LOGIN` | `user` | Default regular user username (seeded at startup). |
+| `USER_EMAIL` | `user@example.com` | Default regular user email. |
+| `USER_PASSWORD` | `secret` | Default regular user password. |
+| `SUPERUSER_LOGIN` | `admin` | Default superuser username (seeded at startup). |
+| `SUPERUSER_EMAIL` | `admin@example.com` | Default superuser email. |
+| `SUPERUSER_PASSWORD` | `secret` | Default superuser password. |
 
 ### Optional: in-tree FAISS dependencies
 

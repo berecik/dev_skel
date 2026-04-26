@@ -1,6 +1,21 @@
-# **Architectural Blueprint for a Hybrid Distributed Backend: Integrating Actix-Web, FastAPI, and Diesel ORM**
+# Architectural Blueprint for a Hybrid Distributed Backend: Integrating Actix-Web, FastAPI, and Diesel ORM
 
-The evolution of modern backend architecture has increasingly moved away from monolithic structures toward hybrid systems that leverage the specific strengths of disparate language ecosystems. A prominent example of this paradigm is the integration of Rust for high-performance networking and data persistence with Python for flexible business logic and rapid development. In the context of the dev\_skel project, creating a new skeleton designated for a hybrid backend necessitates a sophisticated orchestration of Actix-Web as an intelligent middleware proxy, FastAPI as the application logic container, and a centralized Diesel-based Object-Relational Mapper (ORM).1 This report provides a comprehensive technical specification for such a system, designed to be protocol-agnostic and capable of operating across distributed hosts using gRPC, REST, and GraphQL.5
+> **Status:** Design document / research spike. This skeleton does not
+> exist yet in `_skels/`. The document captures the architectural
+> vision for a future `rust-hybrid-skel` that pairs an Actix-Web
+> middleware proxy with a FastAPI logic backend and a shared Diesel ORM
+> layer. Any implementation must follow the standard dev_skel skeleton
+> conventions (`gen`, `merge`, `test`, `deps`, `VERSION`,
+> `CHANGELOG.md`, AI manifest, wrapper-shared `.env`, etc.) documented
+> in `_docs/SKELETONS.md`.
+>
+> **Note on data validation:** The original text recommends the
+> *Schematics* library for Python-side validation. The dev_skel FastAPI
+> skeleton (`python-fastapi-skel`) uses **Pydantic** (FastAPI's native
+> validation layer). A real implementation should use Pydantic models,
+> not Schematics, to stay consistent with the existing stack.
+
+The evolution of modern backend architecture has increasingly moved away from monolithic structures toward hybrid systems that leverage the specific strengths of disparate language ecosystems. A prominent example of this paradigm is the integration of Rust for high-performance networking and data persistence with Python for flexible business logic and rapid development. In the context of the dev_skel project, creating a new skeleton designated for a hybrid backend necessitates a sophisticated orchestration of Actix-Web as an intelligent middleware proxy, FastAPI as the application logic container, and a centralized Diesel-based Object-Relational Mapper (ORM).1 This report provides a comprehensive technical specification for such a system, designed to be protocol-agnostic and capable of operating across distributed hosts using gRPC, REST, and GraphQL.5
 
 ## **The Strategic Implication of Hybrid Backend Architectures**
 
@@ -10,9 +25,9 @@ Comparative performance metrics indicate that systems utilizing a Rust-based pro
 
 ### **Performance and Resource Efficiency Comparison**
 
-| Metric | Pure Python (FastAPI/Uvicorn) | Hybrid (Actix Proxy \+ FastAPI) | Pure Rust (Actix/Axum) |
+| Metric | Pure Python (FastAPI/Uvicorn) | Hybrid (Actix Proxy + FastAPI) | Pure Rust (Actix/Axum) |
 | :---- | :---- | :---- | :---- |
-| **Response Latency (p99)** | 450ms 8 | 15-25ms (estimated) | \<15ms 8 |
+| **Response Latency (p99)** | 450ms 8 | 15-25ms (estimated) | <15ms 8 |
 | **CPU Utilization (Peak)** | 85% 8 | 40-50% 8 | 20-30% 8 |
 | **Memory Footprint** | High (GC-dependent) | Moderate (Shared state) | Low (Static) 8 |
 | **Concurrent Requests** | Limited by GIL 8 | Distributed across layers | Highly scalable 8 |
@@ -37,7 +52,7 @@ To ensure that the FastAPI logic layer remains unaware of its proxied status whi
 
 ## **The Universal Data Layer: Diesel ORM and Repository Pattern**
 
-A core requirement of the \_skel project is a unified data layer that serves both the Rust middleware and the Python logic backend. Diesel ORM is the selected tool for this purpose due to its compile-time safety and high-performance characteristics.4 By enforcing type-safe database interactions at the compiler level, Diesel eliminates common runtime errors associated with SQL syntax or schema mismatches.15
+A core requirement of the _skel project is a unified data layer that serves both the Rust middleware and the Python logic backend. Diesel ORM is the selected tool for this purpose due to its compile-time safety and high-performance characteristics.4 By enforcing type-safe database interactions at the compiler level, Diesel eliminates common runtime errors associated with SQL syntax or schema mismatches.15
 
 ### **The Repository Pattern for Protocol Agnosticism**
 
@@ -45,12 +60,12 @@ To make the database layer protocol-agnostic and capable of running across diffe
 
 The repository trait acts as a contract:
 
-Rust
-
-pub trait UserRepository: Send \+ Sync {  
-    fn find\_by\_id(&self, id: i32) \-\> Result\<User, DbError\>;  
-    fn save(&self, user: NewUser) \-\> Result\<User, DbError\>;  
+```rust
+pub trait UserRepository: Send + Sync {
+    fn find_by_id(&self, id: i32) -> Result<User, DbError>;
+    fn save(&self, user: NewUser) -> Result<User, DbError>;
 }
+```
 
 This abstraction allows the core logic to be utilized in multiple contexts:
 
@@ -60,7 +75,7 @@ This abstraction allows the core logic to be utilized in multiple contexts:
 
 ### **Database Schema Synchronization and Diesel CLI**
 
-The source of truth for the database structure resides in the schema.rs file, which is automatically updated by the Diesel CLI during migrations.4 This file uses the table\! macro to map SQL types to Rust types.24 For the hybrid system to work effectively, the Python "schematics" models must be synchronized with this schema to ensure data integrity across the language boundary.11
+The source of truth for the database structure resides in the `schema.rs` file, which is automatically updated by the Diesel CLI during migrations.4 This file uses the `table!` macro to map SQL types to Rust types.24 For the hybrid system to work effectively, the Python **Pydantic** models and DTOs must stay aligned with this schema to ensure data integrity across the language boundary.
 
 | Diesel Component | Function | Contribution to Agnosticism |
 | :---- | :---- | :---- |
@@ -69,7 +84,7 @@ The source of truth for the database structure resides in the schema.rs file, wh
 | **models.rs** | Structs with Queryable and Selectable | Bridges raw data to business objects 25 |
 | **r2d2 / deadpool** | Connection pooling mechanisms | Manages resource limits for all protocols 4 |
 
-## **Bridging the Ecosystems: PyO3, Maturin, and Schematics**
+## **Bridging the Ecosystems: PyO3, Maturin, and Pydantic**
 
 The integration of the Rust Diesel layer into the Python FastAPI environment is facilitated by PyO3.1 PyO3 allows for the creation of native Python extension modules written in Rust, which are typically built using the maturin toolchain.20 This bridge is essential for sharing models and persistence logic without the overhead of inter-process communication when both layers reside on the same host.1
 
@@ -80,16 +95,16 @@ A critical architectural consideration when calling Rust from Python is the mana
 The interaction between the two environments can be described by the following relationship:
 
 ![][image6]  
-By using PyO3's Python::allow\_threads method, ![][image7] can occur in parallel with other Python operations, mitigating the typical performance bottlenecks of single-threaded Python execution.8
+By using PyO3's Python::allow_threads method, ![][image7] can occur in parallel with other Python operations, mitigating the typical performance bottlenecks of single-threaded Python execution.8
 
-### **Data Validation via Schematics**
+### **Data Validation via Pydantic (FastAPI-native)**
 
-In the Python layer, the "schematics" library is used to define the data validation and serialization logic. Schematics provides a robust framework for defining models that can be validated against incoming JSON payloads from FastAPI.11 These models must align with the Rust structs defined in the Diesel layer to ensure that data passed across the PyO3 bridge is valid and consistent.11
+In the Python layer, data validation and serialization should use **Pydantic**, matching existing dev_skel FastAPI conventions. FastAPI request/response models (for example, `OrderCreate`, `OrderStatusUpdate`, and `MenuPositionRead`) must align with the Rust structs defined in the Diesel layer so data crossing the PyO3 bridge remains valid and consistent.
 
 The validation flow follows a structured path:
 
 1. **Request Reception**: FastAPI receives a JSON payload.  
-2. **Schematics Validation**: The payload is deserialized into a Schematics model and validated for type correctness and business rules.11  
+2. **Pydantic Validation**: The payload is parsed into a Pydantic model and validated for type correctness and business rules.  
 3. **Rust Invocation**: The validated data is passed to a PyO3-wrapped Rust function.  
 4. **Diesel Execution**: The Rust code converts the Python data into a Diesel struct and executes the database query.1
 
@@ -103,12 +118,12 @@ gRPC is prioritized for service-to-service communication due to its use of HTTP/
 
 The gRPC service definition in .proto files serves as a language-agnostic contract:
 
-Protocol Buffers
-
-service DBService {  
-  rpc GetUser (UserRequest) returns (UserResponse) {}  
-  rpc CreateUser (CreateUserRequest) returns (UserResponse) {}  
+```protobuf
+service DBService {
+  rpc GetUser (UserRequest) returns (UserResponse) {}
+  rpc CreateUser (CreateUserRequest) returns (UserResponse) {}
 }
+```
 
 ### **GraphQL via Async-GraphQL**
 
@@ -126,88 +141,96 @@ The REST interface is maintained through FastAPI, which benefits from the Actix-
 
 ## **Implementation Specification for Automated Agents (Claude Code)**
 
-This section provides the specific structural and instructional details required for an automated agent to generate the \_skel for dev\_skel. The skeleton is organized as a Rust workspace with a nested Python project, facilitating unified dependency management and build processes.36
+This section provides the specific structural and instructional details required for an automated agent to generate a future `rust-hybrid-skel` for dev_skel. The skeleton should follow the same contract as existing skeletons: `gen`, `merge`, `test`, `deps`, `install-deps`, `run`, `build`, `VERSION`, `CHANGELOG.md`, skeleton-level rules/docs, and an AI manifest under `_skels/_common/manifests/`.
 
 ### **Directory Structure and Initial Files**
 
-The following layout ensures clear separation of concerns while allowing for shared logic via the PyO3 bridge.1
+The following layout ensures clear separation of concerns while matching dev_skel conventions (skeleton root scripts + implementation files under `skel/`).
 
-\_skel/
+```text
+_skels/rust-hybrid-skel/
+├── AGENTS.md
+├── JUNIE-RULES.md
+├── VERSION
+├── CHANGELOG.md
+├── Makefile
+├── gen
+├── merge
+├── test
+├── deps
+├── install-deps
+├── build
+├── run
+└── skel/
+    ├── Cargo.toml                      # Rust workspace root
+    ├── common_db/                      # Diesel + repository + PyO3 crate
+    │   ├── Cargo.toml
+    │   ├── migrations/
+    │   └── src/
+    │       ├── lib.rs
+    │       ├── repository.rs
+    │       ├── models.rs
+    │       └── schema.rs
+    ├── web_gateway/                    # Actix entrypoint + proxy middleware
+    │   ├── Cargo.toml
+    │   └── src/
+    │       ├── main.rs
+    │       └── proxy.rs
+    ├── logic_app/                      # FastAPI logic service
+    │   ├── requirements.txt
+    │   ├── app/
+    │   │   ├── main.py
+    │   │   ├── api/
+    │   │   ├── core/
+    │   │   └── schemas/
+    │   └── tests/
+    └── proto/                          # optional shared gRPC contracts
+```
 
-├── Cargo.toml (Workspace Root)
+### **dev_skel Integration Constraints (must be explicit before implementation)**
 
-├── common\_db/ (Core Diesel & Repository Layer)
-
-│ ├── src/
-
-│ │ ├── lib.rs (PyO3 module definition)
-
-│ │ ├── repository.rs (Trait and implementations)
-
-│ │ ├── models.rs (Diesel and PyO3 structs)
-
-│ │ └── schema.rs (Auto-generated by Diesel)
-
-│ ├── Cargo.toml
-
-│ └── migrations/
-
-├── web\_gateway/ (Actix-Web Middleware Proxy)
-
-│ ├── src/
-
-│ │ ├── main.rs (Actix entry point)
-
-│ │ └── proxy.rs (Proxy logic and Transform trait)
-
-│ └── Cargo.toml
-
-├── logic\_app/ (FastAPI Application)
-
-│ ├── main.py (FastAPI entry point)
-
-│ ├── schemas/ (Schematics models)
-
-│ └── requirements.txt
-
-└── proto/ (Shared gRPC definitions)
+1. **Wrapper-shared environment contract**: follow existing backend behavior and read `DATABASE_URL` / `JWT_SECRET` from the wrapper `.env` first, then service-local `.env`.
+2. **Service naming and placement**: generated service directory must follow `slugify_service_name()` rules and be compatible with wrapper dispatch scripts (`./run`, `./test`, `./build`, etc.).
+3. **AI generation compatibility**: ship a manifest entry in `_skels/_common/manifests/` and ensure prompts support retrieval placeholders used by `_bin/skel_rag/`.
+4. **No manual edits in `_test_projects/`**: generated verification projects are disposable artifacts and must be regenerated through skel commands.
+5. **Protocol scope as phased rollout**: keep REST + proxy path as MVP; treat gRPC and GraphQL adapters as optional phase-2 features unless explicitly requested by user requirements.
 
 ### **Instructions for the Core Database Layer**
 
-The common\_db crate must be configured as a cdylib to allow Python to import it as a shared library.1
+The common_db crate must be configured as a cdylib to allow Python to import it as a shared library.1
 
-1. **Diesel Configuration**: Initialize Diesel with the appropriate database feature (e.g., postgres). Configure the diesel.toml to output the schema file into common\_db/src/schema.rs.4  
+1. **Diesel Configuration**: Initialize Diesel with the appropriate database feature (e.g., postgres). Configure the diesel.toml to output the schema file into common_db/src/schema.rs.4  
 2. **Repository Trait**: Define a DatabaseRepository trait in repository.rs. Provide a DieselUserRepository implementation that uses a pooled connection.18  
-3. **PyO3 Exports**: In lib.rs, wrap the repository in a \#\[pyclass\] and expose methods that call the repository traits. Use py.allow\_threads to release the GIL.20
+3. **PyO3 Exports**: In lib.rs, wrap the repository in a `#[pyclass]` and expose methods that call the repository traits. Use py.allow_threads to release the GIL.20
 
 ### **Instructions for the Actix Middleware Proxy**
 
-The web\_gateway service acts as the primary listener.2
+The web_gateway service acts as the primary listener.2
 
-1. **Proxy Implementation**: Implement a custom middleware that uses actix\_web::web::Data to store the target FastAPI backend URL.2  
+1. **Proxy Implementation**: Implement a custom middleware that uses actix_web::web::Data to store the target FastAPI backend URL.2  
 2. **Header Forwarding**: Ensure the proxy copies all relevant headers and adds X-Forwarded-Host and X-Forwarded-Proto.3  
 3. **gRPC/GraphQL Routing**: Configure Actix routes to handle /graphql locally using the async-graphql-actix-web crate and use Tonic to serve gRPC on a separate port or via multiplexing.7
 
 ### **Instructions for the FastAPI Application**
 
-The logic\_app serves the business logic layer.3
+The logic_app serves the business logic layer.3
 
-1. **FastAPI Initialization**: Configure the FastAPI instance with root\_path="/api" to match the Actix proxy routing.3  
-2. **Schematics Integration**: Create Schematics models in schemas/ that mirror the common\_db Rust models.11  
-3. **DB Integration**: Import the compiled common\_db library and initialize the DBClient during the FastAPI startup event.1
+1. **FastAPI Initialization**: Configure the FastAPI instance with root_path="/api" to match the Actix proxy routing.3  
+2. **Pydantic Integration**: Create Pydantic models in `app/schemas/` that mirror `common_db` Rust models and API DTO contracts.  
+3. **DB Integration**: Import the compiled common_db library and initialize the DBClient during the FastAPI startup event.1
 
 ## **Distributed Deployment and Cross-Host Networking**
 
-Designing the database layer to run on other hosts requires a shift from local library linking to network-based service discovery.8 The common\_db crate is designed to operate in two modes: "Embedded" and "Remote".6
+Designing the database layer to run on other hosts requires a shift from local library linking to network-based service discovery.8 The common_db crate is designed to operate in two modes: "Embedded" and "Remote".6
 
 ### **Connectivity and Service Discovery**
 
-In a distributed environment, the Actix proxy or FastAPI logic backend acts as a gRPC client to a standalone db\_service instance.7
+In a distributed environment, the Actix proxy or FastAPI logic backend acts as a gRPC client to a standalone db_service instance.7
 
 | Connection Mode | Mechanism | Latency Impact | Use Case |
 | :---- | :---- | :---- | :---- |
-| **Embedded (Local)** | Shared Library (.so /.pyd) | \<0.1ms | Single-node deployment, maximum throughput 20 |
-| **Remote (Network)** | gRPC over HTTP/2 | 1ms \- 5ms | Microservices, centralized DB management 21 |
+| **Embedded (Local)** | Shared Library (.so /.pyd) | <0.1ms | Single-node deployment, maximum throughput 20 |
+| **Remote (Network)** | gRPC over HTTP/2 | 1ms - 5ms | Microservices, centralized DB management 21 |
 | **Hybrid (Gateway)** | GraphQL Federation | 5ms+ | Scaling across multiple data sources 22 |
 
 ### **Handling Failures in Distributed Environments**
@@ -220,27 +243,27 @@ The complexity of a hybrid Rust/Python system requires a robust build pipeline u
 
 ### **Maturin and Multistage Docker Builds**
 
-For production deployments, a multistage Dockerfile is recommended.38 The first stage uses a Rust-ready environment to compile the common\_db crate and build the web\_gateway binary. The second stage uses a Python environment to install FastAPI and the Schematics library, then copies the compiled Rust artifacts into the final image.26
+For production deployments, a multistage Dockerfile is recommended.38 The first stage uses a Rust-ready environment to compile the `common_db` crate and build the `web_gateway` binary. The second stage uses a Python environment to install FastAPI dependencies (including Pydantic-based app requirements), then copies compiled Rust artifacts into the final image.26
 
 Build command for local development:
 
-Bash
-
-maturin develop \-m common\_db/Cargo.toml
+```bash
+maturin develop -m common_db/Cargo.toml
+```
 
 This command compiles the Rust code and installs it directly into the active Python virtual environment, allowing for immediate testing within the FastAPI app.1
 
 ### **Cross-Compilation for Diverse Hosts**
 
-To support deployment across different hosts (e.g., Linux x86 and ARM), the \_skel includes configurations for cross-compilation.26 By utilizing PyO3 features like abi3, the compiled Rust library can maintain compatibility across multiple Python 3 versions, reducing the need for exhaustive rebuilds during minor Python upgrades.26
+To support deployment across different hosts (e.g., Linux x86 and ARM), the _skel includes configurations for cross-compilation.26 By utilizing PyO3 features like abi3, the compiled Rust library can maintain compatibility across multiple Python 3 versions, reducing the need for exhaustive rebuilds during minor Python upgrades.26
 
 ## **Observability and Performance Monitoring in Hybrid Systems**
 
-Monitoring a hybrid backend requires a unified view of the request path across both language runtimes.2 The \_skel implements structured logging and distributed tracing using OpenTelemetry.5
+Monitoring a hybrid backend requires a unified view of the request path across both language runtimes.2 The _skel implements structured logging and distributed tracing using OpenTelemetry.5
 
 ### **Trace Propagation across the Bridge**
 
-When a request enters the Actix proxy, a unique trace\_id is generated. This ID is passed through headers to FastAPI and subsequently passed as metadata in any gRPC calls made to the database layer.6 This allows developers to trace a single user request from the network edge, through the Python logic, and into the Diesel SQL execution.19
+When a request enters the Actix proxy, a unique trace_id is generated. This ID is passed through headers to FastAPI and subsequently passed as metadata in any gRPC calls made to the database layer.6 This allows developers to trace a single user request from the network edge, through the Python logic, and into the Diesel SQL execution.19
 
 ### **Metric Collection**
 
@@ -252,50 +275,49 @@ Key performance indicators (KPIs) for the hybrid system include:
 
 ## **Conclusion**
 
-The hybrid backend architecture for the dev\_skel project represents a state-of-the-art approach to distributed systems. By delegating networking and persistence to Rust's Actix-Web and Diesel ORM, while maintaining application flexibility in Python's FastAPI and Schematics, the system achieves a rare balance of performance and agility. The protocol-agnostic design, supported by gRPC and GraphQL adapters, ensures that the database layer can serve as a robust foundation for diverse clients and scale across distributed hosting environments. This specification serves as a comprehensive guide for developers and automated agents to implement a high-performance, future-proof backend skeleton.
+The hybrid backend architecture for the dev_skel project represents a state-of-the-art approach to distributed systems. By delegating networking and persistence to Rust's Actix-Web and Diesel ORM, while maintaining application flexibility in Python's FastAPI and Pydantic, the system achieves a rare balance of performance and agility. The protocol-agnostic design, with REST as the MVP and gRPC/GraphQL as optional adapters, provides a robust foundation for diverse clients and cross-host scaling. This specification serves as a guide for developers and automated agents to implement a high-performance, future-proof backend skeleton that still conforms to dev_skel generator contracts.
 
 #### **Works cited**
 
-1. Combining Rust and Py03 with Python \- Qxf2 BLOG, accessed on April 26, 2026, [https://qxf2.com/blog/combining-rust-and-py03-with-python/](https://qxf2.com/blog/combining-rust-and-py03-with-python/)  
-2. How to Implement Middleware in Actix \- OneUptime, accessed on April 26, 2026, [https://oneuptime.com/blog/post/2026-02-03-actix-middleware/view](https://oneuptime.com/blog/post/2026-02-03-actix-middleware/view)  
-3. Behind a Proxy \- FastAPI, accessed on April 26, 2026, [https://fastapi.tiangolo.com/advanced/behind-a-proxy/](https://fastapi.tiangolo.com/advanced/behind-a-proxy/)  
-4. How to Use Diesel ORM in Rust \- OneUptime, accessed on April 26, 2026, [https://oneuptime.com/blog/post/2026-02-03-rust-diesel-orm/view](https://oneuptime.com/blog/post/2026-02-03-rust-diesel-orm/view)  
-5. allframe \- crates.io: Rust Package Registry, accessed on April 26, 2026, [https://crates.io/crates/allframe](https://crates.io/crates/allframe)  
-6. Bridging Worlds: How we Unified gRPC and REST APIs in Rust \- GitHub, accessed on April 26, 2026, [https://github.com/juspay/hyperswitch/wiki/Bridging-Worlds:-How-we-Unified-gRPC-and-REST-APIs-in-Rust](https://github.com/juspay/hyperswitch/wiki/Bridging-Worlds:-How-we-Unified-gRPC-and-REST-APIs-in-Rust)  
-7. gRPC Basics for Rust Developers \- DockYard, accessed on April 26, 2026, [https://dockyard.com/blog/2025/04/08/grpc-basics-for-rust-developers](https://dockyard.com/blog/2025/04/08/grpc-basics-for-rust-developers)  
-8. I Rewrote My Python App in Rust — Here's What Happened | by CodeOrbit \- Medium, accessed on April 26, 2026, [https://medium.com/@theabhishek.040/i-rewrote-my-python-app-in-rust-heres-what-happened-1cd9a055fc9b](https://medium.com/@theabhishek.040/i-rewrote-my-python-app-in-rust-heres-what-happened-1cd9a055fc9b)  
-9. State of Rust for web backends : r/rust \- Reddit, accessed on April 26, 2026, [https://www.reddit.com/r/rust/comments/zqgo98/state\_of\_rust\_for\_web\_backends/](https://www.reddit.com/r/rust/comments/zqgo98/state_of_rust_for_web_backends/)  
-10. Rust in Python FastAPI : r/rust \- Reddit, accessed on April 26, 2026, [https://www.reddit.com/r/rust/comments/13jp8gz/rust\_in\_python\_fastapi/](https://www.reddit.com/r/rust/comments/13jp8gz/rust_in_python_fastapi/)  
-11. Actix Web and FastAPI: A Thorough Comparison | by Shashi Kant \- Medium, accessed on April 26, 2026, [https://medium.com/@shashikantrbl123/actix-and-fastapi-a-thorough-comparison-e43ad310a576](https://medium.com/@shashikantrbl123/actix-and-fastapi-a-thorough-comparison-e43ad310a576)  
-12. FastAPI-inspired Rust web framework (early stage) : r/learnrust \- Reddit, accessed on April 26, 2026, [https://www.reddit.com/r/learnrust/comments/1pzw84i/fastapiinspired\_rust\_web\_framework\_early\_stage/](https://www.reddit.com/r/learnrust/comments/1pzw84i/fastapiinspired_rust_web_framework_early_stage/)  
-13. Middleware \- Actix Web, accessed on April 26, 2026, [https://actix.rs/docs/middleware/](https://actix.rs/docs/middleware/)  
-14. Implementing HTTP proxy that can support HTTPS requests by using actix-web \- help \- The Rust Programming Language Forum, accessed on April 26, 2026, [https://users.rust-lang.org/t/implementing-http-proxy-that-can-support-https-requests-by-using-actix-web/25225](https://users.rust-lang.org/t/implementing-http-proxy-that-can-support-https-requests-by-using-actix-web/25225)  
+1. Combining Rust and Py03 with Python - Qxf2 BLOG, accessed on April 26, 2026, [https://qxf2.com/blog/combining-rust-and-py03-with-python/](https://qxf2.com/blog/combining-rust-and-py03-with-python/)  
+2. How to Implement Middleware in Actix - OneUptime, accessed on April 26, 2026, [https://oneuptime.com/blog/post/2026-02-03-actix-middleware/view](https://oneuptime.com/blog/post/2026-02-03-actix-middleware/view)  
+3. Behind a Proxy - FastAPI, accessed on April 26, 2026, [https://fastapi.tiangolo.com/advanced/behind-a-proxy/](https://fastapi.tiangolo.com/advanced/behind-a-proxy/)  
+4. How to Use Diesel ORM in Rust - OneUptime, accessed on April 26, 2026, [https://oneuptime.com/blog/post/2026-02-03-rust-diesel-orm/view](https://oneuptime.com/blog/post/2026-02-03-rust-diesel-orm/view)  
+5. allframe - crates.io: Rust Package Registry, accessed on April 26, 2026, [https://crates.io/crates/allframe](https://crates.io/crates/allframe)  
+6. Bridging Worlds: How we Unified gRPC and REST APIs in Rust - GitHub, accessed on April 26, 2026, [https://github.com/juspay/hyperswitch/wiki/Bridging-Worlds:-How-we-Unified-gRPC-and-REST-APIs-in-Rust](https://github.com/juspay/hyperswitch/wiki/Bridging-Worlds:-How-we-Unified-gRPC-and-REST-APIs-in-Rust)  
+7. gRPC Basics for Rust Developers - DockYard, accessed on April 26, 2026, [https://dockyard.com/blog/2025/04/08/grpc-basics-for-rust-developers](https://dockyard.com/blog/2025/04/08/grpc-basics-for-rust-developers)  
+8. I Rewrote My Python App in Rust — Here's What Happened | by CodeOrbit - Medium, accessed on April 26, 2026, [https://medium.com/@theabhishek.040/i-rewrote-my-python-app-in-rust-heres-what-happened-1cd9a055fc9b](https://medium.com/@theabhishek.040/i-rewrote-my-python-app-in-rust-heres-what-happened-1cd9a055fc9b)  
+9. State of Rust for web backends : r/rust - Reddit, accessed on April 26, 2026, [https://www.reddit.com/r/rust/comments/zqgo98/state_of_rust_for_web_backends/](https://www.reddit.com/r/rust/comments/zqgo98/state_of_rust_for_web_backends/)  
+10. Rust in Python FastAPI : r/rust - Reddit, accessed on April 26, 2026, [https://www.reddit.com/r/rust/comments/13jp8gz/rust_in_python_fastapi/](https://www.reddit.com/r/rust/comments/13jp8gz/rust_in_python_fastapi/)  
+11. Actix Web and FastAPI: A Thorough Comparison | by Shashi Kant - Medium, accessed on April 26, 2026, [https://medium.com/@shashikantrbl123/actix-and-fastapi-a-thorough-comparison-e43ad310a576](https://medium.com/@shashikantrbl123/actix-and-fastapi-a-thorough-comparison-e43ad310a576)  
+12. FastAPI-inspired Rust web framework (early stage) : r/learnrust - Reddit, accessed on April 26, 2026, [https://www.reddit.com/r/learnrust/comments/1pzw84i/fastapiinspired_rust_web_framework_early_stage/](https://www.reddit.com/r/learnrust/comments/1pzw84i/fastapiinspired_rust_web_framework_early_stage/)  
+13. Middleware - Actix Web, accessed on April 26, 2026, [https://actix.rs/docs/middleware/](https://actix.rs/docs/middleware/)  
+14. Implementing HTTP proxy that can support HTTPS requests by using actix-web - help - The Rust Programming Language Forum, accessed on April 26, 2026, [https://users.rust-lang.org/t/implementing-http-proxy-that-can-support-https-requests-by-using-actix-web/25225](https://users.rust-lang.org/t/implementing-http-proxy-that-can-support-https-requests-by-using-actix-web/25225)  
 15. Diesel is a Safe, Extensible ORM and Query Builder for [Rust](https://www.rust-lang.org/) | DIESEL, accessed on April 26, 2026, [https://diesel.rs/](https://diesel.rs/)  
 16. A Guide to Rust ORMs in 2025 | Shuttle, accessed on April 26, 2026, [https://www.shuttle.dev/blog/2024/01/16/best-orm-rust](https://www.shuttle.dev/blog/2024/01/16/best-orm-rust)  
 17. Creating a REST API in Rust with Persistence: Rust, Rocket and Diesel | by Gene Kuo, accessed on April 26, 2026, [https://genekuo.medium.com/creating-a-rest-api-in-rust-with-persistence-rust-rocket-and-diesel-a4117d400104](https://genekuo.medium.com/creating-a-rest-api-in-rust-with-persistence-rust-rocket-and-diesel-a4117d400104)  
 18. Is this a correct implementation of the Repository Pattern and testing in Rust using Diesel?, accessed on April 26, 2026, [https://users.rust-lang.org/t/is-this-a-correct-implementation-of-the-repository-pattern-and-testing-in-rust-using-diesel/126165](https://users.rust-lang.org/t/is-this-a-correct-implementation-of-the-repository-pattern-and-testing-in-rust-using-diesel/126165)  
-19. GitHub \- martinthenth/rust-service-template: A modern Rust microservice template with GraphQL, gRPC, Kafka, PostgreSQL, and full observability out of the box., accessed on April 26, 2026, [https://github.com/martinthenth/rust-service-template](https://github.com/martinthenth/rust-service-template)  
-20. Introduction \- PyO3 user guide, accessed on April 26, 2026, [https://pyo3.rs/](https://pyo3.rs/)  
-21. How to Build gRPC Services with grpcio in Python \- OneUptime, accessed on April 26, 2026, [https://oneuptime.com/blog/post/2026-01-24-grpc-services-grpcio-python/view](https://oneuptime.com/blog/post/2026-01-24-grpc-services-grpcio-python/view)  
-22. grpc\_graphql\_gateway \- crates.io: Rust Package Registry, accessed on April 26, 2026, [https://crates.io/crates/grpc-graphql-gateway/0.1.3](https://crates.io/crates/grpc-graphql-gateway/0.1.3)  
-23. I just ported grpc\_graphql\_gateway from Go to Rust\! (open-source release) \- Reddit, accessed on April 26, 2026, [https://www.reddit.com/r/rust/comments/1pchult/i\_just\_ported\_grpc\_graphql\_gateway\_from\_go\_to/](https://www.reddit.com/r/rust/comments/1pchult/i_just_ported_grpc_graphql_gateway_from_go_to/)  
-24. Building a High-Performance REST API in Rust with Diesel and Axum \- Civo.com, accessed on April 26, 2026, [https://www.civo.com/learn/high-performance-rest-api-rust-diesel-axum](https://www.civo.com/learn/high-performance-rest-api-rust-diesel-axum)  
-25. diesel-rs/diesel: A safe, extensible ORM and Query Builder for Rust \- GitHub, accessed on April 26, 2026, [https://github.com/diesel-rs/diesel](https://github.com/diesel-rs/diesel)  
-26. Building and distribution \- PyO3 user guide, accessed on April 26, 2026, [https://pyo3.rs/main/building-and-distribution](https://pyo3.rs/main/building-and-distribution)  
-27. Sending data in both directions between Python and lengthy Rust module? \- Stack Overflow, accessed on April 26, 2026, [https://stackoverflow.com/questions/77054031/sending-data-in-both-directions-between-python-and-lengthy-rust-module](https://stackoverflow.com/questions/77054031/sending-data-in-both-directions-between-python-and-lengthy-rust-module)  
-28. What did you build while learning Rust \- Reddit, accessed on April 26, 2026, [https://www.reddit.com/r/rust/comments/1o3w69y/what\_did\_you\_build\_while\_learning\_rust/](https://www.reddit.com/r/rust/comments/1o3w69y/what_did_you_build_while_learning_rust/)  
-29. Auto Facelift Refit Body Kit For Mercedes Benz S Class W217 C217 Coupe 2014 2015 2016 2017 2018 Upgrade To Racing S63 AMG \- AliExpress, accessed on April 26, 2026, [https://www.aliexpress.com/item/1005009633127973.html](https://www.aliexpress.com/item/1005009633127973.html)  
-30. allframe\_core \- Rust \- Docs.rs, accessed on April 26, 2026, [https://docs.rs/allframe-core](https://docs.rs/allframe-core)  
-31. REST vs GraphQL vs gRPC: Lessons from Building APIs in Rust, Go, and Java \- Medium, accessed on April 26, 2026, [https://medium.com/@yachnytskyi1992/rest-vs-graphql-vs-grpc-lessons-from-building-apis-in-rust-go-and-java-e87e019ba0e5](https://medium.com/@yachnytskyi1992/rest-vs-graphql-vs-grpc-lessons-from-building-apis-in-rust-go-and-java-e87e019ba0e5)  
-32. When to use gRPC vs GraphQL \- The Stack Overflow Blog, accessed on April 26, 2026, [https://stackoverflow.blog/2022/11/28/when-to-use-grpc-vs-graphql/](https://stackoverflow.blog/2022/11/28/when-to-use-grpc-vs-graphql/)  
-33. Deploying Machine Learning Models with PyTorch, gRPC, and asyncio \- Roboflow Blog, accessed on April 26, 2026, [https://blog.roboflow.com/deploy-machine-learning-models-pytorch-grpc-asyncio/](https://blog.roboflow.com/deploy-machine-learning-models-pytorch-grpc-asyncio/)  
-34. When to use GraphQL vs Federation vs tRPC vs REST vs gRPC vs AsyncAPI vs WebHooks \- A 2024 Comparison \- WunderGraph, accessed on April 26, 2026, [https://wundergraph.com/blog/graphql-vs-federation-vs-trpc-vs-rest-vs-grpc-vs-asyncapi-vs-webhooks](https://wundergraph.com/blog/graphql-vs-federation-vs-trpc-vs-rest-vs-grpc-vs-asyncapi-vs-webhooks)  
-35. REST vs GraphQL vs gRPC: Which API is Right for Your Project? \- Camunda, accessed on April 26, 2026, [https://camunda.com/blog/2023/06/rest-vs-graphql-vs-grpc-which-api-for-your-project/](https://camunda.com/blog/2023/06/rest-vs-graphql-vs-grpc-which-api-for-your-project/)  
-36. Rust Workspace Example: A Guide to Managing Multi-Crate Projects | by UATeam \- Medium, accessed on April 26, 2026, [https://medium.com/@aleksej.gudkov/rust-workspace-example-a-guide-to-managing-multi-crate-projects-82d318409260](https://medium.com/@aleksej.gudkov/rust-workspace-example-a-guide-to-managing-multi-crate-projects-82d318409260)  
-37. How to share external packages between projects \- Rust Users Forum, accessed on April 26, 2026, [https://users.rust-lang.org/t/how-to-share-external-packages-between-projects/94324](https://users.rust-lang.org/t/how-to-share-external-packages-between-projects/94324)  
+19. GitHub - martinthenth/rust-service-template: A modern Rust microservice template with GraphQL, gRPC, Kafka, PostgreSQL, and full observability out of the box., accessed on April 26, 2026, [https://github.com/martinthenth/rust-service-template](https://github.com/martinthenth/rust-service-template)  
+20. Introduction - PyO3 user guide, accessed on April 26, 2026, [https://pyo3.rs/](https://pyo3.rs/)  
+21. How to Build gRPC Services with grpcio in Python - OneUptime, accessed on April 26, 2026, [https://oneuptime.com/blog/post/2026-01-24-grpc-services-grpcio-python/view](https://oneuptime.com/blog/post/2026-01-24-grpc-services-grpcio-python/view)  
+22. grpc_graphql_gateway - crates.io: Rust Package Registry, accessed on April 26, 2026, [https://crates.io/crates/grpc-graphql-gateway/0.1.3](https://crates.io/crates/grpc-graphql-gateway/0.1.3)  
+23. I just ported grpc_graphql_gateway from Go to Rust! (open-source release) - Reddit, accessed on April 26, 2026, [https://www.reddit.com/r/rust/comments/1pchult/i_just_ported_grpc_graphql_gateway_from_go_to/](https://www.reddit.com/r/rust/comments/1pchult/i_just_ported_grpc_graphql_gateway_from_go_to/)  
+24. Building a High-Performance REST API in Rust with Diesel and Axum - Civo.com, accessed on April 26, 2026, [https://www.civo.com/learn/high-performance-rest-api-rust-diesel-axum](https://www.civo.com/learn/high-performance-rest-api-rust-diesel-axum)  
+25. diesel-rs/diesel: A safe, extensible ORM and Query Builder for Rust - GitHub, accessed on April 26, 2026, [https://github.com/diesel-rs/diesel](https://github.com/diesel-rs/diesel)  
+26. Building and distribution - PyO3 user guide, accessed on April 26, 2026, [https://pyo3.rs/main/building-and-distribution](https://pyo3.rs/main/building-and-distribution)  
+27. Sending data in both directions between Python and lengthy Rust module? - Stack Overflow, accessed on April 26, 2026, [https://stackoverflow.com/questions/77054031/sending-data-in-both-directions-between-python-and-lengthy-rust-module](https://stackoverflow.com/questions/77054031/sending-data-in-both-directions-between-python-and-lengthy-rust-module)  
+28. What did you build while learning Rust - Reddit, accessed on April 26, 2026, [https://www.reddit.com/r/rust/comments/1o3w69y/what_did_you_build_while_learning_rust/](https://www.reddit.com/r/rust/comments/1o3w69y/what_did_you_build_while_learning_rust/)  
+30. allframe_core - Rust - Docs.rs, accessed on April 26, 2026, [https://docs.rs/allframe-core](https://docs.rs/allframe-core)  
+31. REST vs GraphQL vs gRPC: Lessons from Building APIs in Rust, Go, and Java - Medium, accessed on April 26, 2026, [https://medium.com/@yachnytskyi1992/rest-vs-graphql-vs-grpc-lessons-from-building-apis-in-rust-go-and-java-e87e019ba0e5](https://medium.com/@yachnytskyi1992/rest-vs-graphql-vs-grpc-lessons-from-building-apis-in-rust-go-and-java-e87e019ba0e5)  
+32. When to use gRPC vs GraphQL - The Stack Overflow Blog, accessed on April 26, 2026, [https://stackoverflow.blog/2022/11/28/when-to-use-grpc-vs-graphql/](https://stackoverflow.blog/2022/11/28/when-to-use-grpc-vs-graphql/)  
+33. Deploying Machine Learning Models with PyTorch, gRPC, and asyncio - Roboflow Blog, accessed on April 26, 2026, [https://blog.roboflow.com/deploy-machine-learning-models-pytorch-grpc-asyncio/](https://blog.roboflow.com/deploy-machine-learning-models-pytorch-grpc-asyncio/)  
+34. When to use GraphQL vs Federation vs tRPC vs REST vs gRPC vs AsyncAPI vs WebHooks - A 2024 Comparison - WunderGraph, accessed on April 26, 2026, [https://wundergraph.com/blog/graphql-vs-federation-vs-trpc-vs-rest-vs-grpc-vs-asyncapi-vs-webhooks](https://wundergraph.com/blog/graphql-vs-federation-vs-trpc-vs-rest-vs-grpc-vs-asyncapi-vs-webhooks)  
+35. REST vs GraphQL vs gRPC: Which API is Right for Your Project? - Camunda, accessed on April 26, 2026, [https://camunda.com/blog/2023/06/rest-vs-graphql-vs-grpc-which-api-for-your-project/](https://camunda.com/blog/2023/06/rest-vs-graphql-vs-grpc-which-api-for-your-project/)  
+36. Rust Workspace Example: A Guide to Managing Multi-Crate Projects | by UATeam - Medium, accessed on April 26, 2026, [https://medium.com/@aleksej.gudkov/rust-workspace-example-a-guide-to-managing-multi-crate-projects-82d318409260](https://medium.com/@aleksej.gudkov/rust-workspace-example-a-guide-to-managing-multi-crate-projects-82d318409260)  
+37. How to share external packages between projects - Rust Users Forum, accessed on April 26, 2026, [https://users.rust-lang.org/t/how-to-share-external-packages-between-projects/94324](https://users.rust-lang.org/t/how-to-share-external-packages-between-projects/94324)  
 38. pyo3-examples · GitHub Topics, accessed on April 26, 2026, [https://github.com/topics/pyo3-examples](https://github.com/topics/pyo3-examples)  
-39. Rust \+ Actix \= super fast api \- Medium, accessed on April 26, 2026, [https://medium.com/coderhack-com/rust-actix-super-fast-api-40439c4538f1](https://medium.com/coderhack-com/rust-actix-super-fast-api-40439c4538f1)  
-40. FAQ and troubleshooting \- PyO3 user guide, accessed on April 26, 2026, [https://pyo3.rs/v0.28.3/faq](https://pyo3.rs/v0.28.3/faq)
+39. Rust + Actix \= super fast api - Medium, accessed on April 26, 2026, [https://medium.com/coderhack-com/rust-actix-super-fast-api-40439c4538f1](https://medium.com/coderhack-com/rust-actix-super-fast-api-40439c4538f1)  
+40. FAQ and troubleshooting - PyO3 user guide, accessed on April 26, 2026, [https://pyo3.rs/v0.28.3/faq](https://pyo3.rs/v0.28.3/faq)
 
 [image1]: <data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACQAAAAYCAYAAACSuF9OAAABTElEQVR4Xu2Vvy8EURDHv2hpFCr+BwkNHaHR6YlOQ6XW6uTkqrvqGhGdnkZ0Cj8bUaiEQiQSFOK375h5dvYlTnF7dov9JJ+8efP29s3em+wCJSXZ0qAP9NN5Tyv+ojwIxRSCDmgxh/FCXixAC5qKF/LiBgU6LqFQ/SNIMftxMi/+6p/xONFubtH8uOSd9K80659lOhYn20kXtJjTeIEMIF3oPD2gw/SIbtIz2kNP6B0d+rkauKKvbr5r4yR9dvkUa9BNp6N83fKyUWCLLtIXl5NrZiweoecW12z0D/Rb/M069Mbv9APJsYkyf6NPtD/8wLimo27ub7wBPeJAN5L1XuheAfmnM8EXIL116ebxU8tHe8XiVVp1a4Mubgm/6R6dszh8C4VZG7eRHKf06JLFOza2zAS05wK+YYVHpHuuE9oWx7QP2sgXFpeUZMoXYcdU3FGU3oMAAAAASUVORK5CYII=>
 

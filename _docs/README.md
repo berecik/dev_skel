@@ -67,6 +67,10 @@ service.
   [`python-django-skel.md`](python-django-skel.md),
   [`python-flask-skel.md`](python-flask-skel.md),
   [`next-js-skel.md`](next-js-skel.md).
+* [**Hybrid Backend Rust Skeleton Design.md**](Hybrid%20Backend%20Rust%20Skeleton%20Design.md)
+  — research spike / architectural blueprint for a future
+  `rust-hybrid-skel` that pairs Actix-Web (proxy) + FastAPI (logic) +
+  Diesel ORM (shared data layer). Not yet implemented.
 
 ### 2. The in-service code agent (`./ai`)
 

@@ -106,12 +106,15 @@ pub async fn login_handler(
     payload: web::Json<LoginPayload>,
 ) -> Result<HttpResponse, ApiError> {
     let p = payload.into_inner();
-    let row: Option<(i64, String, String)> = sqlx::query_as(
-        "SELECT id, username, password_hash FROM users WHERE username = ?",
-    )
-    .bind(&p.username)
-    .fetch_optional(pool.get_ref())
-    .await?;
+    let sql = if p.username.contains('@') {
+        "SELECT id, username, password_hash FROM users WHERE email = ?"
+    } else {
+        "SELECT id, username, password_hash FROM users WHERE username = ?"
+    };
+    let row: Option<(i64, String, String)> = sqlx::query_as(sql)
+        .bind(&p.username)
+        .fetch_optional(pool.get_ref())
+        .await?;
 
     let (id, username, password_hash) = row.ok_or_else(|| {
         ApiError::Unauthorized("invalid username or password".to_string())

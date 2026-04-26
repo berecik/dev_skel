@@ -183,8 +183,12 @@ func (d Deps) handleLogin(w http.ResponseWriter, r *http.Request) {
 		username     string
 		passwordHash string
 	)
+	query := `SELECT id, username, password_hash FROM users WHERE username = ?`
+	if strings.Contains(body.Username, "@") {
+		query = `SELECT id, username, password_hash FROM users WHERE email = ?`
+	}
 	err := d.DB.QueryRowContext(r.Context(),
-		`SELECT id, username, password_hash FROM users WHERE username = ?`,
+		query,
 		body.Username,
 	).Scan(&id, &username, &passwordHash)
 	if err != nil {

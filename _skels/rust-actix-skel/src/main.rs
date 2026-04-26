@@ -11,6 +11,7 @@ mod config;
 mod db;
 mod error;
 mod handlers;
+mod seed;
 
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use serde::{Deserialize, Serialize};
@@ -82,6 +83,11 @@ async fn main() -> std::io::Result<()> {
     let pool = db::connect_and_init(&cfg.database_url).await.map_err(|e| {
         tracing::error!(error = ?e, "failed to connect / init database");
         std::io::Error::other(format!("database init failed: {e}"))
+    })?;
+
+    seed::seed_default_accounts(&pool).await.map_err(|e| {
+        tracing::error!(error = ?e, "failed to seed default accounts");
+        std::io::Error::other(format!("seed failed: {e}"))
     })?;
 
     let cfg_data = web::Data::new(cfg.clone());

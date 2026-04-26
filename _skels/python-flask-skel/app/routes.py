@@ -127,7 +127,10 @@ def login():
     if not username or not password:
         return _unauthorized("invalid username or password")
 
-    user = db.session.query(User).filter_by(username=username).first()
+    if "@" in username:
+        user = db.session.query(User).filter_by(email=username).first()
+    else:
+        user = db.session.query(User).filter_by(username=username).first()
     if user is None or not verify_password(password, user.password_hash):
         return _unauthorized("invalid username or password")
 

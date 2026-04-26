@@ -1,6 +1,4 @@
-"""App config for the wrapper-shared backend stack."""
-
-from django.apps import AppConfig as DjangoAppConfig
+from django.apps import AppConfig
 from django.db.models.signals import post_migrate
 
 
@@ -13,12 +11,9 @@ def _seed_after_migrate(sender, **kwargs):
         logging.getLogger(__name__).warning("[seed] %s", exc)
 
 
-class AppConfig(DjangoAppConfig):
-    """Django app config — registered as ``app`` in INSTALLED_APPS."""
-
+class AppMainConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "app"
-    label = "app"
 
     def ready(self):
         post_migrate.connect(_seed_after_migrate, sender=self)

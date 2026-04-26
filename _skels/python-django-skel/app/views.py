@@ -73,7 +73,16 @@ class LoginView(APIView):
         password = request.data.get("password")
         if not username or not password:
             return _unauth("invalid username or password")
-        user = authenticate(request, username=username, password=password)
+        if "@" in username:
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            try:
+                user_obj = User.objects.get(email=username)
+            except User.DoesNotExist:
+                return _unauth("invalid username or password")
+            user = authenticate(request, username=user_obj.username, password=password)
+        else:
+            user = authenticate(request, username=username, password=password)
         if user is None or not user.is_active:
             return _unauth("invalid username or password")
         body = {

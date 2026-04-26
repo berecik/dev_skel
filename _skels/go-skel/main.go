@@ -18,6 +18,7 @@ import (
 	"github.com/example/go-skel/internal/config"
 	"github.com/example/go-skel/internal/db"
 	"github.com/example/go-skel/internal/handlers"
+	"github.com/example/go-skel/internal/seed"
 )
 
 func main() {
@@ -28,6 +29,10 @@ func main() {
 		log.Fatalf("open database (%s): %v", cfg.DatabaseURL, err)
 	}
 	defer conn.Close()
+
+	if err := seed.SeedDefaultAccounts(context.Background(), conn); err != nil {
+		log.Fatalf("seed default accounts: %v", err)
+	}
 
 	mux := http.NewServeMux()
 	handlers.Register(mux, handlers.Deps{Cfg: cfg, DB: conn})

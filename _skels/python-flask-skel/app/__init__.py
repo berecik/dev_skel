@@ -60,4 +60,13 @@ def create_app(config_class=Config):
     with app.app_context():
         db.create_all()
 
+        # Seed default accounts from env vars (USER_LOGIN, SUPERUSER_LOGIN, …).
+        # Wrapped in try/except so a missing or misconfigured env var never
+        # prevents the application from starting.
+        try:
+            from app.seed import seed_default_accounts
+            seed_default_accounts()
+        except Exception:
+            pass
+
     return app

@@ -958,6 +958,49 @@ def exercise_categories_api(
     return cat_id
 
 
+def check_seeded_accounts(backend_url: str) -> None:
+    """Verify that the default seeded accounts can log in (by username and email)."""
+
+    print()
+    print("Verifying seeded default accounts...")
+
+    accounts = [
+        ("user", "user@example.com", "secret", "default user"),
+        ("admin", "admin@example.com", "secret", "default superuser"),
+    ]
+    for username, email, password, label in accounts:
+        # Login by username
+        status, body = http_request(
+            "POST",
+            f"{backend_url}/api/auth/login",
+            body={"username": username, "password": password},
+        )
+        assert status == 200, (
+            f"{label} login by username failed: {status} {body}"
+        )
+        token = body.get("access") if isinstance(body, dict) else None
+        assert token, f"{label} login response missing access token: {body}"
+        print(f"  ✓ {label} login by username → 200")
+
+        # Verify JWT works
+        status2, _ = http_request(
+            "GET", f"{backend_url}/api/items",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert status2 == 200, f"{label} JWT rejected: {status2}"
+
+        # Login by email
+        status, body = http_request(
+            "POST",
+            f"{backend_url}/api/auth/login",
+            body={"username": email, "password": password},
+        )
+        assert status == 200, (
+            f"{label} login by email failed: {status} {body}"
+        )
+        print(f"  ✓ {label} login by email → 200")
+
+
 def exercise_items_api(backend_url: str) -> None:
     """Run the canonical register → login → CRUD → categories → reject flow.
 
@@ -965,6 +1008,8 @@ def exercise_items_api(backend_url: str) -> None:
     Raises :class:`AssertionError` on any sub-step failure so the
     surrounding script can print + clean up.
     """
+
+    check_seeded_accounts(backend_url)
 
     print()
     print("Exercising the cross-stack items API flow...")
@@ -1436,6 +1481,18 @@ def run_frontend_backend_integration(
         log_fp = open(server_log, "wb")
         server_env = os.environ.copy()
         server_env["BACKEND_URL"] = backend_url
+        # Load wrapper .env into server env so backends that don't
+        # load dotenv themselves (e.g. Next.js) still get the shared
+        # vars (USER_LOGIN, SUPERUSER_LOGIN, JWT_SECRET, etc.).
+        wrapper_env_file = wrapper / ".env"
+        if wrapper_env_file.is_file():
+            for line in wrapper_env_file.read_text().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    key, _, val = line.partition("=")
+                    server_env.setdefault(key.strip(), val.strip())
         server_env.update(spec.extra_env)
         server_argv = _format_argv(spec.server_argv_template, "127.0.0.1", port)
         server_proc = subprocess.Popen(

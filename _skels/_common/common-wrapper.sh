@@ -146,6 +146,16 @@ LOG_FORMAT=console
 # scheme or path (it takes precedence over OLLAMA_HOST when set).
 # OLLAMA_HOST=localhost:11434
 # OLLAMA_MODEL=qwen3-coder:30b
+
+# ----- Default accounts (seeded on first startup) ------------------------- #
+# Every backend creates these accounts at startup if they don't exist.
+# Change passwords before deploying to production.
+USER_LOGIN=user
+USER_EMAIL=user@example.com
+USER_PASSWORD=secret
+SUPERUSER_LOGIN=admin
+SUPERUSER_EMAIL=admin@example.com
+SUPERUSER_PASSWORD=secret
 EOF
 
 if [[ ! -f "$MAIN_DIR/.env" ]]; then

@@ -4,6 +4,7 @@ import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 import javax.sql.DataSource;
@@ -35,10 +36,12 @@ public class SchemaInitializer {
 
     private final JdbcTemplate jdbc;
     private final DataSource dataSource;
+    private final PasswordEncoder passwordEncoder;
 
-    public SchemaInitializer(JdbcTemplate jdbc, DataSource dataSource) {
+    public SchemaInitializer(JdbcTemplate jdbc, DataSource dataSource, PasswordEncoder passwordEncoder) {
         this.jdbc = jdbc;
         this.dataSource = dataSource;
+        this.passwordEncoder = passwordEncoder;
     }
 
     @PostConstruct
@@ -50,6 +53,7 @@ public class SchemaInitializer {
         createItems(dialect);
         addCategoryIdToItems(dialect);
         createReactState(dialect);
+        seedDefaultAccounts(jdbc, passwordEncoder);
     }
 
     private void createUsers(Dialect dialect) {
@@ -60,6 +64,7 @@ public class SchemaInitializer {
                     username      TEXT NOT NULL UNIQUE,
                     email         TEXT NOT NULL,
                     password_hash TEXT NOT NULL,
+                    is_superuser  BOOLEAN NOT NULL DEFAULT FALSE,
                     created_at    TIMESTAMP NOT NULL DEFAULT NOW()
                 )
                 """;
@@ -69,6 +74,7 @@ public class SchemaInitializer {
                     username      VARCHAR(255) NOT NULL UNIQUE,
                     email         VARCHAR(255) NOT NULL,
                     password_hash VARCHAR(255) NOT NULL,
+                    is_superuser  BOOLEAN NOT NULL DEFAULT FALSE,
                     created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """;
@@ -78,6 +84,7 @@ public class SchemaInitializer {
                     username      TEXT NOT NULL UNIQUE,
                     email         TEXT NOT NULL,
                     password_hash TEXT NOT NULL,
+                    is_superuser  INTEGER NOT NULL DEFAULT 0,
                     created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """;
@@ -212,6 +219,30 @@ public class SchemaInitializer {
                 """;
         };
         jdbc.execute(sql);
+    }
+
+    private void seedDefaultAccounts(JdbcTemplate jdbc, PasswordEncoder encoder) {
+        String[][] accounts = {
+            {env("USER_LOGIN", "user"), env("USER_EMAIL", "user@example.com"), env("USER_PASSWORD", "secret"), "false"},
+            {env("SUPERUSER_LOGIN", "admin"), env("SUPERUSER_EMAIL", "admin@example.com"), env("SUPERUSER_PASSWORD", "secret"), "true"},
+        };
+        for (String[] acct : accounts) {
+            String username = acct[0], email = acct[1], password = acct[2];
+            boolean isSuperuser = Boolean.parseBoolean(acct[3]);
+            Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE username = ?", Integer.class, username);
+            if (count != null && count > 0) {
+                log.info("[seed] Default user '{}' already exists", username);
+                continue;
+            }
+            jdbc.update("INSERT INTO users (username, email, password_hash, is_superuser) VALUES (?, ?, ?, ?)",
+                username, email, encoder.encode(password), isSuperuser);
+            log.info("[seed] Created default user '{}'", username);
+        }
+    }
+
+    private static String env(String key, String fallback) {
+        String val = System.getenv(key);
+        return (val != null && !val.isBlank()) ? val : fallback;
     }
 
     private Dialect detectDialect() {

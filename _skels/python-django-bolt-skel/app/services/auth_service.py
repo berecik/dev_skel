@@ -6,6 +6,7 @@ other service that follows the same convention.
 """
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.contrib.auth.models import User
 from django_bolt import Token, create_jwt_for_user
 
@@ -39,8 +40,12 @@ class AuthService:
 
     @staticmethod
     def authenticate_user(username: str, password: str):
+        User = get_user_model()
         try:
-            user = User.objects.get(username=username)
+            if "@" in username:
+                user = User.objects.get(email=username)
+            else:
+                user = User.objects.get(username=username)
         except User.DoesNotExist:
             return None
         if not user.check_password(password):

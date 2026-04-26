@@ -44,6 +44,7 @@ class WrapperUser(SQLModel, table=True):
     username: str = Field(index=True, unique=True)
     email: str
     hashed_password: str
+    is_superuser: bool = Field(default=False)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -118,6 +119,16 @@ SQLModel.metadata.create_all(_engine, tables=[
     ReactState.__table__,
 ])
 _SessionLocal = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=False)
+
+# Seed default accounts from env vars (idempotent — skips if they exist).
+from .seed import seed_default_accounts as _seed_default_accounts  # noqa: E402
+
+_seed_session = Session(_engine, autoflush=False, expire_on_commit=False)
+try:
+    _seed_default_accounts(_seed_session)
+finally:
+    _seed_session.close()
+del _seed_session
 
 
 def get_session() -> Iterator[Session]:

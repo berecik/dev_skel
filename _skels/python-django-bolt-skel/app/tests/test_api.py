@@ -137,3 +137,44 @@ def test_task_cascade_on_project_delete():
     pid = project.id
     project.delete()
     assert Task.objects.filter(project_id=pid).count() == 0
+
+
+# --------------------------------------------------------------------------- #
+#  Seed & email-login tests
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.django_db
+def test_default_user_can_login():
+    from app.seed import seed_default_accounts
+    seed_default_accounts()
+    result = AuthService.authenticate_user("user", "secret")
+    assert result is not None
+    assert "access" in result
+
+
+@pytest.mark.django_db
+def test_default_superuser_can_login():
+    from app.seed import seed_default_accounts
+    seed_default_accounts()
+    result = AuthService.authenticate_user("admin", "secret")
+    assert result is not None
+    assert "access" in result
+
+
+@pytest.mark.django_db
+def test_login_by_email():
+    from app.seed import seed_default_accounts
+    seed_default_accounts()
+    result = AuthService.authenticate_user("user@example.com", "secret")
+    assert result is not None
+    assert "access" in result
+
+
+@pytest.mark.django_db
+def test_login_by_email_superuser():
+    from app.seed import seed_default_accounts
+    seed_default_accounts()
+    result = AuthService.authenticate_user("admin@example.com", "secret")
+    assert result is not None
+    assert "access" in result

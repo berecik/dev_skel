@@ -9,6 +9,7 @@ const { mkdirSync } = require('node:fs');
 const { dirname, resolve, isAbsolute } = require('node:path');
 const Database = require('better-sqlite3');
 const { config } = require('../config');
+const { seedDefaultAccounts } = require('./seed');
 
 let _db = null;
 
@@ -29,7 +30,7 @@ function initDb(db) {
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
-      email TEXT,
+      email TEXT UNIQUE,
       password_hash TEXT NOT NULL,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
@@ -83,6 +84,7 @@ function getDb() {
   _db.pragma('journal_mode = WAL');
   _db.pragma('foreign_keys = ON');
   initDb(_db);
+  seedDefaultAccounts(_db);
   return _db;
 }
 

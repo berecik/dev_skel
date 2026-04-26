@@ -418,7 +418,11 @@
       "Bash(ps -p 54258 -o pid,ppid,state,etime,command)",
       "Bash(ps -p 54258 -o state,etime)",
       "Bash(ps *)",
-      "Bash(pkill -f \"skel-gen-ai.*test-pizzeria\")"
+      "Bash(pkill -f \"skel-gen-ai.*test-pizzeria\")",
+      "Bash(_bin/skel-gen-static _test_projects/test-env-check python-django-bolt-skel)",
+      "Bash(../_bin/skel-gen-static test-env-check *)",
+      "Bash(node -e \"require\\('dotenv'\\).config\\({path: '../.env'}\\); console.log\\('USER_LOGIN=' + process.env.USER_LOGIN\\)\")",
+      "Bash(node *)"
     ],
     "deny": [],
     "ask": []

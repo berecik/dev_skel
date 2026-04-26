@@ -20,7 +20,10 @@ export async function POST(request) {
     }
 
     const db = getDb();
-    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+    // Allow login by email or username — the column name is a hardcoded
+    // string ('email' or 'username'), not user input, so this is safe.
+    const column = username.includes('@') ? 'email' : 'username';
+    const user = db.prepare(`SELECT * FROM users WHERE ${column} = ?`).get(username);
 
     if (!user) {
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });

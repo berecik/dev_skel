@@ -11,6 +11,7 @@ mod config;
 mod db;
 mod error;
 mod handlers;
+mod seed;
 
 use axum::{
     extract::State,
@@ -105,6 +106,9 @@ async fn main() {
             std::process::exit(1);
         }
     };
+
+    // Seed default user accounts from env vars (idempotent).
+    seed::seed_default_accounts(&pool).await;
 
     let state = Arc::new(AppState {
         project_name: "rust-axum-skel".to_string(),

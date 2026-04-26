@@ -229,3 +229,55 @@ def test_state_roundtrip(client):
 
     final = client.get("/api/state", **auth)
     assert final.json() == {}
+
+
+@pytest.mark.django_db
+def test_default_user_can_login(client):
+    from app.seed import seed_default_accounts
+    seed_default_accounts()
+    resp = client.post(
+        "/api/auth/login",
+        data=json.dumps({"username": "user", "password": "secret"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    assert "access" in resp.json()
+
+
+@pytest.mark.django_db
+def test_default_superuser_can_login(client):
+    from app.seed import seed_default_accounts
+    seed_default_accounts()
+    resp = client.post(
+        "/api/auth/login",
+        data=json.dumps({"username": "admin", "password": "secret"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    assert "access" in resp.json()
+
+
+@pytest.mark.django_db
+def test_login_by_email(client):
+    from app.seed import seed_default_accounts
+    seed_default_accounts()
+    resp = client.post(
+        "/api/auth/login",
+        data=json.dumps({"username": "user@example.com", "password": "secret"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    assert "access" in resp.json()
+
+
+@pytest.mark.django_db
+def test_login_by_email_superuser(client):
+    from app.seed import seed_default_accounts
+    seed_default_accounts()
+    resp = client.post(
+        "/api/auth/login",
+        data=json.dumps({"username": "admin@example.com", "password": "secret"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    assert "access" in resp.json()

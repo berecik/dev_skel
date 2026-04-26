@@ -978,6 +978,15 @@ The Ollama side uses `OLLAMA_HOST` as the primary knob (`host:port`);
 `OLLAMA_BASE_URL` is an optional override that takes precedence when set.
 Other env vars: `OLLAMA_MODEL`, `OLLAMA_TIMEOUT`, `OLLAMA_TEMPERATURE`.
 
+#### Default account seeding
+
+Every backend reads `USER_LOGIN`, `USER_EMAIL`, `USER_PASSWORD`,
+`SUPERUSER_LOGIN`, `SUPERUSER_EMAIL`, `SUPERUSER_PASSWORD` from the
+wrapper `.env` and creates the corresponding accounts at startup if
+they don't already exist. The seed is idempotent. Login endpoints
+across all backends accept either a username or an email address in
+the `username` field (detected via `@`).
+
 #### Legacy entry points (preserved by the shim)
 
 - `OllamaConfig.from_env()` — reads `OLLAMA_HOST` (primary),

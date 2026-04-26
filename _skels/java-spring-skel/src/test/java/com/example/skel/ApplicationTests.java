@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -119,5 +120,41 @@ class ApplicationTests {
         // Root is unauthenticated by design — only /api/items and
         // /api/state are JWT-protected. This test pins that contract.
         assertEquals(0, 0); // sentinel — the assertion is the status check above
+    }
+
+    @Test
+    void defaultUserCanLogin() throws Exception {
+        mockMvc.perform(post("/api/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\": \"user\", \"password\": \"secret\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.access").isNotEmpty());
+    }
+
+    @Test
+    void defaultSuperuserCanLogin() throws Exception {
+        mockMvc.perform(post("/api/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\": \"admin\", \"password\": \"secret\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.access").isNotEmpty());
+    }
+
+    @Test
+    void loginByEmail() throws Exception {
+        mockMvc.perform(post("/api/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\": \"user@example.com\", \"password\": \"secret\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.access").isNotEmpty());
+    }
+
+    @Test
+    void loginByEmailSuperuser() throws Exception {
+        mockMvc.perform(post("/api/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\": \"admin@example.com\", \"password\": \"secret\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.access").isNotEmpty());
     }
 }

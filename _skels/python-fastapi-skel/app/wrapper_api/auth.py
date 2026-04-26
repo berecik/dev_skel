@@ -60,9 +60,12 @@ def register(payload: RegisterRequest, session: SessionDep) -> RegisterResponse:
 
 @router.post("/login", response_model=LoginResponse)
 def login(payload: LoginRequest, session: SessionDep) -> LoginResponse:
-    user = session.exec(
-        select(WrapperUser).where(WrapperUser.username == payload.username)
-    ).first()
+    # Allow login by email when the submitted value contains "@".
+    if "@" in payload.username:
+        stmt = select(WrapperUser).where(WrapperUser.email == payload.username)
+    else:
+        stmt = select(WrapperUser).where(WrapperUser.username == payload.username)
+    user = session.exec(stmt).first()
     if user is None or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     return LoginResponse(

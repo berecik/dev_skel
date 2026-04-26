@@ -71,6 +71,24 @@ const config = {
     host: process.env.SERVICE_HOST || '0.0.0.0',
     port: intFromEnv('SERVICE_PORT', intFromEnv('PORT', 3000)),
   },
+  seed: [
+    // Regular user account (from USER_* env vars)
+    ...(process.env.USER_LOGIN
+      ? [{
+          username: process.env.USER_LOGIN,
+          email: process.env.USER_EMAIL || null,
+          password: process.env.USER_PASSWORD || '',
+        }]
+      : []),
+    // Superuser account (from SUPERUSER_* env vars)
+    ...(process.env.SUPERUSER_LOGIN
+      ? [{
+          username: process.env.SUPERUSER_LOGIN,
+          email: process.env.SUPERUSER_EMAIL || null,
+          password: process.env.SUPERUSER_PASSWORD || '',
+        }]
+      : []),
+  ],
 };
 
 module.exports = { config, dbPathFromUrl };

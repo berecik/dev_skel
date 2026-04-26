@@ -6,6 +6,8 @@ flow against an in-memory SQLite database. Mirrors the smoke that
 catch regressions much faster.
 """
 
+import os
+
 import pytest
 
 from app import create_app, db
@@ -22,6 +24,24 @@ def app():
         yield app
         db.session.remove()
         db.drop_all()
+
+
+def _make_seeded_app(env_vars):
+    """Create an app with the given env vars set for seeding."""
+
+    old = {}
+    for key, value in env_vars.items():
+        old[key] = os.environ.get(key)
+        os.environ[key] = value
+    try:
+        app = create_app(TestConfig)
+    finally:
+        for key, prev in old.items():
+            if prev is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prev
+    return app
 
 
 @pytest.fixture
@@ -271,3 +291,96 @@ def test_state_roundtrip(client):
 
     final = client.get("/api/state", headers=headers)
     assert final.get_json() == {}
+
+
+# --------------------------------------------------------------------------- #
+#  Seed default accounts + login by email-or-username
+# --------------------------------------------------------------------------- #
+
+
+def test_seed_user_login_by_username():
+    """Seeded regular user can log in by username."""
+
+    app = _make_seeded_app({
+        "USER_LOGIN": "user",
+        "USER_EMAIL": "user@example.com",
+        "USER_PASSWORD": "secret",
+    })
+    with app.app_context():
+        client = app.test_client()
+        resp = client.post("/api/auth/login", json={
+            "username": "user",
+            "password": "secret",
+        })
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["username"] == "user"
+        assert data["access"]
+        db.session.remove()
+        db.drop_all()
+
+
+def test_seed_user_login_by_email():
+    """Seeded regular user can log in by email."""
+
+    app = _make_seeded_app({
+        "USER_LOGIN": "user",
+        "USER_EMAIL": "user@example.com",
+        "USER_PASSWORD": "secret",
+    })
+    with app.app_context():
+        client = app.test_client()
+        resp = client.post("/api/auth/login", json={
+            "username": "user@example.com",
+            "password": "secret",
+        })
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["username"] == "user"
+        assert data["access"]
+        db.session.remove()
+        db.drop_all()
+
+
+def test_seed_superuser_login_by_username():
+    """Seeded superuser can log in by username."""
+
+    app = _make_seeded_app({
+        "SUPERUSER_LOGIN": "admin",
+        "SUPERUSER_EMAIL": "admin@example.com",
+        "SUPERUSER_PASSWORD": "secret",
+    })
+    with app.app_context():
+        client = app.test_client()
+        resp = client.post("/api/auth/login", json={
+            "username": "admin",
+            "password": "secret",
+        })
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["username"] == "admin"
+        assert data["access"]
+        db.session.remove()
+        db.drop_all()
+
+
+def test_seed_superuser_login_by_email():
+    """Seeded superuser can log in by email."""
+
+    app = _make_seeded_app({
+        "SUPERUSER_LOGIN": "admin",
+        "SUPERUSER_EMAIL": "admin@example.com",
+        "SUPERUSER_PASSWORD": "secret",
+    })
+    with app.app_context():
+        client = app.test_client()
+        resp = client.post("/api/auth/login", json={
+            "username": "admin@example.com",
+            "password": "secret",
+        })
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["username"] == "admin"
+        assert data["access"]
+        db.session.remove()
+        db.drop_all()

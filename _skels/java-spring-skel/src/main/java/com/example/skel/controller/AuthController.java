@@ -101,10 +101,13 @@ public class AuthController {
         if (body == null || body.username() == null || body.password() == null) {
             return error(HttpStatus.UNAUTHORIZED, "invalid username or password");
         }
+        String sql = body.username().contains("@")
+            ? "SELECT id, username, password_hash FROM users WHERE email = ?"
+            : "SELECT id, username, password_hash FROM users WHERE username = ?";
         Map<String, Object> row;
         try {
             row = client
-                .sql("SELECT id, username, password_hash FROM users WHERE username = ?")
+                .sql(sql)
                 .param(body.username())
                 .query()
                 .singleRow();

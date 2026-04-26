@@ -168,6 +168,20 @@ Skip individual phases with `--no-integrate`, `--no-test-fix`,
 CLI overrides: `--ollama-url`, `--ollama-model`, `--fix-timeout-m`,
 `--max-files`.
 
+### Default accounts
+
+| Env | Default | Notes |
+| --- | ------- | ----- |
+| `USER_LOGIN` | `user` | Default regular user username |
+| `USER_EMAIL` | `user@example.com` | Default regular user email |
+| `USER_PASSWORD` | `secret` | Default regular user password |
+| `SUPERUSER_LOGIN` | `admin` | Default superuser username |
+| `SUPERUSER_EMAIL` | `admin@example.com` | Default superuser email |
+| `SUPERUSER_PASSWORD` | `secret` | Default superuser password |
+
+Every backend seeds these accounts at startup if they don't exist.
+Login accepts either username or email in the `username` field.
+
 ### AI pipeline quality features
 
 The generator includes three quality mechanisms that run automatically:

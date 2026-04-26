@@ -99,9 +99,12 @@ pub async fn login_handler(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<LoginPayload>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let row: Option<(i64, String, String)> = sqlx::query_as(
-        "SELECT id, username, password_hash FROM users WHERE username = ?",
-    )
+    let sql = if payload.username.contains('@') {
+        "SELECT id, username, password_hash FROM users WHERE email = ?"
+    } else {
+        "SELECT id, username, password_hash FROM users WHERE username = ?"
+    };
+    let row: Option<(i64, String, String)> = sqlx::query_as(sql)
     .bind(&payload.username)
     .fetch_optional(&state.pool)
     .await?;
