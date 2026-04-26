@@ -281,3 +281,161 @@ def test_login_by_email_superuser(client):
     )
     assert resp.status_code == 200
     assert "access" in resp.json()
+
+
+# --------------------------------------------------------------------------- #
+#  Order workflow tests
+# --------------------------------------------------------------------------- #
+
+
+def _create_catalog_item(client, auth, name="Widget", price=9.99):
+    """Helper: create a catalog item and return its JSON."""
+    resp = client.post(
+        "/api/catalog",
+        data=json.dumps({"name": name, "price": price}),
+        content_type="application/json",
+        **auth,
+    )
+    assert resp.status_code == 201, resp.content
+    return resp.json()
+
+
+@pytest.mark.django_db
+def test_order_workflow(client):
+    """Full happy path: create catalog item, draft order, add lines,
+    set address, submit, approve."""
+    # Register and get auth token
+    reg = _register(client, "order_user")
+    token = reg.json()["access"]
+    auth = {"HTTP_AUTHORIZATION": f"Bearer {token}"}
+
+    # 1. Create catalog items
+    widget = _create_catalog_item(client, auth, "Widget", 9.99)
+    gadget = _create_catalog_item(client, auth, "Gadget", 19.99)
+
+    # Verify catalog list
+    catalog = client.get("/api/catalog", **auth)
+    assert catalog.status_code == 200
+    assert len(catalog.json()) == 2
+
+    # Verify catalog detail
+    detail = client.get(f"/api/catalog/{widget['id']}", **auth)
+    assert detail.status_code == 200
+    assert detail.json()["name"] == "Widget"
+
+    # 2. Create draft order
+    order_resp = client.post("/api/orders", content_type="application/json", **auth)
+    assert order_resp.status_code == 201
+    order = order_resp.json()
+    assert order["status"] == "draft"
+    order_id = order["id"]
+
+    # 3. Add lines
+    line1 = client.post(
+        f"/api/orders/{order_id}/lines",
+        data=json.dumps({"catalog_item_id": widget["id"], "quantity": 3}),
+        content_type="application/json",
+        **auth,
+    )
+    assert line1.status_code == 201
+    assert line1.json()["quantity"] == 3
+    assert line1.json()["unit_price"] == 9.99
+
+    line2 = client.post(
+        f"/api/orders/{order_id}/lines",
+        data=json.dumps({"catalog_item_id": gadget["id"], "quantity": 1}),
+        content_type="application/json",
+        **auth,
+    )
+    assert line2.status_code == 201
+
+    # 4. Delete a line
+    del_resp = client.delete(f"/api/orders/{order_id}/lines/{line2.json()['id']}", **auth)
+    assert del_resp.status_code == 200
+
+    # 5. Set address
+    addr_resp = client.put(
+        f"/api/orders/{order_id}/address",
+        data=json.dumps({
+            "street": "123 Main St",
+            "city": "Springfield",
+            "zip_code": "62701",
+            "phone": "555-1234",
+            "notes": "Ring bell",
+        }),
+        content_type="application/json",
+        **auth,
+    )
+    assert addr_resp.status_code == 200
+    assert addr_resp.json()["city"] == "Springfield"
+
+    # 6. Verify order detail (nested lines + address)
+    detail = client.get(f"/api/orders/{order_id}", **auth)
+    assert detail.status_code == 200
+    body = detail.json()
+    assert len(body["lines"]) == 1
+    assert body["address"]["street"] == "123 Main St"
+
+    # 7. Submit (draft -> pending)
+    submit_resp = client.post(f"/api/orders/{order_id}/submit", **auth)
+    assert submit_resp.status_code == 200
+    assert submit_resp.json()["status"] == "pending"
+    assert submit_resp.json()["submitted_at"] is not None
+
+    # 8. Approve
+    approve_resp = client.post(
+        f"/api/orders/{order_id}/approve",
+        data=json.dumps({"wait_minutes": 30, "feedback": "looks good"}),
+        content_type="application/json",
+        **auth,
+    )
+    assert approve_resp.status_code == 200
+    assert approve_resp.json()["status"] == "approved"
+    assert approve_resp.json()["wait_minutes"] == 30
+    assert approve_resp.json()["feedback"] == "looks good"
+
+    # 9. Verify orders list
+    orders_list = client.get("/api/orders", **auth)
+    assert orders_list.status_code == 200
+    assert len(orders_list.json()) == 1
+    assert orders_list.json()[0]["status"] == "approved"
+
+
+@pytest.mark.django_db
+def test_order_reject(client):
+    """Reject path: create order, submit, reject with feedback."""
+    reg = _register(client, "reject_user")
+    token = reg.json()["access"]
+    auth = {"HTTP_AUTHORIZATION": f"Bearer {token}"}
+
+    # Create a catalog item and order with a line
+    item = _create_catalog_item(client, auth, "Doohickey", 5.00)
+    order_resp = client.post("/api/orders", content_type="application/json", **auth)
+    order_id = order_resp.json()["id"]
+
+    client.post(
+        f"/api/orders/{order_id}/lines",
+        data=json.dumps({"catalog_item_id": item["id"], "quantity": 1}),
+        content_type="application/json",
+        **auth,
+    )
+
+    # Submit
+    submit = client.post(f"/api/orders/{order_id}/submit", **auth)
+    assert submit.status_code == 200
+    assert submit.json()["status"] == "pending"
+
+    # Reject
+    reject = client.post(
+        f"/api/orders/{order_id}/reject",
+        data=json.dumps({"feedback": "out of stock"}),
+        content_type="application/json",
+        **auth,
+    )
+    assert reject.status_code == 200
+    assert reject.json()["status"] == "rejected"
+    assert reject.json()["feedback"] == "out of stock"
+
+    # Cannot submit again (not draft)
+    re_submit = client.post(f"/api/orders/{order_id}/submit", **auth)
+    assert re_submit.status_code == 400

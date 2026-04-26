@@ -1323,6 +1323,206 @@ def exercise_items_api(backend_url: str) -> None:
         f"(JWT validation works)"
     )
 
+    # After items, exercise the order workflow if the backend supports it.
+    exercise_orders_api(backend_url, auth_headers)
+
+
+def exercise_orders_api(
+    backend_url: str, auth_headers: Optional[Dict[str, str]] = None,
+) -> None:
+    """Exercise the multi-entity order workflow (catalog + orders + lines + address).
+
+    If *auth_headers* is None, registers a fresh user and logs in.
+    Silently returns if the backend does not support ``/api/catalog``
+    (older skeletons or frontends-only).
+    """
+
+    # Probe: does this backend have the order workflow?
+    probe_status, _ = http_request(
+        "GET", f"{backend_url}/api/catalog", timeout=5,
+    )
+    if probe_status == 404:
+        print()
+        print("  (skipping order workflow -- /api/catalog not found)")
+        return
+
+    if auth_headers is None:
+        # Register + login to get a token
+        http_request(
+            "POST",
+            f"{backend_url}/api/auth/register",
+            body={
+                "username": "order-test-user",
+                "email": "order-test@example.com",
+                "password": "order-test-pw-12345",
+                "password_confirm": "order-test-pw-12345",
+            },
+        )
+        status, body = http_request(
+            "POST",
+            f"{backend_url}/api/auth/login",
+            body={
+                "username": "order-test-user",
+                "password": "order-test-pw-12345",
+            },
+        )
+        assert status == 200, f"order-test login failed: {status} {body}"
+        token = (
+            (body.get("access") or body.get("access_token") or body.get("token"))
+            if isinstance(body, dict)
+            else None
+        )
+        assert token, f"order-test login missing token: {body}"
+        auth_headers = {"Authorization": f"Bearer {token}"}
+
+    print()
+    print("Exercising the order workflow API...")
+
+    # Catalog: create 3 items
+    catalog_ids = []
+    for item in [
+        {"name": "Widget A", "price": 10.50, "category": "widgets"},
+        {"name": "Widget B", "price": 20.00, "category": "widgets"},
+        {"name": "Gadget C", "price": 5.75, "category": "gadgets"},
+    ]:
+        status, body = http_request(
+            "POST", f"{backend_url}/api/catalog",
+            body=item, headers=auth_headers,
+        )
+        assert status in (200, 201), (
+            f"create catalog '{item['name']}' failed: {status} {body}"
+        )
+        catalog_ids.append(body["id"] if isinstance(body, dict) else None)
+    print("  ✓ POST /api/catalog x3 (created 3 catalog items)")
+
+    # List catalog
+    status, cat_list = http_request(
+        "GET", f"{backend_url}/api/catalog", headers=auth_headers,
+    )
+    assert status == 200, f"list catalog failed: {status}"
+    items = cat_list if isinstance(cat_list, list) else (
+        (cat_list.get("results") or cat_list.get("items") or [])
+        if isinstance(cat_list, dict) else []
+    )
+    assert len(items) >= 3, f"expected >=3 catalog items, got {len(items)}"
+    print(f"  ✓ GET /api/catalog → 200 ({len(items)} items)")
+
+    # Create order draft
+    status, order = http_request(
+        "POST", f"{backend_url}/api/orders",
+        body={}, headers=auth_headers,
+    )
+    assert status in (200, 201), f"create order failed: {status} {order}"
+    order_id = order.get("id") if isinstance(order, dict) else None
+    assert order_id is not None, f"order missing id: {order}"
+    assert order.get("status") == "draft", f"expected draft: {order}"
+    print(f"  ✓ POST /api/orders → draft (id={order_id})")
+
+    # Add 2 lines
+    cid_a = catalog_ids[0]
+    cid_c = catalog_ids[2]
+    status, _ = http_request(
+        "POST", f"{backend_url}/api/orders/{order_id}/lines",
+        body={"catalog_item_id": cid_a, "quantity": 2},
+        headers=auth_headers,
+    )
+    assert status in (200, 201), f"add line A failed: {status}"
+    status, _ = http_request(
+        "POST", f"{backend_url}/api/orders/{order_id}/lines",
+        body={"catalog_item_id": cid_c, "quantity": 1},
+        headers=auth_headers,
+    )
+    assert status in (200, 201), f"add line C failed: {status}"
+    print("  ✓ POST /api/orders/{id}/lines x2")
+
+    # Set address
+    status, _ = http_request(
+        "PUT", f"{backend_url}/api/orders/{order_id}/address",
+        body={
+            "street": "123 Test St",
+            "city": "Testville",
+            "zip_code": "00-001",
+            "phone": "+1 555 0100",
+            "notes": "Leave at door",
+        },
+        headers=auth_headers,
+    )
+    assert status in (200, 201), f"set address failed: {status}"
+    print("  ✓ PUT /api/orders/{id}/address → 200")
+
+    # Verify order detail
+    status, detail = http_request(
+        "GET", f"{backend_url}/api/orders/{order_id}",
+        headers=auth_headers,
+    )
+    assert status == 200, f"get order detail failed: {status}"
+    lines = (
+        detail.get("lines") or detail.get("order_lines") or []
+    ) if isinstance(detail, dict) else []
+    addr = (
+        detail.get("address") or detail.get("order_address")
+    ) if isinstance(detail, dict) else None
+    assert len(lines) == 2, f"expected 2 lines, got {len(lines)}"
+    assert addr is not None, f"expected address, got None"
+    print(f"  ✓ GET /api/orders/{order_id} → 2 lines + address")
+
+    # Submit
+    status, submitted = http_request(
+        "POST", f"{backend_url}/api/orders/{order_id}/submit",
+        body={}, headers=auth_headers,
+    )
+    assert status == 200, f"submit failed: {status} {submitted}"
+    assert submitted.get("status") == "pending", f"expected pending: {submitted}"
+    print("  ✓ POST /api/orders/{id}/submit → pending")
+
+    # Approve
+    status, approved = http_request(
+        "POST", f"{backend_url}/api/orders/{order_id}/approve",
+        body={"wait_minutes": 25, "feedback": "Processing your order!"},
+        headers=auth_headers,
+    )
+    assert status == 200, f"approve failed: {status} {approved}"
+    assert approved.get("status") == "approved", f"expected approved: {approved}"
+    assert approved.get("wait_minutes") == 25, f"wait_minutes: {approved}"
+    print("  ✓ POST /api/orders/{id}/approve → approved (wm=25)")
+
+    # Second order: reject path
+    status, order2 = http_request(
+        "POST", f"{backend_url}/api/orders",
+        body={}, headers=auth_headers,
+    )
+    assert status in (200, 201)
+    order2_id = order2["id"]
+    http_request(
+        "POST", f"{backend_url}/api/orders/{order2_id}/lines",
+        body={"catalog_item_id": cid_a, "quantity": 1},
+        headers=auth_headers,
+    )
+    http_request(
+        "PUT", f"{backend_url}/api/orders/{order2_id}/address",
+        body={"street": "456 Other St", "city": "Testville", "zip_code": "00-002"},
+        headers=auth_headers,
+    )
+    http_request(
+        "POST", f"{backend_url}/api/orders/{order2_id}/submit",
+        body={}, headers=auth_headers,
+    )
+    status, rejected = http_request(
+        "POST", f"{backend_url}/api/orders/{order2_id}/reject",
+        body={"feedback": "Out of stock, sorry."},
+        headers=auth_headers,
+    )
+    assert status == 200, f"reject failed: {status} {rejected}"
+    assert rejected.get("status") == "rejected", f"expected rejected: {rejected}"
+    print("  ✓ POST /api/orders/{id}/reject → rejected")
+
+    # Anonymous access
+    status, _ = http_request("GET", f"{backend_url}/api/orders")
+    assert status in (401, 403), f"anonymous expected 401/403: {status}"
+    print("  ✓ GET /api/orders without token → 401")
+
+    print("  ✓ Order workflow complete")
+
 
 # --------------------------------------------------------------------------- #
 #  Top-level driver shared by every per-backend test script

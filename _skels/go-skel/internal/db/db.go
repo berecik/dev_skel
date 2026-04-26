@@ -71,6 +71,45 @@ func initSchema(conn *sql.DB) error {
 			UNIQUE(user_id, state_key),
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 		);`,
+		`CREATE TABLE IF NOT EXISTS catalog_items (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			name        TEXT NOT NULL,
+			description TEXT DEFAULT '',
+			price       REAL NOT NULL DEFAULT 0.0,
+			category    TEXT DEFAULT '',
+			available   INTEGER DEFAULT 1,
+			created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);`,
+		`CREATE TABLE IF NOT EXISTS orders (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id       INTEGER NOT NULL,
+			status        TEXT NOT NULL DEFAULT 'draft',
+			created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			submitted_at  TEXT,
+			wait_minutes  INTEGER,
+			feedback      TEXT,
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+		);`,
+		`CREATE TABLE IF NOT EXISTS order_lines (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			order_id        INTEGER NOT NULL,
+			catalog_item_id INTEGER NOT NULL,
+			quantity        INTEGER NOT NULL DEFAULT 1,
+			unit_price      TEXT NOT NULL DEFAULT '0.00',
+			FOREIGN KEY (order_id)        REFERENCES orders(id)        ON DELETE CASCADE,
+			FOREIGN KEY (catalog_item_id) REFERENCES catalog_items(id) ON DELETE CASCADE
+		);`,
+		`CREATE TABLE IF NOT EXISTS order_addresses (
+			id       INTEGER PRIMARY KEY AUTOINCREMENT,
+			order_id INTEGER NOT NULL UNIQUE,
+			street   TEXT NOT NULL DEFAULT '',
+			city     TEXT NOT NULL DEFAULT '',
+			zip_code TEXT NOT NULL DEFAULT '',
+			phone    TEXT,
+			notes    TEXT,
+			FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+		);`,
 	}
 	for _, q := range stmts {
 		if _, err := conn.Exec(q); err != nil {

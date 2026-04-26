@@ -422,7 +422,14 @@
       "Bash(_bin/skel-gen-static _test_projects/test-env-check python-django-bolt-skel)",
       "Bash(../_bin/skel-gen-static test-env-check *)",
       "Bash(node -e \"require\\('dotenv'\\).config\\({path: '../.env'}\\); console.log\\('USER_LOGIN=' + process.env.USER_LOGIN\\)\")",
-      "Bash(node *)"
+      "Bash(node *)",
+      "Bash(OLLAMA_HOST=paul:11434 make test-pizzeria-orders-keep)",
+      "Bash(OLLAMA_HOST=paul:11434 SKEL_AI_VERBOSE=1 python3 _bin/skel-test-pizzeria-orders --keep --skip-flutter-build)",
+      "Bash(pkill -f \"uvicorn app:get_app\")",
+      "Bash(/tmp/bench-pizzeria.sh paul *)",
+      "Bash(/tmp/bench-pizzeria.sh localhost *)",
+      "Bash(.venv/bin/python *)",
+      "Bash(kill 54373)"
     ],
     "deny": [],
     "ask": []

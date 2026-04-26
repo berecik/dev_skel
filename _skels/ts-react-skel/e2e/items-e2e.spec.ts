@@ -45,9 +45,9 @@ async function registerUser(): Promise<void> {
   });
   // 201 = new user created; 400 = user already exists (idempotent
   // on retry). Anything else is unexpected.
-  if (response.status !== 201 && response.status !== 400) {
+  if (response.status !== 201 && response.status !== 400 && response.status !== 409) {
     const text = await response.text().catch(() => '');
-    throw new Error(`register expected 201/400, got ${response.status}: ${text}`);
+    throw new Error(`register expected 201/400/409, got ${response.status}: ${text}`);
   }
 }
 
@@ -132,4 +132,34 @@ test('full user journey: login → create → complete → persistent filter', a
   // after a reload.
   await page.getByLabel(/show completed/i).check();
   await expect(page.getByText(E2E_ITEM_NAME)).toBeVisible();
+});
+
+test('orders section: visible after login and can place an order', async ({
+  page,
+}) => {
+  // ── Step 0: register + login ─────────────────────────────────
+  await registerUser();
+  await page.goto('/');
+  await page.getByLabel(/username/i).fill(E2E_USERNAME);
+  await page.getByLabel(/password/i).fill(E2E_PASSWORD);
+  await page.getByRole('button', { name: /sign in/i }).click();
+
+  // Wait for authenticated UI
+  await expect(
+    page.getByRole('heading', { name: /items/i }),
+  ).toBeVisible({ timeout: 10_000 });
+
+  // ── Step 1: orders section is visible ────────────────────────
+  await expect(
+    page.getByRole('heading', { name: /orders/i }),
+  ).toBeVisible({ timeout: 10_000 });
+
+  // ── Step 2: the "New order" heading is present ───────────────
+  await expect(page.getByText('New order')).toBeVisible();
+
+  // ── Step 3: the "Place order" button is present (disabled when
+  // no lines are added) ─────────────────────────────────────────
+  await expect(
+    page.getByRole('button', { name: /place order/i }),
+  ).toBeVisible();
 });

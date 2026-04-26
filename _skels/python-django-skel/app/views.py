@@ -9,12 +9,26 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from app.models import Category, Item, ReactState
+from app.models import (
+    CatalogItem,
+    Category,
+    Item,
+    Order,
+    OrderAddress,
+    OrderLine,
+    ReactState,
+)
 from app.serializers import (
+    CatalogItemCreateSerializer,
+    CatalogItemSerializer,
     CategoryCreateSerializer,
     CategorySerializer,
     ItemCreateSerializer,
     ItemSerializer,
+    OrderAddressSerializer,
+    OrderDetailSerializer,
+    OrderLineSerializer,
+    OrderListSerializer,
     RegisterSerializer,
     StateUpsertSerializer,
     UserOutSerializer,
@@ -193,6 +207,209 @@ class StateKeyView(APIView):
     def delete(self, request, key: str):
         ReactState.objects.filter(user=request.user, key=key).delete()
         return Response({}, status=status.HTTP_200_OK)
+
+
+# --------------------------------------------------------------------------- #
+#  Order workflow views
+# --------------------------------------------------------------------------- #
+
+
+class CatalogListCreateView(APIView):
+    """GET /api/catalog — list all catalog items.
+    POST /api/catalog — create a new catalog item.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        items = CatalogItem.objects.all().order_by("id")
+        return Response(CatalogItemSerializer(items, many=True).data)
+
+    def post(self, request):
+        serializer = CatalogItemCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        item = serializer.save()
+        return Response(CatalogItemSerializer(item).data, status=status.HTTP_201_CREATED)
+
+
+class CatalogDetailView(APIView):
+    """GET /api/catalog/{id} — retrieve a single catalog item."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            item = CatalogItem.objects.get(pk=pk)
+        except CatalogItem.DoesNotExist:
+            return Response({"detail": "not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(CatalogItemSerializer(item).data)
+
+
+class OrderListCreateView(APIView):
+    """POST /api/orders — create a draft order for the current user.
+    GET  /api/orders — list the current user's orders.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        order = Order.objects.create(user=request.user, status="draft")
+        return Response(OrderDetailSerializer(order).data, status=status.HTTP_201_CREATED)
+
+    def get(self, request):
+        orders = Order.objects.filter(user=request.user).order_by("-created_at")
+        return Response(OrderListSerializer(orders, many=True).data)
+
+
+class OrderDetailView(APIView):
+    """GET /api/orders/{id} — order detail with nested lines + address."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            order = Order.objects.prefetch_related("lines").select_related("address").get(
+                pk=pk, user=request.user,
+            )
+        except Order.DoesNotExist:
+            return Response({"detail": "not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(OrderDetailSerializer(order).data)
+
+
+class OrderLineCreateView(APIView):
+    """POST /api/orders/{id}/lines — add a line to a draft order."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            order = Order.objects.get(pk=pk, user=request.user)
+        except Order.DoesNotExist:
+            return Response({"detail": "not found"}, status=status.HTTP_404_NOT_FOUND)
+        if order.status != "draft":
+            return Response(
+                {"detail": "can only add lines to draft orders"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        catalog_item_id = request.data.get("catalog_item_id")
+        quantity = request.data.get("quantity", 1)
+        try:
+            catalog_item = CatalogItem.objects.get(pk=catalog_item_id)
+        except CatalogItem.DoesNotExist:
+            return Response({"detail": "catalog item not found"}, status=status.HTTP_404_NOT_FOUND)
+        line = OrderLine.objects.create(
+            order=order,
+            catalog_item=catalog_item,
+            quantity=quantity,
+            unit_price=catalog_item.price,
+        )
+        return Response(OrderLineSerializer(line).data, status=status.HTTP_201_CREATED)
+
+
+class OrderLineDeleteView(APIView):
+    """DELETE /api/orders/{id}/lines/{line_id} — remove a line from a draft order."""
+
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk, line_id):
+        try:
+            order = Order.objects.get(pk=pk, user=request.user)
+        except Order.DoesNotExist:
+            return Response({"detail": "not found"}, status=status.HTTP_404_NOT_FOUND)
+        if order.status != "draft":
+            return Response(
+                {"detail": "can only remove lines from draft orders"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        deleted, _ = OrderLine.objects.filter(pk=line_id, order=order).delete()
+        if not deleted:
+            return Response({"detail": "line not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response({}, status=status.HTTP_200_OK)
+
+
+class OrderAddressView(APIView):
+    """PUT /api/orders/{id}/address — set or update the order address."""
+
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, pk):
+        try:
+            order = Order.objects.get(pk=pk, user=request.user)
+        except Order.DoesNotExist:
+            return Response({"detail": "not found"}, status=status.HTTP_404_NOT_FOUND)
+        serializer = OrderAddressSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        OrderAddress.objects.update_or_create(
+            order=order,
+            defaults=serializer.validated_data,
+        )
+        return Response(OrderAddressSerializer(OrderAddress.objects.get(order=order)).data)
+
+
+class OrderSubmitView(APIView):
+    """POST /api/orders/{id}/submit — transition draft -> pending."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            order = Order.objects.get(pk=pk, user=request.user)
+        except Order.DoesNotExist:
+            return Response({"detail": "not found"}, status=status.HTTP_404_NOT_FOUND)
+        if order.status != "draft":
+            return Response(
+                {"detail": "only draft orders can be submitted"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        from django.utils import timezone
+
+        order.status = "pending"
+        order.submitted_at = timezone.now()
+        order.save(update_fields=["status", "submitted_at"])
+        return Response(OrderDetailSerializer(order).data)
+
+
+class OrderApproveView(APIView):
+    """POST /api/orders/{id}/approve — approve a pending order."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            order = Order.objects.get(pk=pk)
+        except Order.DoesNotExist:
+            return Response({"detail": "not found"}, status=status.HTTP_404_NOT_FOUND)
+        if order.status != "pending":
+            return Response(
+                {"detail": "only pending orders can be approved"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        order.status = "approved"
+        order.wait_minutes = request.data.get("wait_minutes")
+        order.feedback = request.data.get("feedback", "")
+        order.save(update_fields=["status", "wait_minutes", "feedback"])
+        return Response(OrderDetailSerializer(order).data)
+
+
+class OrderRejectView(APIView):
+    """POST /api/orders/{id}/reject — reject a pending order."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            order = Order.objects.get(pk=pk)
+        except Order.DoesNotExist:
+            return Response({"detail": "not found"}, status=status.HTTP_404_NOT_FOUND)
+        if order.status != "pending":
+            return Response(
+                {"detail": "only pending orders can be rejected"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        order.status = "rejected"
+        order.feedback = request.data.get("feedback", "")
+        order.save(update_fields=["status", "feedback"])
+        return Response(OrderDetailSerializer(order).data)
 
 
 # --------------------------------------------------------------------------- #

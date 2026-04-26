@@ -2,11 +2,13 @@
 //!
 //! The wrapper-shared `_shared/db.sqlite3` file is the canonical
 //! storage location (resolved via `Config::database_url`). On first
-//! connect we create the `users`, `categories`, `items`, and
-//! `react_state` tables `IF NOT EXISTS` so a freshly-generated wrapper
-//! boots with no migrations step required. The schema mirrors the
-//! django-bolt skel's `app/models.py` so a single `_shared/db.sqlite3`
-//! can be read by either backend without translation.
+//! connect we create the `users`, `categories`, `items`,
+//! `react_state`, `catalog_items`, `orders`, `order_lines`, and
+//! `order_addresses` tables `IF NOT EXISTS` so a freshly-generated
+//! wrapper boots with no migrations step required. The schema mirrors
+//! the django-bolt skel's `app/models.py` so a single
+//! `_shared/db.sqlite3` can be read by either backend without
+//! translation.
 
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 
@@ -36,6 +38,13 @@ pub async fn connect_and_init(database_url: &str) -> Result<SqlitePool, sqlx::Er
 ///   optional `category_id` FK to `categories`.
 /// * `react_state` — per-user JSON key/value store backing the
 ///   `useAppState<T>(key, default)` React hook.
+/// * `catalog_items` — orderable product catalog (name, price,
+///   category, available flag).
+/// * `orders` — user orders with draft/pending/approved/rejected
+///   lifecycle. Scoped to the owning user.
+/// * `order_lines` — line items linking an order to catalog items
+///   with quantity and captured unit price.
+/// * `order_addresses` — one-to-one delivery address per order.
 async fn init_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     // Enable foreign key enforcement — SQLite has it off by default.
     sqlx::query("PRAGMA foreign_keys = ON;")
@@ -96,6 +105,69 @@ async fn init_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
             UNIQUE(user_id, key),
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    // ── Order workflow tables ──────────────────────────────────────────
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS catalog_items (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            price       REAL NOT NULL,
+            category    TEXT NOT NULL DEFAULT '',
+            available   INTEGER NOT NULL DEFAULT 1
+        );
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS orders (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            status       TEXT NOT NULL DEFAULT 'draft',
+            created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            submitted_at TEXT,
+            wait_minutes INTEGER,
+            feedback     TEXT
+        );
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS order_lines (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id        INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+            catalog_item_id INTEGER NOT NULL REFERENCES catalog_items(id),
+            quantity        INTEGER NOT NULL DEFAULT 1,
+            unit_price      REAL NOT NULL DEFAULT 0.0
+        );
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS order_addresses (
+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER NOT NULL UNIQUE REFERENCES orders(id) ON DELETE CASCADE,
+            street   TEXT NOT NULL,
+            city     TEXT NOT NULL,
+            zip_code TEXT NOT NULL,
+            phone    TEXT NOT NULL DEFAULT '',
+            notes    TEXT NOT NULL DEFAULT ''
         );
         "#,
     )

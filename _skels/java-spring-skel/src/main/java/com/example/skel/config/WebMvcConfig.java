@@ -15,8 +15,9 @@ import java.util.List;
  * controllers can declare {@code AuthUser} parameters.
  *
  * <p>The interceptor only fires for the JWT-protected resource paths
- * — {@code /api/items/**}, {@code /api/categories/**}, and
- * {@code /api/state/**} — so the unauthenticated
+ * — {@code /api/items/**}, {@code /api/categories/**},
+ * {@code /api/state/**}, {@code /api/catalog/**}, and
+ * {@code /api/orders/**} — so the unauthenticated
  * {@code /api/auth/register} and {@code /api/auth/login} endpoints
  * stay reachable without a token.
  */
@@ -38,7 +39,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
             .addPathPatterns(
                 "/api/items", "/api/items/**",
                 "/api/categories", "/api/categories/**",
-                "/api/state", "/api/state/**"
+                "/api/state", "/api/state/**",
+                "/api/catalog", "/api/catalog/**",
+                "/api/orders", "/api/orders/**"
             );
     }
 

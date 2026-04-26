@@ -24,6 +24,11 @@ pub enum ApiError {
     #[error("unauthorized: {0}")]
     Unauthorized(String),
 
+    /// The caller is authenticated but not authorised to perform this
+    /// action. 403.
+    #[error("forbidden: {0}")]
+    Forbidden(String),
+
     /// The resource was not found. 404.
     #[error("not found: {0}")]
     NotFound(String),
@@ -54,6 +59,7 @@ impl ApiError {
         match self {
             ApiError::Validation(_) => StatusCode::BAD_REQUEST,
             ApiError::Unauthorized(_) | ApiError::Jwt(_) => StatusCode::UNAUTHORIZED,
+            ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
             ApiError::Conflict(_) => StatusCode::CONFLICT,
             ApiError::Database(_) | ApiError::Password(_) | ApiError::Internal(_) => {

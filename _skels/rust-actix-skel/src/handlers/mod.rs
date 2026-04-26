@@ -7,6 +7,7 @@
 pub mod auth;
 pub mod categories;
 pub mod items;
+pub mod orders;
 pub mod state;
 
 use actix_web::web;
@@ -42,6 +43,25 @@ pub fn register(cfg: &mut web::ServiceConfig) {
                     .service(state::list_state)
                     .service(state::upsert_state)
                     .service(state::delete_state),
+            )
+            .service(
+                web::scope("/catalog")
+                    .service(orders::list_catalog)
+                    .service(orders::create_catalog_item)
+                    .service(orders::get_catalog_item),
+            )
+            .service(
+                web::scope("/orders")
+                    .service(orders::create_order)
+                    .service(orders::list_orders)
+                    .service(orders::get_order)
+                    .service(orders::add_order_line)
+                    .service(orders::remove_order_line)
+                    .service(orders::set_order_address)
+                    .service(orders::submit_order)
+                    .service(orders::approve_order)
+                    .service(orders::reject_order)
+                    .service(orders::delete_order),
             ),
     );
 }

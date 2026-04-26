@@ -28,14 +28,35 @@ from django_bolt import (
     get_current_user,
 )
 
-from app.models import Category, Item, Project, ReactState, Task, UserProfile
+from app.models import (
+    CatalogItem,
+    Category,
+    Item,
+    Order,
+    OrderAddress,
+    OrderLine,
+    Project,
+    ReactState,
+    Task,
+    UserProfile,
+)
 from app.schemas import (
+    CatalogItemCreateSchema,
+    CatalogItemSchema,
     CategoryCreateSchema,
     CategorySchema,
     ItemCreateSchema,
     ItemSchema,
     LoginSchema,
     OAuthLoginSchema,
+    OrderAddressSchema,
+    OrderAddressUpsertSchema,
+    OrderApproveSchema,
+    OrderDetailSchema,
+    OrderLineCreateSchema,
+    OrderLineSchema,
+    OrderRejectSchema,
+    OrderSchema,
     ProjectCreateSchema,
     ProjectSchema,
     ReactStateUpsertSchema,
@@ -405,3 +426,235 @@ async def react_state_delete(request: Request, key: str) -> dict:
     user = await get_current_user(request)
     deleted, _ = await ReactState.objects.filter(user=user, key=key).adelete()
     return {"key": key, "deleted": bool(deleted)}
+
+
+# --------------------------------------------------------------------------- #
+#  Catalog CRUD
+# --------------------------------------------------------------------------- #
+
+
+@api.get(
+    "/api/catalog",
+    auth=[JWTAuthentication()],
+    guards=[IsAuthenticated()],
+)
+async def catalog_list(request: Request) -> list:
+    items = [
+        CatalogItemSchema.from_model(obj)
+        async for obj in CatalogItem.objects.all()
+    ]
+    return items
+
+
+@api.post(
+    "/api/catalog",
+    auth=[JWTAuthentication()],
+    guards=[IsAuthenticated()],
+)
+async def catalog_create(request: Request) -> dict:
+    data = msgspec.json.decode(request.body, type=CatalogItemCreateSchema)
+    obj = await CatalogItem.objects.acreate(
+        name=data.name,
+        price=data.price,
+        category=data.category,
+        description=data.description,
+        available=data.available,
+    )
+    return JSON(CatalogItemSchema.from_model(obj), status_code=201)
+
+
+@api.get(
+    "/api/catalog/{pk}",
+    auth=[JWTAuthentication()],
+    guards=[IsAuthenticated()],
+)
+async def catalog_detail(request: Request, pk: int) -> dict:
+    try:
+        obj = await CatalogItem.objects.aget(pk=pk)
+    except CatalogItem.DoesNotExist:
+        return JSON({"error": "Catalog item not found"}, status_code=404)
+    return CatalogItemSchema.from_model(obj)
+
+
+# --------------------------------------------------------------------------- #
+#  Order workflow
+# --------------------------------------------------------------------------- #
+
+
+@api.post(
+    "/api/orders",
+    auth=[JWTAuthentication()],
+    guards=[IsAuthenticated()],
+)
+async def order_create(request: Request) -> dict:
+    user = await get_current_user(request)
+    order = await Order.objects.acreate(user=user, status="draft")
+    return JSON(OrderSchema.from_model(order), status_code=201)
+
+
+@api.get(
+    "/api/orders",
+    auth=[JWTAuthentication()],
+    guards=[IsAuthenticated()],
+)
+async def order_list(request: Request) -> list:
+    user = await get_current_user(request)
+    orders = [
+        OrderSchema.from_model(obj)
+        async for obj in Order.objects.filter(user=user).order_by("-created_at")
+    ]
+    return orders
+
+
+@api.get(
+    "/api/orders/{pk}",
+    auth=[JWTAuthentication()],
+    guards=[IsAuthenticated()],
+)
+async def order_detail(request: Request, pk: int) -> dict:
+    user = await get_current_user(request)
+    try:
+        order = await Order.objects.aget(pk=pk, user=user)
+    except Order.DoesNotExist:
+        return JSON({"error": "Order not found"}, status_code=404)
+    lines = [
+        line async for line in
+        OrderLine.objects.filter(order=order).select_related("catalog_item")
+    ]
+    try:
+        address = await OrderAddress.objects.aget(order=order)
+    except OrderAddress.DoesNotExist:
+        address = None
+    return OrderDetailSchema.from_model(order, lines=lines, address=address)
+
+
+@api.post(
+    "/api/orders/{pk}/lines",
+    auth=[JWTAuthentication()],
+    guards=[IsAuthenticated()],
+)
+async def order_add_line(request: Request, pk: int) -> dict:
+    user = await get_current_user(request)
+    try:
+        order = await Order.objects.aget(pk=pk, user=user)
+    except Order.DoesNotExist:
+        return JSON({"error": "Order not found"}, status_code=404)
+    data = msgspec.json.decode(request.body, type=OrderLineCreateSchema)
+    try:
+        catalog_item = await CatalogItem.objects.aget(pk=data.catalog_item_id)
+    except CatalogItem.DoesNotExist:
+        return JSON({"error": "Catalog item not found"}, status_code=404)
+    line = await OrderLine.objects.acreate(
+        order=order,
+        catalog_item=catalog_item,
+        quantity=data.quantity,
+        unit_price=catalog_item.price,
+    )
+    # Re-fetch to populate select_related
+    line = await OrderLine.objects.select_related("catalog_item").aget(pk=line.pk)
+    return JSON(OrderLineSchema.from_model(line), status_code=201)
+
+
+@api.delete(
+    "/api/orders/{pk}/lines/{line_id}",
+    auth=[JWTAuthentication()],
+    guards=[IsAuthenticated()],
+)
+async def order_remove_line(request: Request, pk: int, line_id: int) -> dict:
+    user = await get_current_user(request)
+    try:
+        order = await Order.objects.aget(pk=pk, user=user)
+    except Order.DoesNotExist:
+        return JSON({"error": "Order not found"}, status_code=404)
+    try:
+        line = await OrderLine.objects.aget(pk=line_id, order=order)
+    except OrderLine.DoesNotExist:
+        return JSON({"error": "Order line not found"}, status_code=404)
+    await line.adelete()
+    return JSON({}, status_code=204)
+
+
+@api.put(
+    "/api/orders/{pk}/address",
+    auth=[JWTAuthentication()],
+    guards=[IsAuthenticated()],
+)
+async def order_set_address(request: Request, pk: int) -> dict:
+    user = await get_current_user(request)
+    try:
+        order = await Order.objects.aget(pk=pk, user=user)
+    except Order.DoesNotExist:
+        return JSON({"error": "Order not found"}, status_code=404)
+    data = msgspec.json.decode(request.body, type=OrderAddressUpsertSchema)
+    address, _ = await OrderAddress.objects.aupdate_or_create(
+        order=order,
+        defaults={
+            "street": data.street,
+            "city": data.city,
+            "zip_code": data.zip_code,
+            "phone": data.phone,
+            "notes": data.notes,
+        },
+    )
+    return OrderAddressSchema.from_model(address)
+
+
+@api.post(
+    "/api/orders/{pk}/submit",
+    auth=[JWTAuthentication()],
+    guards=[IsAuthenticated()],
+)
+async def order_submit(request: Request, pk: int) -> dict:
+    user = await get_current_user(request)
+    try:
+        order = await Order.objects.aget(pk=pk, user=user)
+    except Order.DoesNotExist:
+        return JSON({"error": "Order not found"}, status_code=404)
+    if order.status != "draft":
+        return JSON({"error": "Only draft orders can be submitted"}, status_code=400)
+    from django.utils import timezone
+    order.status = "pending"
+    order.submitted_at = timezone.now()
+    await order.asave()
+    return OrderSchema.from_model(order)
+
+
+@api.post(
+    "/api/orders/{pk}/approve",
+    auth=[JWTAuthentication()],
+    guards=[IsAuthenticated()],
+)
+async def order_approve(request: Request, pk: int) -> dict:
+    user = await get_current_user(request)
+    try:
+        order = await Order.objects.aget(pk=pk, user=user)
+    except Order.DoesNotExist:
+        return JSON({"error": "Order not found"}, status_code=404)
+    if order.status != "pending":
+        return JSON({"error": "Only pending orders can be approved"}, status_code=400)
+    data = msgspec.json.decode(request.body, type=OrderApproveSchema)
+    order.status = "approved"
+    order.wait_minutes = data.wait_minutes
+    order.feedback = data.feedback
+    await order.asave()
+    return OrderSchema.from_model(order)
+
+
+@api.post(
+    "/api/orders/{pk}/reject",
+    auth=[JWTAuthentication()],
+    guards=[IsAuthenticated()],
+)
+async def order_reject(request: Request, pk: int) -> dict:
+    user = await get_current_user(request)
+    try:
+        order = await Order.objects.aget(pk=pk, user=user)
+    except Order.DoesNotExist:
+        return JSON({"error": "Order not found"}, status_code=404)
+    if order.status != "pending":
+        return JSON({"error": "Only pending orders can be rejected"}, status_code=400)
+    data = msgspec.json.decode(request.body, type=OrderRejectSchema)
+    order.status = "rejected"
+    order.feedback = data.feedback
+    await order.asave()
+    return OrderSchema.from_model(order)

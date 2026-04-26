@@ -49,10 +49,12 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_skel/api/items_client.dart';
 import 'package:flutter_skel/api/categories_client.dart';
+import 'package:flutter_skel/api/orders_client.dart';
 import 'package:flutter_skel/auth/token_store.dart';
 import 'package:flutter_skel/config.dart';
 import 'package:flutter_skel/controllers/items_controller.dart';
 import 'package:flutter_skel/controllers/categories_controller.dart';
+import 'package:flutter_skel/controllers/orders_controller.dart';
 import 'package:flutter_skel/main.dart';
 import 'package:flutter_skel/state/app_state_store.dart';
 import 'package:flutter_skel/state/state_api.dart';
@@ -91,6 +93,7 @@ Future<void> _registerUser(String backendUrl) async {
   ItemsClient itemsClient,
   ItemsController itemsController,
   CategoriesController categoriesController,
+  OrdersController ordersController,
   AppStateStore appStateStore,
   StateApi stateApi,
 }) _buildTree(String backendUrl) {
@@ -117,12 +120,18 @@ Future<void> _registerUser(String backendUrl) async {
     client: categoriesClient,
     tokenStore: tokenStore,
   );
+  final ordersClient = OrdersClient(config: config, tokenStore: tokenStore);
+  final ordersController = OrdersController(
+    client: ordersClient,
+    tokenStore: tokenStore,
+  );
   return (
     config: config,
     tokenStore: tokenStore,
     itemsClient: itemsClient,
     itemsController: itemsController,
     categoriesController: categoriesController,
+    ordersController: ordersController,
     appStateStore: appStateStore,
     stateApi: stateApi,
   );
@@ -202,6 +211,7 @@ void main() {
           itemsClient: tree.itemsClient,
           itemsController: tree.itemsController,
           categoriesController: tree.categoriesController,
+          ordersController: tree.ordersController,
           appStateStore: tree.appStateStore,
           stateApi: tree.stateApi,
         ),
@@ -340,6 +350,16 @@ void main() {
         tester,
         () => find.text(itemName).evaluate().isNotEmpty,
         description: 'completed item visible again after toggling on',
+      );
+
+      // ── Step 6: ORDERS section visible ──────────────────────────
+      // The HomeScreen renders an "Orders (N)" heading from the
+      // OrderListView. Verify it appears after login.
+      await _waitFor(
+        tester,
+        () => find.textContaining(RegExp(r'Orders \(\d+')).evaluate().isNotEmpty,
+        description: 'HomeScreen "Orders (N)" heading',
+        budget: const Duration(seconds: 15),
       );
     },
     timeout: const Timeout(Duration(seconds: 90)),

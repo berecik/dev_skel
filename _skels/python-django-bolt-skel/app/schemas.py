@@ -6,7 +6,18 @@ and pairs naturally with django-bolt's Rust HTTP layer.
 
 import msgspec
 
-from app.models import Category, Item, Project, ReactState, Task, UserProfile
+from app.models import (
+    CatalogItem,
+    Category,
+    Item,
+    Order,
+    OrderAddress,
+    OrderLine,
+    Project,
+    ReactState,
+    Task,
+    UserProfile,
+)
 
 
 class UserSchema(msgspec.Struct):
@@ -246,3 +257,142 @@ class ReactStateUpsertSchema(msgspec.Struct):
     """
 
     value: object  # any JSON-serializable value
+
+
+# --------------------------------------------------------------------------- #
+#  Catalog / Order workflow
+# --------------------------------------------------------------------------- #
+
+
+class CatalogItemSchema(msgspec.Struct):
+    id: int
+    name: str
+    description: str
+    price: float
+    category: str
+    available: bool
+
+    @classmethod
+    def from_model(cls, obj) -> "CatalogItemSchema":
+        return cls(
+            id=obj.id,
+            name=obj.name,
+            description=obj.description,
+            price=obj.price,
+            category=obj.category,
+            available=obj.available,
+        )
+
+
+class CatalogItemCreateSchema(msgspec.Struct, kw_only=True):
+    name: str
+    price: float
+    category: str = ""
+    description: str = ""
+    available: bool = True
+
+
+class OrderLineSchema(msgspec.Struct):
+    id: int
+    catalog_item_id: int
+    catalog_item_name: str
+    quantity: int
+    unit_price: float
+
+    @classmethod
+    def from_model(cls, obj) -> "OrderLineSchema":
+        return cls(
+            id=obj.id,
+            catalog_item_id=obj.catalog_item_id,
+            catalog_item_name=obj.catalog_item.name if obj.catalog_item else "",
+            quantity=obj.quantity,
+            unit_price=obj.unit_price,
+        )
+
+
+class OrderAddressSchema(msgspec.Struct):
+    street: str
+    city: str
+    zip_code: str
+    phone: str
+    notes: str
+
+    @classmethod
+    def from_model(cls, obj) -> "OrderAddressSchema":
+        return cls(
+            street=obj.street,
+            city=obj.city,
+            zip_code=obj.zip_code,
+            phone=obj.phone,
+            notes=obj.notes,
+        )
+
+
+class OrderSchema(msgspec.Struct):
+    id: int
+    user_id: int
+    status: str
+    created_at: str
+    submitted_at: str | None
+    wait_minutes: int | None
+    feedback: str | None
+
+    @classmethod
+    def from_model(cls, obj) -> "OrderSchema":
+        return cls(
+            id=obj.id,
+            user_id=obj.user_id,
+            status=obj.status,
+            created_at=str(obj.created_at),
+            submitted_at=str(obj.submitted_at) if obj.submitted_at else None,
+            wait_minutes=obj.wait_minutes,
+            feedback=obj.feedback,
+        )
+
+
+class OrderDetailSchema(msgspec.Struct):
+    id: int
+    user_id: int
+    status: str
+    created_at: str
+    submitted_at: str | None
+    wait_minutes: int | None
+    feedback: str | None
+    lines: list[OrderLineSchema]
+    address: OrderAddressSchema | None
+
+    @classmethod
+    def from_model(cls, obj, lines=None, address=None) -> "OrderDetailSchema":
+        return cls(
+            id=obj.id,
+            user_id=obj.user_id,
+            status=obj.status,
+            created_at=str(obj.created_at),
+            submitted_at=str(obj.submitted_at) if obj.submitted_at else None,
+            wait_minutes=obj.wait_minutes,
+            feedback=obj.feedback,
+            lines=[OrderLineSchema.from_model(l) for l in (lines or [])],
+            address=OrderAddressSchema.from_model(address) if address else None,
+        )
+
+
+class OrderLineCreateSchema(msgspec.Struct):
+    catalog_item_id: int
+    quantity: int = 1
+
+
+class OrderAddressUpsertSchema(msgspec.Struct, kw_only=True):
+    street: str
+    city: str
+    zip_code: str
+    phone: str = ""
+    notes: str = ""
+
+
+class OrderApproveSchema(msgspec.Struct, kw_only=True):
+    wait_minutes: int | None = None
+    feedback: str | None = None
+
+
+class OrderRejectSchema(msgspec.Struct, kw_only=True):
+    feedback: str | None = None

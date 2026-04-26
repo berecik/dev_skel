@@ -12,6 +12,14 @@
 //   - GET  /api/items/{id}            → JWT-protected
 //   - POST /api/items/{id}/complete   → JWT-protected idempotent flip
 //   - GET/PUT/DELETE  /api/state[/{key}] → per-user JSON KV store
+//   - GET/POST        /api/catalog[/{id}]  → JWT-protected catalog CRUD
+//   - POST/GET        /api/orders          → JWT-protected order CRUD
+//   - GET             /api/orders/{id}     → order detail with lines + address
+//   - POST/DELETE     /api/orders/{id}/lines[/{line_id}] → order lines
+//   - PUT             /api/orders/{id}/address → delivery address
+//   - POST            /api/orders/{id}/submit  → draft → submitted
+//   - POST            /api/orders/{id}/approve → submitted → approved
+//   - POST            /api/orders/{id}/reject  → submitted → rejected
 //
 // Routes are registered in main.go via Register; this package keeps
 // the per-resource logic isolated and uses Go 1.22's method-aware
@@ -63,6 +71,20 @@ func Register(mux *http.ServeMux, d Deps) {
 	mux.Handle("GET /api/state", jwt(http.HandlerFunc(d.handleListState)))
 	mux.Handle("PUT /api/state/{key}", jwt(http.HandlerFunc(d.handleUpsertState)))
 	mux.Handle("DELETE /api/state/{key}", jwt(http.HandlerFunc(d.handleDeleteState)))
+
+	mux.Handle("GET /api/catalog", jwt(http.HandlerFunc(d.handleListCatalog)))
+	mux.Handle("POST /api/catalog", jwt(http.HandlerFunc(d.handleCreateCatalogItem)))
+	mux.Handle("GET /api/catalog/{id}", jwt(http.HandlerFunc(d.handleGetCatalogItem)))
+
+	mux.Handle("POST /api/orders", jwt(http.HandlerFunc(d.handleCreateOrder)))
+	mux.Handle("GET /api/orders", jwt(http.HandlerFunc(d.handleListOrders)))
+	mux.Handle("GET /api/orders/{id}", jwt(http.HandlerFunc(d.handleGetOrder)))
+	mux.Handle("POST /api/orders/{id}/lines", jwt(http.HandlerFunc(d.handleAddOrderLine)))
+	mux.Handle("DELETE /api/orders/{order_id}/lines/{line_id}", jwt(http.HandlerFunc(d.handleDeleteOrderLine)))
+	mux.Handle("PUT /api/orders/{id}/address", jwt(http.HandlerFunc(d.handleUpsertOrderAddress)))
+	mux.Handle("POST /api/orders/{id}/submit", jwt(http.HandlerFunc(d.handleSubmitOrder)))
+	mux.Handle("POST /api/orders/{id}/approve", jwt(http.HandlerFunc(d.handleApproveOrder)))
+	mux.Handle("POST /api/orders/{id}/reject", jwt(http.HandlerFunc(d.handleRejectOrder)))
 }
 
 // --------------------------------------------------------------------------- //

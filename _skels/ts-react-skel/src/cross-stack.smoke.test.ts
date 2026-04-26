@@ -45,6 +45,17 @@ import {
   listItems,
   loginWithPassword,
 } from './api/items';
+import {
+  addOrderLine,
+  approveOrder,
+  createCatalogItem,
+  createOrder,
+  getOrder,
+  listCatalog,
+  listOrders,
+  setOrderAddress,
+  submitOrder,
+} from './api/orders';
 import { clearToken, getToken, setToken } from './auth/token-store';
 import { config } from './config';
 import { deleteState, loadAllState, saveState } from './state/state-api';
@@ -210,6 +221,89 @@ describe.skipIf(!RUN_SMOKE)(
         ).rejects.toBeInstanceOf(AuthError);
       },
       // Generous timeout — every step crosses the network.
+      30_000,
+    );
+
+    it(
+      'round-trips through the order workflow against the live backend',
+      async () => {
+        // This test assumes the items smoke test above already ran,
+        // so we have a valid token in the store. Re-login just in case.
+        const token = await loginWithPassword(SMOKE_USERNAME, SMOKE_PASSWORD);
+        setToken(token);
+
+        // Sub-step 1: create a catalog item
+        const catalogItem = await createCatalogItem(
+          {
+            name: 'Smoke catalog item',
+            description: 'Created by the order workflow smoke test',
+            price: 9.99,
+            category: 'test',
+            available: true,
+          },
+          { token },
+        );
+        expect(catalogItem.id).toBeGreaterThan(0);
+        expect(catalogItem.name).toBe('Smoke catalog item');
+
+        // Sub-step 2: list catalog — the new item must be visible
+        const catalog = await listCatalog({ token });
+        expect(Array.isArray(catalog)).toBe(true);
+        const catalogNames = catalog.map((c) => c.name);
+        expect(catalogNames).toContain('Smoke catalog item');
+
+        // Sub-step 3: create a draft order
+        const order = await createOrder({ token });
+        expect(order.id).toBeGreaterThan(0);
+        expect(order.status).toBe('draft');
+
+        // Sub-step 4: add a line to the order
+        const line = await addOrderLine(
+          order.id,
+          { catalog_item_id: catalogItem.id, quantity: 2 },
+          { token },
+        );
+        expect(line.id).toBeGreaterThan(0);
+        expect(line.catalog_item_id).toBe(catalogItem.id);
+        expect(line.quantity).toBe(2);
+
+        // Sub-step 5: set the delivery address
+        await setOrderAddress(
+          order.id,
+          {
+            street: '123 Smoke St',
+            city: 'Testville',
+            zip_code: '00-001',
+            phone: '+48123456789',
+            notes: 'Ring twice',
+          },
+          { token },
+        );
+
+        // Sub-step 6: verify order detail includes lines + address
+        const detail = await getOrder(order.id, { token });
+        expect(detail.lines.length).toBe(1);
+        expect(detail.address).not.toBeNull();
+        expect(detail.address?.street).toBe('123 Smoke St');
+
+        // Sub-step 7: submit the order
+        const submitted = await submitOrder(order.id, { token });
+        expect(submitted.status).toBe('pending');
+
+        // Sub-step 8: approve the order
+        const approved = await approveOrder(
+          order.id,
+          { wait_minutes: 30, feedback: 'Looks good' },
+          { token },
+        );
+        expect(approved.status).toBe('approved');
+
+        // Sub-step 9: list orders — the order must be visible
+        const orders = await listOrders({ token });
+        expect(Array.isArray(orders)).toBe(true);
+        const orderIds = orders.map((o) => o.id);
+        expect(orderIds).toContain(order.id);
+      },
       30_000,
     );
   },

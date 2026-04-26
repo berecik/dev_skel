@@ -70,6 +70,51 @@ function initDb(db) {
     )
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS catalog_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      price REAL NOT NULL DEFAULT 0.0,
+      category TEXT DEFAULT '',
+      available INTEGER DEFAULT 1
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS orders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      status TEXT NOT NULL DEFAULT 'draft',
+      feedback TEXT,
+      wait_minutes INTEGER,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS order_lines (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+      catalog_item_id INTEGER NOT NULL REFERENCES catalog_items(id),
+      quantity INTEGER DEFAULT 1,
+      unit_price REAL DEFAULT 0.0
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS order_addresses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER NOT NULL UNIQUE REFERENCES orders(id) ON DELETE CASCADE,
+      street TEXT NOT NULL,
+      city TEXT NOT NULL,
+      zip_code TEXT NOT NULL,
+      phone TEXT DEFAULT '',
+      notes TEXT DEFAULT ''
+    )
+  `);
+
   return db;
 }
 

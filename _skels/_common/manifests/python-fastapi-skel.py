@@ -49,6 +49,11 @@ Coding rules:
 - When `{auth_type}` is `none`, drop the `current_user` parameter and
   remove the owner-isolation checks from list/get/update/delete handlers.
 - Output ONLY the file's contents. No markdown fences, no commentary.
+
+User-supplied domain instructions (apply these instead of the generic
+CRUD pattern when they ask for a richer domain model — add extra models,
+endpoints, status flows, etc. as described):
+{backend_extra}
 """
 
 MANIFEST = {
@@ -88,8 +93,13 @@ a `{item_class}` entity.
 Required transformations:
 - Class names: `ExampleItem*` → `{item_class}*`. Keep the same suffixes
   (`Base`, `Create`, `Update`, `Repository`, `Crud`, `UnitOfWork`).
-- Add `title` (str) and `description` (Optional[str]) Pydantic fields on the
-  base class. Keep `owner_id: Optional[int] = None` only when `{auth_type}`
+- If the user supplied domain instructions (see system prompt), create all
+  the domain model classes they asked for (e.g. MenuPosition, Order,
+  OrderPosition, OrderAddress) with the fields they specified. Each entity
+  gets its own Base/Create/Update/Repository/Crud/UnitOfWork set.
+- If NO domain instructions were given, add `title` (str) and
+  `description` (Optional[str]) Pydantic fields on the base class.
+- Keep `owner_id: Optional[int] = None` only when `{auth_type}`
   is not `none`; otherwise drop it entirely along with the
   `filter_by_owner` / `get_by_owner` helpers.
 - Keep `core` imports identical to the reference.
@@ -134,15 +144,17 @@ Rewrite `app/example_items/adapters/sql.py` as
 Required transformations:
 - Class names: `ExampleItem*` → `{item_class}*` (incl. `SqlRepository`,
   `SqlUnitOfWork`).
-- The SQLModel concrete class is named `{item_class}` and inherits from
-  `{item_class}Base, SQLModel, table=True`. It must declare:
-  `id: Optional[int] = Field(default=None, primary_key=True)` and, when
-  `{auth_type}` is not `none`,
-  `owner_id: Optional[int] = Field(default=None, foreign_key='user.id')`.
+- If the user supplied domain instructions (see system prompt), create
+  SQLModel table classes for ALL the domain entities they specified,
+  each with proper fields, foreign keys, and relationships. Each entity
+  gets its own SqlRepository, SqlUnitOfWork, and factory function.
+- If NO domain instructions were given, create a single `{item_class}`
+  table with `id`, `title`, `description`, and (when `{auth_type}` is
+  not `none`) `owner_id` foreign key to `user.id`.
 - The factory function is `get_{item_name}_uow`.
 - When `{auth_type}` is `none`, remove the `filter_by_owner` method.
 - Keep `core.adapters.sql` imports unchanged.
-- Match indentation/style of the REFERENCE exactly.
+- Match indentation/style of the REFERENCE where possible.
 
 REFERENCE (`app/example_items/adapters/sql.py`):
 ---
@@ -164,13 +176,16 @@ ambiguous, do NOT copy verbatim):
 Rewrite `app/example_items/depts.py` as `app/{service_slug}/depts.py`.
 
 Required transformations:
-- Type aliases: `ExampleItemsUowDep` → `{item_class}sUowDep`,
-  `ExampleItemsDep` → `{item_class}sDep`.
-- Function: `get_example_items_crud` → `get_{items_plural}_crud`.
-- Imports: `.adapters.sql.get_example_item_uow` →
-  `.adapters.sql.get_{item_name}_uow`; `ExampleItemUnitOfWork` →
-  `{item_class}UnitOfWork`; `ExampleItemCrud` → `{item_class}Crud`.
-- Match indentation/style of the REFERENCE exactly.
+- If the user supplied domain instructions (see system prompt), create
+  dependency providers for ALL the domain entities they specified.
+  Each entity gets its own UowDep, Dep type alias, and crud factory.
+- If NO domain instructions were given:
+  - Type aliases: `ExampleItemsUowDep` → `{item_class}sUowDep`,
+    `ExampleItemsDep` → `{item_class}sDep`.
+  - Function: `get_example_items_crud` → `get_{items_plural}_crud`.
+- Imports: adapt from `.adapters.sql` and `.models` to match
+  the entity names in the models file.
+- Match indentation/style of the REFERENCE where possible.
 
 REFERENCE (`app/example_items/depts.py`):
 ---
@@ -205,8 +220,13 @@ Required transformations:
     just returns `{items_plural}.list()`.
   - When `{auth_type}` is anything else, keep `CurrentUser` and the existing
     superuser/owner checks unchanged.
-- The endpoint paths and HTTP methods stay the same as the REFERENCE.
-- Match indentation/style of the REFERENCE exactly.
+- If the user supplied domain instructions (see system prompt), add all
+  the endpoints they specified (e.g. /api/menu, /api/orders,
+  /api/orders/{{id}}/positions, /api/orders/{{id}}/submit, etc.) instead
+  of the generic CRUD endpoints. Follow their exact path/method spec.
+- If NO domain instructions were given, keep the endpoint paths and HTTP
+  methods the same as the REFERENCE.
+- Match indentation/style of the REFERENCE where possible.
 
 REFERENCE (`app/example_items/routes.py`):
 ---

@@ -4,7 +4,14 @@ from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from app.models import Category, Item
+from app.models import (
+    CatalogItem,
+    Category,
+    Item,
+    Order,
+    OrderAddress,
+    OrderLine,
+)
 
 
 class UserOutSerializer(serializers.ModelSerializer):
@@ -100,3 +107,64 @@ class StateUpsertSerializer(serializers.Serializer):
     """Payload for ``PUT /api/state/<key>`` — value is an opaque JSON string."""
 
     value = serializers.CharField(allow_blank=True, trim_whitespace=False)
+
+
+# --------------------------------------------------------------------------- #
+#  Order workflow serializers
+# --------------------------------------------------------------------------- #
+
+
+class CatalogItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CatalogItem
+        fields = ("id", "name", "description", "price", "category", "available")
+        read_only_fields = ("id",)
+
+
+class CatalogItemCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CatalogItem
+        fields = ("name", "description", "price", "category", "available")
+        extra_kwargs = {
+            "description": {"required": False, "allow_blank": True},
+            "category": {"required": False, "allow_blank": True},
+            "available": {"required": False},
+        }
+
+
+class OrderLineSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderLine
+        fields = ("id", "catalog_item_id", "quantity", "unit_price")
+        read_only_fields = ("id",)
+
+
+class OrderAddressSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderAddress
+        fields = ("street", "city", "zip_code", "phone", "notes")
+        extra_kwargs = {
+            "phone": {"required": False, "allow_blank": True},
+            "notes": {"required": False, "allow_blank": True},
+        }
+
+
+class OrderDetailSerializer(serializers.ModelSerializer):
+    """Full order with nested lines and address."""
+
+    lines = OrderLineSerializer(many=True, read_only=True)
+    address = OrderAddressSerializer(read_only=True)
+
+    class Meta:
+        model = Order
+        fields = (
+            "id", "user_id", "status", "created_at", "submitted_at",
+            "wait_minutes", "feedback", "lines", "address",
+        )
+        read_only_fields = ("id", "user_id", "status", "created_at", "submitted_at")
+
+
+class OrderListSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Order
+        fields = ("id", "user_id", "status", "created_at", "submitted_at")

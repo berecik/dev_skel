@@ -103,6 +103,11 @@ Coding rules:
   instantiates — only the TYPE may change (e.g. from
   `ItemsController` to `{item_class}sController`), the NAME must
   stay `itemsController`.
+
+User-supplied frontend instructions (apply these instead of the generic
+screens when they ask for a richer domain UX — add extra screens,
+navigation flows, etc. as described):
+{frontend_extra}
 """
 
 MANIFEST = {

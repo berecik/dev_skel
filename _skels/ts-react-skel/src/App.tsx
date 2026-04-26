@@ -32,9 +32,13 @@ import { config } from './config';
 import LoginForm from './components/LoginForm';
 import ItemForm from './components/ItemForm';
 import ItemList from './components/ItemList';
+import OrderForm from './components/OrderForm';
+import OrderList from './components/OrderList';
 import { useAuthToken } from './auth/use-auth-token';
 import { useItems } from './hooks/use-items';
 import { useCategories } from './hooks/use-categories';
+import { useOrders } from './hooks/use-orders';
+import { setOrderAddress } from './api/orders';
 import AppStateProvider from './state/AppStateProvider';
 
 function AuthenticatedApp({
@@ -44,6 +48,16 @@ function AuthenticatedApp({
 }): ReactElement {
   const { items, loading, error, refresh, create, complete } = useItems();
   const { categories, create: createCategory } = useCategories();
+  const {
+    orders,
+    loading: ordersLoading,
+    error: ordersError,
+    refresh: refreshOrders,
+    createOrder,
+    getOrderDetail,
+    addLine,
+    submitOrder,
+  } = useOrders();
 
   return (
     <>
@@ -60,6 +74,21 @@ function AuthenticatedApp({
         refresh={refresh}
         complete={complete}
         categories={categories}
+      />
+      <OrderForm
+        createOrder={createOrder}
+        addLine={addLine}
+        setAddress={setOrderAddress}
+        submitOrder={submitOrder}
+        onOrderCreated={() => void refreshOrders()}
+      />
+      <OrderList
+        orders={orders}
+        loading={ordersLoading}
+        error={ordersError}
+        refresh={refreshOrders}
+        getOrderDetail={getOrderDetail}
+        submitOrder={submitOrder}
       />
     </>
   );

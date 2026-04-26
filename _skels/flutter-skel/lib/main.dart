@@ -1,16 +1,16 @@
 /// dev_skel Flutter frontend entry point.
 ///
 /// Wires the wrapper-shared layers (config + auth + items + categories
-/// + state) into the widget tree:
+/// + orders + state) into the widget tree:
 ///
 ///   1. [AppConfig.load] reads `<wrapper>/.env` (bundled as the
 ///      `.env` asset by the gen script).
 ///   2. [TokenStore.instance] hydrates the persisted JWT from secure
 ///      storage so a cold start keeps the user signed in.
-///   3. [ItemsClient] + [CategoriesClient] + [StateApi] +
-///      [ItemsController] + [CategoriesController] are constructed
-///      once and passed down via [AuthScope] / [AppStateScope] —
-///      no third-party DI.
+///   3. [ItemsClient] + [CategoriesClient] + [OrdersClient] +
+///      [StateApi] + [ItemsController] + [CategoriesController] +
+///      [OrdersController] are constructed once and passed down via
+///      [AuthScope] / [AppStateScope] — no third-party DI.
 ///   4. The root [DevSkelApp] swaps between [LoginScreen] and
 ///      [HomeScreen] based on [TokenStore.isAuthenticated].
 ///
@@ -21,11 +21,13 @@ import 'package:flutter/material.dart';
 
 import 'api/categories_client.dart';
 import 'api/items_client.dart';
+import 'api/orders_client.dart';
 import 'auth/auth_scope.dart';
 import 'auth/token_store.dart';
 import 'config.dart';
 import 'controllers/categories_controller.dart';
 import 'controllers/items_controller.dart';
+import 'controllers/orders_controller.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'state/app_state_scope.dart';
@@ -42,12 +44,15 @@ Future<void> main() async {
   final itemsClient = ItemsClient(config: config, tokenStore: tokenStore);
   final categoriesClient =
       CategoriesClient(config: config, tokenStore: tokenStore);
+  final ordersClient = OrdersClient(config: config, tokenStore: tokenStore);
   final stateApi = StateApi(config: config, tokenStore: tokenStore);
   final appStateStore = AppStateStore();
   final itemsController =
       ItemsController(client: itemsClient, tokenStore: tokenStore);
   final categoriesController =
       CategoriesController(client: categoriesClient, tokenStore: tokenStore);
+  final ordersController =
+      OrdersController(client: ordersClient, tokenStore: tokenStore);
 
   runApp(
     DevSkelApp(
@@ -56,6 +61,7 @@ Future<void> main() async {
       itemsClient: itemsClient,
       itemsController: itemsController,
       categoriesController: categoriesController,
+      ordersController: ordersController,
       appStateStore: appStateStore,
       stateApi: stateApi,
     ),
@@ -70,6 +76,7 @@ class DevSkelApp extends StatelessWidget {
     required this.itemsClient,
     required this.itemsController,
     required this.categoriesController,
+    required this.ordersController,
     required this.appStateStore,
     required this.stateApi,
   });
@@ -79,6 +86,7 @@ class DevSkelApp extends StatelessWidget {
   final ItemsClient itemsClient;
   final ItemsController itemsController;
   final CategoriesController categoriesController;
+  final OrdersController ordersController;
   final AppStateStore appStateStore;
   final StateApi stateApi;
 
@@ -105,6 +113,7 @@ class DevSkelApp extends StatelessWidget {
                       config: config,
                       itemsController: itemsController,
                       categoriesController: categoriesController,
+                      ordersController: ordersController,
                     ),
                   )
                 : Scaffold(

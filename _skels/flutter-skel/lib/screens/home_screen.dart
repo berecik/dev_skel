@@ -3,9 +3,10 @@
 /// Mirror of React's authenticated branch in `src/App.tsx`. Renders a
 /// header with the wrapper-shared backend URL + JWT issuer (proves
 /// the env loader wired correctly), an [ItemForm] for creating new
-/// items (with an optional category selector), and an [ItemListView]
+/// items (with an optional category selector), an [ItemListView]
 /// showing the items with the persistent `showCompleted` filter from
-/// the wrapper-shared state layer.
+/// the wrapper-shared state layer, and an [OrderListView] showing
+/// the user's orders.
 
 import 'package:flutter/material.dart';
 
@@ -13,8 +14,10 @@ import '../auth/auth_scope.dart';
 import '../config.dart';
 import '../controllers/categories_controller.dart';
 import '../controllers/items_controller.dart';
+import '../controllers/orders_controller.dart';
 import 'item_form.dart';
 import 'item_list.dart';
+import 'order_list.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({
@@ -22,11 +25,13 @@ class HomeScreen extends StatelessWidget {
     required this.config,
     required this.itemsController,
     this.categoriesController,
+    this.ordersController,
   });
 
   final AppConfig config;
   final ItemsController itemsController;
   final CategoriesController? categoriesController;
+  final OrdersController? ordersController;
 
   @override
   Widget build(BuildContext context) {
@@ -57,6 +62,10 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               ItemListView(controller: itemsController),
+              if (ordersController != null) ...<Widget>[
+                const SizedBox(height: 24),
+                OrderListView(controller: ordersController!),
+              ],
             ],
           ),
         ),

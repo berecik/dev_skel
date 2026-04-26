@@ -112,11 +112,17 @@ _engine = create_engine(
 if config.SQLALCHEMY_DATABASE_URI.startswith("sqlite"):
     from sqlalchemy import event
     event.listen(_engine, "connect", _enable_sqlite_fks)
+from .order_models import CatalogItem, Order, OrderLine, OrderAddress  # noqa: E402
+
 SQLModel.metadata.create_all(_engine, tables=[
     WrapperUser.__table__,
     Category.__table__,
     Item.__table__,
     ReactState.__table__,
+    CatalogItem.__table__,
+    Order.__table__,
+    OrderLine.__table__,
+    OrderAddress.__table__,
 ])
 _SessionLocal = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=False)
 

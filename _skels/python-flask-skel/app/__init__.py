@@ -1,7 +1,7 @@
 """Flask application factory.
 
 Wires the wrapper-shared backend stack: SQLAlchemy + Flask-Migrate +
-the five blueprints (root / auth / categories / items / state). Tables
+the six blueprints (root / auth / categories / items / state / orders). Tables
 are created on startup via ``db.create_all()`` so the canonical
 ``register → login → CRUD`` flow works against a freshly-generated
 wrapper without a separate migrations step. Use Flask-Migrate
@@ -45,13 +45,14 @@ def create_app(config_class=Config):
     # Imported lazily so the blueprint module can `from app import db`
     # at top level without triggering a circular import.
     from app import models  # noqa: F401 — registers SQLAlchemy mappers
-    from app.routes import auth_bp, categories_bp, items_bp, root_bp, state_bp
+    from app.routes import auth_bp, categories_bp, items_bp, orders_bp, root_bp, state_bp
 
     app.register_blueprint(root_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(categories_bp)
     app.register_blueprint(items_bp)
     app.register_blueprint(state_bp)
+    app.register_blueprint(orders_bp)
 
     # Bootstrap the wrapper-shared schema on startup. SQLAlchemy's
     # ``create_all`` is a no-op when the tables already exist, so this

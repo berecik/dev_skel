@@ -69,25 +69,36 @@ DEFAULT_STARTUP_TIMEOUT = 90
 #  Domain prompts (from _docs/PIZZERIA-TEST-PLAYBOOK.md section 3B)
 # ---------------------------------------------------------------------------
 
-BACKEND_EXTRA = """\
-Replace generic item CRUD with a pizzeria ordering domain.
-Entities: MenuPosition (name, description, price, category, available),
-Order (user_id, status: draft/pending/approved/rejected, created_at, submitted_at),
-OrderPosition (order_id, menu_position_id, quantity, unit_price),
-OrderAddress (order_id, street, city, zip_code, phone, notes).
-API: GET/POST /api/menu, POST /api/orders (create draft),
-POST /api/orders/{id}/positions (add position), \
-DELETE /api/orders/{id}/positions/{pos_id},
-PUT /api/orders/{id}/address, POST /api/orders/{id}/submit (draft->pending),
-POST /api/orders/{id}/approve (set wait_minutes + feedback),
-POST /api/orders/{id}/reject (set feedback).
-Status flow: draft -> pending -> approved|rejected.
-Approve/reject must accept JSON body with wait_minutes (int, minutes) \
-and feedback (str) fields, and return the full order object including \
-status, wait_minutes, and feedback in the top-level response JSON.
-Keep wrapper-shared auth (register/login -> JWT). Keep DATABASE_URL env-driven.
-Generate pytest tests covering: menu listing, order creation, position add/remove,
-address set/update, submit, approve with wait_minutes, reject with feedback."""
+BACKEND_EXTRA = (
+    "Replace generic item CRUD with a pizzeria ordering domain.\n"
+    "\n"
+    "MODELS (in models.py):\n"
+    "- Create OrderStatus(str, Enum): draft, pending, approved, rejected.\n"
+    "- MenuPosition: name(str), description(str), price(float), category(str), available(bool).\n"
+    "- Order: user_id(int FK wrapper_user.id), status(str default draft), "
+    "created_at(datetime), submitted_at(datetime optional), "
+    "wait_minutes(int optional), feedback(str optional).\n"
+    "- OrderPosition: order_id(int FK), menu_position_id(int FK), quantity(int), unit_price(float).\n"
+    "- OrderAddress: order_id(int FK unique), street, city, zip_code, phone, notes(optional).\n"
+    "- Pydantic request bodies: AddPositionBody(menu_position_id, quantity), "
+    "AddressBody(street, city, zip_code, phone, notes), "
+    "ApproveBody(wait_minutes: int, feedback: str), RejectBody(feedback: str).\n"
+    "- OrderDetailOut response with nested positions list and address object.\n"
+    "\n"
+    "ROUTES (all require JWT auth from app.wrapper_api.deps.CurrentUser):\n"
+    "- GET /api/menu, POST /api/menu (create)\n"
+    "- POST /api/orders (create draft, user_id from JWT, no body)\n"
+    "- GET /api/orders (list user orders), GET /api/orders/{id} (detail with positions+address)\n"
+    "- POST /api/orders/{id}/positions (AddPositionBody, look up unit_price from menu)\n"
+    "- DELETE /api/orders/{id}/positions/{pos_id}\n"
+    "- PUT /api/orders/{id}/address (AddressBody, upsert)\n"
+    "- POST /api/orders/{id}/submit (draft->pending, no body)\n"
+    "- POST /api/orders/{id}/approve (ApproveBody JSON, pending->approved)\n"
+    "- POST /api/orders/{id}/reject (RejectBody JSON, pending->rejected)\n"
+    "\n"
+    "Use app.wrapper_api.db.get_session for DB sessions. Use direct SQLModel queries "
+    "instead of the DDD UoW pattern. Keep wrapper-shared auth and DATABASE_URL."
+)
 
 FRONTEND_EXTRA = """\
 Replace item screens with pizzeria ordering UX.
@@ -233,7 +244,7 @@ def generate_pizzeria_project(
         cwd=wrapper.parent,
         capture_output=True,
         text=True,
-        timeout=3600,  # 60-minute hard cap
+        timeout=7200,  # 120-minute hard cap (domain prompts are large)
     )
     elapsed = time.monotonic() - started
 
@@ -726,6 +737,16 @@ def main() -> int:
 
         server_env = os.environ.copy()
         server_env["BACKEND_URL"] = backend_url
+        # Load wrapper .env into server env so all shared vars are available
+        wrapper_env_file = wrapper / ".env"
+        if wrapper_env_file.is_file():
+            for line in wrapper_env_file.read_text().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    key, _, val = line.partition("=")
+                    server_env.setdefault(key.strip(), val.strip())
 
         server_proc = subprocess.Popen(
             [

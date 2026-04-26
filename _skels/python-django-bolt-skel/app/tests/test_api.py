@@ -8,7 +8,7 @@ import pytest
 
 from django.contrib.auth.models import User
 
-from app.models import Project, Task, UserProfile
+from app.models import CatalogItem, Order, OrderAddress, OrderLine, Project, Task, UserProfile
 from app.schemas import (
     ProjectSchema,
     RegisterSchema,
@@ -178,3 +178,103 @@ def test_login_by_email_superuser():
     result = AuthService.authenticate_user("admin@example.com", "secret")
     assert result is not None
     assert "access" in result
+
+
+# --------------------------------------------------------------------------- #
+#  Order workflow tests
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.django_db
+def test_order_workflow_full():
+    """Full order workflow: register, login, create catalog items, create
+    order, add lines, set address, submit, approve with wait_minutes+feedback."""
+    # Register and login
+    user = AuthService.register_user("orderer", "orderer@example.com", "pass123")
+    result = AuthService.authenticate_user("orderer", "pass123")
+    assert result is not None
+    assert "access" in result
+
+    # Create catalog items
+    pizza = CatalogItem.objects.create(
+        name="Pizza", price=12.50, category="food", description="Margherita"
+    )
+    soda = CatalogItem.objects.create(
+        name="Soda", price=2.00, category="drink", description="Cola"
+    )
+    assert pizza.available is True
+    assert soda.available is True
+
+    # Create draft order
+    order = Order.objects.create(user=user, status="draft")
+    assert order.status == "draft"
+
+    # Add lines — unit_price comes from catalog
+    line1 = OrderLine.objects.create(
+        order=order, catalog_item=pizza, quantity=2, unit_price=pizza.price
+    )
+    line2 = OrderLine.objects.create(
+        order=order, catalog_item=soda, quantity=3, unit_price=soda.price
+    )
+    assert line1.unit_price == 12.50
+    assert line2.quantity == 3
+    assert order.lines.count() == 2
+
+    # Set address
+    address = OrderAddress.objects.create(
+        order=order,
+        street="123 Main St",
+        city="Springfield",
+        zip_code="62704",
+        phone="555-1234",
+        notes="Ring bell twice",
+    )
+    assert address.order_id == order.id
+
+    # Submit: draft -> pending
+    from django.utils import timezone
+    order.status = "pending"
+    order.submitted_at = timezone.now()
+    order.save()
+    order.refresh_from_db()
+    assert order.status == "pending"
+    assert order.submitted_at is not None
+
+    # Approve: pending -> approved with wait_minutes + feedback
+    order.status = "approved"
+    order.wait_minutes = 30
+    order.feedback = "Looks good, delivering soon"
+    order.save()
+    order.refresh_from_db()
+    assert order.status == "approved"
+    assert order.wait_minutes == 30
+    assert order.feedback == "Looks good, delivering soon"
+
+
+@pytest.mark.django_db
+def test_order_reject():
+    """Create order, submit, reject with feedback."""
+    user = AuthService.register_user("rejecter", "rejecter@example.com", "pass456")
+
+    # Create catalog item and order with a line
+    item = CatalogItem.objects.create(name="Widget", price=5.00, category="misc")
+    order = Order.objects.create(user=user, status="draft")
+    OrderLine.objects.create(
+        order=order, catalog_item=item, quantity=1, unit_price=item.price
+    )
+
+    # Submit: draft -> pending
+    from django.utils import timezone
+    order.status = "pending"
+    order.submitted_at = timezone.now()
+    order.save()
+    order.refresh_from_db()
+    assert order.status == "pending"
+
+    # Reject: pending -> rejected with feedback
+    order.status = "rejected"
+    order.feedback = "Out of stock"
+    order.save()
+    order.refresh_from_db()
+    assert order.status == "rejected"
+    assert order.feedback == "Out of stock"
