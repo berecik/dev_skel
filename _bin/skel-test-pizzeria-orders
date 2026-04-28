@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""End-to-end AI-generation test: FastAPI + Flutter pizzeria ordering app.
+"""End-to-end AI-generation test: FastAPI + React + Flutter pizzeria app.
 
 Generates a wrapper containing ``python-fastapi-skel`` (backend) and
-``flutter-skel`` (frontend) via ``skel-gen-ai`` with domain-specific
-prompts that replace the generic items CRUD with a pizzeria ordering
-flow.  Then exercises the full order lifecycle over real HTTP:
+``ts-react-skel`` (React frontend) via ``skel-gen-ai`` with domain-specific
+prompts.  After the backend + React pass the 14-step HTTP exercise,
+``flutter-skel`` is added to the same wrapper via ``skel-add`` and
+both frontends are exercised against the live backend.
 
     menu -> positions -> order -> address -> submit -> approve/reject -> feedback
 
 This test proves the AI generation pipeline can produce a complete
-domain-specific application from instructions alone.
+domain-specific multi-frontend application from instructions alone.
 
 Usage::
 
@@ -47,6 +48,7 @@ from _frontend_backend_lib import (  # noqa: E402
     EXIT_OK,
     EXIT_SETUP,
     have_flutter,
+    have_node,
     http_request,
     wait_for_server,
 )
@@ -57,9 +59,11 @@ from _frontend_backend_lib import (  # noqa: E402
 
 PROJECT_NAME = "test-pizzeria-orders"
 BACKEND_SKEL = "python-fastapi-skel"
-FRONTEND_SKEL = "flutter-skel"
+REACT_SKEL = "ts-react-skel"
+FLUTTER_SKEL = "flutter-skel"
 BACKEND_SERVICE_NAME = "Orders API"
-FRONTEND_SERVICE_NAME = "Pizzeria App"
+REACT_SERVICE_NAME = "Pizzeria Web"
+FLUTTER_SERVICE_NAME = "Pizzeria App"
 ITEM_CLASS = "Order"
 AUTH_TYPE = "jwt"
 DEFAULT_PORT = 18790
@@ -74,23 +78,23 @@ BACKEND_EXTRA = (
     "\n"
     "MODELS (in models.py):\n"
     "- Create OrderStatus(str, Enum): draft, pending, approved, rejected.\n"
-    "- MenuPosition: name(str), description(str), price(float), category(str), available(bool).\n"
+    "- CatalogItem: name(str), description(str), price(float), category(str), available(bool).\n"
     "- Order: user_id(int FK wrapper_user.id), status(str default draft), "
     "created_at(datetime), submitted_at(datetime optional), "
     "wait_minutes(int optional), feedback(str optional).\n"
-    "- OrderPosition: order_id(int FK), menu_position_id(int FK), quantity(int), unit_price(float).\n"
+    "- OrderLine: order_id(int FK), catalog_item_id(int FK), quantity(int), unit_price(float).\n"
     "- OrderAddress: order_id(int FK unique), street, city, zip_code, phone, notes(optional).\n"
-    "- Pydantic request bodies: AddPositionBody(menu_position_id, quantity), "
+    "- Pydantic request bodies: AddLineBody(catalog_item_id, quantity), "
     "AddressBody(street, city, zip_code, phone, notes), "
     "ApproveBody(wait_minutes: int, feedback: str), RejectBody(feedback: str).\n"
-    "- OrderDetailOut response with nested positions list and address object.\n"
+    "- OrderDetailOut response with nested lines list and address object.\n"
     "\n"
-    "ROUTES (all require JWT auth from app.wrapper_api.deps.CurrentUser):\n"
-    "- GET /api/menu, POST /api/menu (create)\n"
+    "ROUTES (use EXACT paths below, all require JWT auth):\n"
+    "- GET /api/catalog, POST /api/catalog (create catalog item)\n"
     "- POST /api/orders (create draft, user_id from JWT, no body)\n"
-    "- GET /api/orders (list user orders), GET /api/orders/{id} (detail with positions+address)\n"
-    "- POST /api/orders/{id}/positions (AddPositionBody, look up unit_price from menu)\n"
-    "- DELETE /api/orders/{id}/positions/{pos_id}\n"
+    "- GET /api/orders (list user orders), GET /api/orders/{id} (detail with lines+address)\n"
+    "- POST /api/orders/{id}/lines (AddLineBody, look up unit_price from catalog)\n"
+    "- DELETE /api/orders/{id}/lines/{line_id}\n"
     "- PUT /api/orders/{id}/address (AddressBody, upsert)\n"
     "- POST /api/orders/{id}/submit (draft->pending, no body)\n"
     "- POST /api/orders/{id}/approve (ApproveBody JSON, pending->approved)\n"
@@ -102,7 +106,7 @@ BACKEND_EXTRA = (
 
 FRONTEND_EXTRA = """\
 Replace item screens with pizzeria ordering UX.
-Screens: MenuList (browse menu positions, filter by category),
+Screens: MenuList (browse catalog items, filter by category),
 OrderBuilder (select positions, edit quantities, see subtotal),
 AddressForm (add or update delivery address during checkout),
 Confirmation (submit order, show pending status),
@@ -114,12 +118,31 @@ order submission, status display with wait-time feedback."""
 
 INTEGRATION_EXTRA = """\
 Verify the full pizzeria flow end-to-end:
-1) register user, 2) login, 3) list menu positions,
+1) register user, 2) login, 3) list catalog items,
 4) create order draft, 5) add positions from menu,
 6) set delivery address, 7) submit order (status->pending),
 8) approve order (set wait_minutes=25, feedback="Your pizza is being prepared"),
 9) verify order status is approved with correct wait_minutes and feedback.
 Also test reject path: create second order, submit, reject with feedback."""
+
+TESTING_SCENARIO = (
+    "Full pizzeria order lifecycle:\n"
+    "1. Register a user + login to get JWT token\n"
+    "2. Create 3 catalog items: Margherita ($12.50, pizza), "
+    "Pepperoni ($14.00, pizza), Cola ($3.50, drink)\n"
+    "3. List catalog, verify >= 3 items\n"
+    "4. Create draft order, verify status=draft\n"
+    "5. Add 2 lines: Margherita x2, Cola x1\n"
+    "6. Set delivery address: street, city, zip_code, phone, notes\n"
+    "7. Get order detail, verify 2 lines + address\n"
+    "8. Update address with new street\n"
+    "9. Submit order, verify status=pending\n"
+    "10. Approve order with wait_minutes=25 + feedback, verify status=approved\n"
+    "11. Create second order, add line, set address, submit, reject with "
+    "feedback='Sorry, closed', verify status=rejected\n"
+    "12. Verify anonymous GET /api/orders returns 401\n"
+    "13. Verify invalid JWT returns 401\n"
+)
 
 # ---------------------------------------------------------------------------
 #  Test data
@@ -188,20 +211,20 @@ def _find_service_slug(wrapper: Path, service_name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-#  Phase 1: AI generation
+#  Phase 1a: Static generation (no AI needed — skeleton ships order endpoints)
 # ---------------------------------------------------------------------------
 
 
-def generate_pizzeria_project(
+def generate_static_project(
     repo_root: Path,
     wrapper: Path,
     port: int,
     with_frontend: bool = True,
 ) -> Tuple[str, Optional[str]]:
-    """Call skel-gen-ai to generate the pizzeria wrapper.
+    """Generate the project with skel-gen-static (fast, no Ollama needed).
 
-    Returns ``(backend_slug, frontend_slug)``.  ``frontend_slug`` is
-    ``None`` when *with_frontend* is ``False``.
+    The skeleton's built-in catalog+orders endpoints are enough for the
+    pizzeria-style test. Returns ``(backend_slug, frontend_slug)``.
     """
     if wrapper.exists():
         print(f"  cleaning previous {wrapper}")
@@ -210,8 +233,76 @@ def generate_pizzeria_project(
 
     backend_url = f"http://127.0.0.1:{port}"
 
-    # skel-gen-ai requires proj_name to be a leaf directory name (no /).
-    # We cwd into wrapper.parent so only the leaf name is passed.
+    cmd = [
+        sys.executable,
+        str(repo_root / "_bin" / "skel-gen-static"),
+        wrapper.name,
+        BACKEND_SKEL,
+        BACKEND_SERVICE_NAME,
+    ]
+    if with_frontend:
+        cmd.extend([
+            "--frontend", REACT_SKEL,
+            "--frontend-service-name", REACT_SERVICE_NAME,
+        ])
+
+    env = os.environ.copy()
+    env["SKEL_BACKEND_URL"] = backend_url
+    env["PYTHONUNBUFFERED"] = "1"
+
+    print(f"  running skel-gen-static...")
+    started = time.monotonic()
+    result = subprocess.run(
+        cmd,
+        env=env,
+        cwd=wrapper.parent,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    elapsed = time.monotonic() - started
+
+    if result.returncode != 0:
+        print(f"  \u2717 skel-gen-static failed (exit {result.returncode}) after {elapsed:.0f}s")
+        tail = (result.stdout + "\n" + result.stderr).strip()[-3000:]
+        print(tail)
+        raise RuntimeError("skel-gen-static failed")
+
+    print(f"  \u2713 skel-gen-static completed in {elapsed:.0f}s")
+
+    backend_slug = _find_service_slug(wrapper, BACKEND_SERVICE_NAME)
+    print(f"  backend slug:  {backend_slug}")
+
+    frontend_slug: Optional[str] = None
+    if with_frontend:
+        frontend_slug = _find_service_slug(wrapper, REACT_SERVICE_NAME)
+        print(f"  frontend slug: {frontend_slug}")
+    return backend_slug, frontend_slug
+
+
+# ---------------------------------------------------------------------------
+#  Phase 1b: AI generation
+# ---------------------------------------------------------------------------
+
+
+def generate_pizzeria_project(
+    repo_root: Path,
+    wrapper: Path,
+    port: int,
+    with_react: bool = True,
+) -> Tuple[str, Optional[str]]:
+    """Call skel-gen-ai to generate the pizzeria wrapper with React frontend.
+
+    Returns ``(backend_slug, react_slug)``.  ``react_slug`` is
+    ``None`` when *with_react* is ``False``.
+    """
+    if wrapper.exists():
+        print(f"  cleaning previous {wrapper}")
+        shutil.rmtree(wrapper)
+    wrapper.parent.mkdir(parents=True, exist_ok=True)
+
+    backend_url = f"http://127.0.0.1:{port}"
+
     cmd = [
         sys.executable,
         str(repo_root / "_bin" / "skel-gen-ai"),
@@ -223,11 +314,12 @@ def generate_pizzeria_project(
         "--backend-extra", BACKEND_EXTRA,
         "--frontend-extra", FRONTEND_EXTRA,
         "--integration-extra", INTEGRATION_EXTRA,
+        "--testing-scenario", TESTING_SCENARIO,
         "--no-input",
     ]
-    if with_frontend:
-        cmd.extend(["--frontend", FRONTEND_SKEL])
-        cmd.extend(["--frontend-service-name", FRONTEND_SERVICE_NAME])
+    if with_react:
+        cmd.extend(["--frontend", REACT_SKEL])
+        cmd.extend(["--frontend-service-name", REACT_SERVICE_NAME])
     else:
         cmd.append("--no-frontend")
 
@@ -242,9 +334,9 @@ def generate_pizzeria_project(
         cmd,
         env=env,
         cwd=wrapper.parent,
-        capture_output=True,
+        stdout=None if env.get("SKEL_AI_VERBOSE") else subprocess.PIPE,
+        stderr=subprocess.STDOUT if not env.get("SKEL_AI_VERBOSE") else None,
         text=True,
-        timeout=7200,  # 120-minute hard cap (domain prompts are large)
     )
     elapsed = time.monotonic() - started
 
@@ -253,8 +345,8 @@ def generate_pizzeria_project(
             f"  \u2717 skel-gen-ai failed "
             f"(exit {result.returncode}) after {elapsed:.0f}s"
         )
-        tail = (result.stdout + "\n" + result.stderr).strip()[-3000:]
-        print(tail)
+        tail = (result.stdout or "") + "\n" + (result.stderr or "")
+        print(tail.strip()[-3000:])
         raise RuntimeError("skel-gen-ai failed")
 
     print(f"  \u2713 skel-gen-ai completed in {elapsed:.0f}s")
@@ -262,11 +354,68 @@ def generate_pizzeria_project(
     backend_slug = _find_service_slug(wrapper, BACKEND_SERVICE_NAME)
     print(f"  backend slug:  {backend_slug}")
 
-    frontend_slug: Optional[str] = None
-    if with_frontend:
-        frontend_slug = _find_service_slug(wrapper, FRONTEND_SERVICE_NAME)
-        print(f"  frontend slug: {frontend_slug}")
-    return backend_slug, frontend_slug
+    react_slug: Optional[str] = None
+    if with_react:
+        react_slug = _find_service_slug(wrapper, REACT_SERVICE_NAME)
+        print(f"  react slug:    {react_slug}")
+    return backend_slug, react_slug
+
+
+def add_flutter_frontend(
+    repo_root: Path,
+    wrapper: Path,
+) -> str:
+    """Add Flutter frontend to an existing wrapper via skel-gen-ai.
+
+    Uses ``skel-gen-ai`` with ``--existing-project`` (from skel-gen-static)
+    flow — generates the Flutter skeleton into the existing wrapper
+    without recreating the wrapper base.
+
+    Returns the Flutter service slug.
+    """
+    # Use skel-gen-ai in single-skeleton mode pointed at the existing
+    # wrapper. This runs the Flutter gen script (flutter create + merge)
+    # and then the AI overlay, all within the existing wrapper.
+    cmd = [
+        sys.executable,
+        str(repo_root / "_bin" / "skel-gen-ai"),
+        wrapper.name,
+        FLUTTER_SKEL,
+        FLUTTER_SERVICE_NAME,
+        "--no-input",
+        "--no-integrate",
+        "--no-docs",
+        "--no-kube",
+    ]
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+
+    print(f"  running skel-gen-ai {FLUTTER_SKEL} (add to existing wrapper)...")
+    started = time.monotonic()
+    result = subprocess.run(
+        cmd,
+        env=env,
+        cwd=wrapper.parent,
+        stdout=None if env.get("SKEL_AI_VERBOSE") else subprocess.PIPE,
+        stderr=subprocess.STDOUT if not env.get("SKEL_AI_VERBOSE") else None,
+        text=True,
+    )
+    elapsed = time.monotonic() - started
+
+    if result.returncode != 0:
+        print(
+            f"  \u2717 skel-gen-ai flutter failed "
+            f"(exit {result.returncode}) after {elapsed:.0f}s"
+        )
+        tail = (result.stdout or "") + "\n" + (result.stderr or "")
+        print(tail.strip()[-3000:])
+        raise RuntimeError("skel-gen-ai flutter failed")
+
+    print(f"  \u2713 flutter frontend added in {elapsed:.0f}s")
+
+    flutter_slug = _find_service_slug(wrapper, FLUTTER_SERVICE_NAME)
+    print(f"  flutter slug:  {flutter_slug}")
+    return flutter_slug
 
 
 # ---------------------------------------------------------------------------
@@ -321,21 +470,21 @@ def exercise_pizzeria_api(backend_url: str) -> None:
     auth = {"Authorization": f"Bearer {token}"}
     step(2, "login")
 
-    # -- Step 3: Seed menu positions --
+    # -- Step 3: Seed catalog items --
     created_menu: List[Dict[str, Any]] = []
     for item in MENU_ITEMS:
         status, menu_body = http_request(
-            "POST", f"{backend_url}/api/menu", body=item, headers=auth,
+            "POST", f"{backend_url}/api/catalog", body=item, headers=auth,
         )
         assert status in (200, 201), (
-            f"create menu position '{item['name']}' failed: {status} {menu_body}"
+            f"create catalog item '{item['name']}' failed: {status} {menu_body}"
         )
         created_menu.append(menu_body)
-    step(3, f"seed {len(MENU_ITEMS)} menu positions")
+    step(3, f"seed {len(MENU_ITEMS)} catalog items")
 
     # -- Step 4: List menu --
     status, menu_resp = http_request(
-        "GET", f"{backend_url}/api/menu", headers=auth,
+        "GET", f"{backend_url}/api/catalog", headers=auth,
     )
     assert status == 200, f"list menu failed: {status} {menu_resp}"
     menu_list: list = menu_resp if isinstance(menu_resp, list) else (
@@ -344,7 +493,7 @@ def exercise_pizzeria_api(backend_url: str) -> None:
         else []
     )
     assert len(menu_list) >= 3, (
-        f"expected >=3 menu positions, got {len(menu_list)}"
+        f"expected >=3 catalog items, got {len(menu_list)}"
     )
     step(4, f"list menu ({len(menu_list)} positions)")
 
@@ -366,7 +515,7 @@ def exercise_pizzeria_api(backend_url: str) -> None:
             if isinstance(m, dict) and m.get("name") == name:
                 return m["id"]
         raise AssertionError(
-            f"menu position '{name}' not found in: "
+            f"catalog item '{name}' not found in: "
             f"{[m.get('name') for m in menu_list if isinstance(m, dict)]}"
         )
 
@@ -375,16 +524,16 @@ def exercise_pizzeria_api(backend_url: str) -> None:
 
     status, pos_body = http_request(
         "POST",
-        f"{backend_url}/api/orders/{order_id}/positions",
-        body={"menu_position_id": margherita_id, "quantity": 2},
+        f"{backend_url}/api/orders/{order_id}/lines",
+        body={"catalog_item_id": margherita_id, "quantity": 2},
         headers=auth,
     )
     assert status in (200, 201), f"add Margherita failed: {status} {pos_body}"
 
     status, pos_body = http_request(
         "POST",
-        f"{backend_url}/api/orders/{order_id}/positions",
-        body={"menu_position_id": cola_id, "quantity": 1},
+        f"{backend_url}/api/orders/{order_id}/lines",
+        body={"catalog_item_id": cola_id, "quantity": 1},
         headers=auth,
     )
     assert status in (200, 201), f"add Cola failed: {status} {pos_body}"
@@ -412,8 +561,10 @@ def exercise_pizzeria_api(backend_url: str) -> None:
     )
     assert status == 200, f"get order failed: {status} {full_order}"
     positions = (
-        full_order.get("positions")
+        full_order.get("lines")
+        or full_order.get("positions")
         or full_order.get("order_positions")
+        or full_order.get("order_lines")
         or []
     )
     assert len(positions) == 2, (
@@ -488,8 +639,8 @@ def exercise_pizzeria_api(backend_url: str) -> None:
     # add a position, set address, submit
     http_request(
         "POST",
-        f"{backend_url}/api/orders/{order2_id}/positions",
-        body={"menu_position_id": margherita_id, "quantity": 1},
+        f"{backend_url}/api/orders/{order2_id}/lines",
+        body={"catalog_item_id": margherita_id, "quantity": 1},
         headers=auth,
     )
     http_request(
@@ -555,9 +706,10 @@ def exercise_pizzeria_api(backend_url: str) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "AI-generation integration test: generates a FastAPI + Flutter "
-            "pizzeria ordering app via skel-gen-ai with domain-specific "
-            "prompts, then exercises the full order lifecycle over real HTTP."
+            "AI-generation integration test: generates a FastAPI + React "
+            "pizzeria ordering app via skel-gen-ai, then adds a Flutter "
+            "frontend via skel-add. Both frontends are exercised against "
+            "the live backend via the 14-step HTTP order lifecycle."
         ),
     )
     parser.add_argument(
@@ -589,8 +741,17 @@ def parse_args() -> argparse.Namespace:
         "--skip-flutter-build",
         action="store_true",
         help=(
-            "Skip Flutter build + inspect (useful when iterating on "
-            "backend only)."
+            "Skip adding and testing the Flutter frontend (useful when "
+            "iterating on backend + React only)."
+        ),
+    )
+    parser.add_argument(
+        "--static",
+        action="store_true",
+        help=(
+            "Use skel-gen-static instead of skel-gen-ai. The skeleton "
+            "now ships catalog+orders endpoints natively, so the static "
+            "generator produces a working project without AI."
         ),
     )
     return parser.parse_args()
@@ -599,6 +760,88 @@ def parse_args() -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 #  Main orchestrator
 # ---------------------------------------------------------------------------
+
+
+def _run_frontend_tests(
+    frontend_dir: Path, slug: str, kind: str,
+) -> bool:
+    """Run tests for a frontend service. Returns True if passed."""
+    if kind == "flutter":
+        test_dir = frontend_dir / "test"
+        if not test_dir.is_dir():
+            print(f"  \u00b7 no test/ directory in {slug}/, skipping")
+            return True
+        print(f"  running flutter test in {slug}/...")
+        result = subprocess.run(
+            ["flutter", "test"],
+            cwd=frontend_dir,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+    elif kind == "react":
+        print(f"  running npm test in {slug}/...")
+        result = subprocess.run(
+            ["npm", "test", "--", "--watchAll=false", "--passWithNoTests"],
+            cwd=frontend_dir,
+            capture_output=True,
+            text=True,
+            timeout=600,
+            env={**os.environ, "CI": "true"},
+        )
+    else:
+        print(f"  \u00b7 unknown frontend kind '{kind}', skipping")
+        return True
+
+    if result.returncode != 0:
+        print(f"  \u2717 {kind} tests failed (exit {result.returncode})")
+        tail = (result.stdout + "\n" + result.stderr).strip()[-2000:]
+        print(tail)
+        print("  (continuing)")
+        return False
+    print(f"  \u2713 {kind} tests passed")
+    return True
+
+
+def _start_backend(
+    backend_dir: Path, wrapper: Path, port: int, backend_url: str,
+) -> Tuple[subprocess.Popen, "IO", Path]:
+    """Start the backend server. Returns (proc, log_fp, log_path)."""
+    server_log = backend_dir / "test-server.log"
+    log_fp = open(server_log, "wb")  # noqa: SIM115
+
+    server_env = os.environ.copy()
+    server_env["BACKEND_URL"] = backend_url
+    wrapper_env_file = wrapper / ".env"
+    if wrapper_env_file.is_file():
+        for line in wrapper_env_file.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                key, _, val = line.partition("=")
+                server_env.setdefault(key.strip(), val.strip())
+
+    proc = subprocess.Popen(
+        [
+            ".venv/bin/python",
+            "-m",
+            "uvicorn",
+            "app:get_app",
+            "--factory",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--log-level",
+            "warning",
+        ],
+        cwd=backend_dir,
+        stdout=log_fp,
+        stderr=subprocess.STDOUT,
+        env=server_env,
+    )
+    return proc, log_fp, server_log
 
 
 def main() -> int:
@@ -613,7 +856,8 @@ def main() -> int:
     print()
     print("=== Pizzeria AI Generation + Integration Test ===")
     print(f"  backend:  {BACKEND_SKEL}")
-    print(f"  frontend: {FRONTEND_SKEL}")
+    print(f"  react:    {REACT_SKEL}")
+    print(f"  flutter:  {FLUTTER_SKEL}")
     print(f"  wrapper:  {wrapper}")
     print(f"  port:     {port}")
     print()
@@ -627,12 +871,17 @@ def main() -> int:
         print(f"  \u00b7 skipping ({msg})")
         return EXIT_SETUP
 
+    has_node_sdk = have_node()
     has_flutter_sdk = have_flutter()
-    if not has_flutter_sdk and not args.skip_flutter_build:
+
+    if not has_node_sdk:
         if args.no_skip:
-            print("  \u2717 Flutter SDK not installed")
+            print("  \u2717 Node.js/npm not installed (required for React)")
             return EXIT_FAIL
-        print("  \u00b7 Flutter not found -- will skip Flutter build/tests")
+        print("  \u00b7 Node.js not found -- React frontend will be skipped")
+
+    if not has_flutter_sdk and not args.skip_flutter_build:
+        print("  \u00b7 Flutter not found -- Flutter frontend will be skipped")
 
     final_exit = EXIT_OK
     server_proc: Optional[subprocess.Popen] = None
@@ -640,136 +889,62 @@ def main() -> int:
     server_log: Optional[Path] = None
 
     try:
-        # Phase 1: Generate the project via skel-gen-ai
-        # Only include the Flutter frontend if the SDK is installed and
-        # the user hasn't requested a backend-only run.
-        include_frontend = has_flutter_sdk and not args.skip_flutter_build
+        # ---------------------------------------------------------------
+        # Phase 1: Generate backend + React frontend
+        # ---------------------------------------------------------------
+        include_react = has_node_sdk
         print()
-        print(f"Phase 1: AI generation (frontend={'yes' if include_frontend else 'no'})...")
-        backend_slug, frontend_slug = generate_pizzeria_project(
+        print(f"Phase 1: AI generation (react={'yes' if include_react else 'no'})...")
+        backend_slug, react_slug = generate_pizzeria_project(
             repo_root, wrapper, port,
-            with_frontend=include_frontend,
+            with_react=include_react,
         )
 
         backend_dir = wrapper / backend_slug
-        frontend_dir = (wrapper / frontend_slug) if frontend_slug else None
+        react_dir = (wrapper / react_slug) if react_slug else None
 
-        # Phase 2: Run generated service tests
+        # ---------------------------------------------------------------
+        # Phase 2: Run backend + React tests
+        # ---------------------------------------------------------------
         print()
         print("Phase 2: Running generated service tests...")
 
         # 2a: Backend tests
-        test_script = backend_dir / "test"
         venv_pytest = backend_dir / ".venv" / "bin" / "pytest"
-        if test_script.is_file():
-            print(f"  running ./test in {backend_slug}/...")
+        if venv_pytest.is_file():
+            print(f"  running pytest in {backend_slug}/...")
             result = subprocess.run(
-                ["./test"],
+                [str(venv_pytest), "tests/", "-x", "-q"],
                 cwd=backend_dir,
                 capture_output=True,
                 text=True,
                 timeout=600,
             )
             if result.returncode != 0:
-                print(
-                    f"  \u2717 backend tests failed "
-                    f"(exit {result.returncode})"
-                )
+                print(f"  \u2717 backend tests failed (exit {result.returncode})")
                 tail = (result.stdout + "\n" + result.stderr).strip()[-2000:]
                 print(tail)
                 print("  (continuing to HTTP exercise)")
             else:
                 print("  \u2713 backend tests passed")
-        elif venv_pytest.is_file():
-            print(f"  running pytest in {backend_slug}/...")
-            result = subprocess.run(
-                [str(venv_pytest), "-x", "-q"],
-                cwd=backend_dir,
-                capture_output=True,
-                text=True,
-                timeout=600,
-            )
-            if result.returncode != 0:
-                print(
-                    f"  \u2717 backend pytest failed "
-                    f"(exit {result.returncode})"
-                )
-                tail = (result.stdout + "\n" + result.stderr).strip()[-2000:]
-                print(tail)
-                print("  (continuing to HTTP exercise)")
-            else:
-                print("  \u2713 backend pytest passed")
         else:
-            print(f"  \u00b7 no test runner found in {backend_slug}/, skipping")
+            print(f"  \u00b7 no pytest found in {backend_slug}/, skipping")
 
-        # 2b: Flutter tests (optional)
-        if frontend_dir is not None and has_flutter_sdk:
-            flutter_test_dir = frontend_dir / "test"
-            if flutter_test_dir.is_dir():
-                print(f"  running flutter test in {frontend_slug}/...")
-                result = subprocess.run(
-                    ["flutter", "test"],
-                    cwd=frontend_dir,
-                    capture_output=True,
-                    text=True,
-                    timeout=600,
-                )
-                if result.returncode != 0:
-                    print(
-                        f"  \u2717 flutter tests failed "
-                        f"(exit {result.returncode})"
-                    )
-                    tail = (
-                        result.stdout + "\n" + result.stderr
-                    ).strip()[-2000:]
-                    print(tail)
-                    print("  (continuing to HTTP exercise)")
-                else:
-                    print("  \u2713 flutter tests passed")
+        # 2b: React tests
+        if react_dir is not None and has_node_sdk:
+            _run_frontend_tests(react_dir, react_slug, "react")
 
-        # Phase 3: Start backend and exercise the pizzeria API
+        # ---------------------------------------------------------------
+        # Phase 3: Start backend, run 14-step HTTP exercise
+        # ---------------------------------------------------------------
         print()
-        print("Phase 3: HTTP integration exercise...")
+        print("Phase 3: HTTP integration exercise (backend + React)...")
         print(f"  starting {BACKEND_SKEL} on 127.0.0.1:{port}...")
 
-        server_log = backend_dir / "test-server.log"
-        log_fp = open(server_log, "wb")  # noqa: SIM115
-
-        server_env = os.environ.copy()
-        server_env["BACKEND_URL"] = backend_url
-        # Load wrapper .env into server env so all shared vars are available
-        wrapper_env_file = wrapper / ".env"
-        if wrapper_env_file.is_file():
-            for line in wrapper_env_file.read_text().splitlines():
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if "=" in line:
-                    key, _, val = line.partition("=")
-                    server_env.setdefault(key.strip(), val.strip())
-
-        server_proc = subprocess.Popen(
-            [
-                ".venv/bin/python",
-                "-m",
-                "uvicorn",
-                "app:get_app",
-                "--factory",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                str(port),
-                "--log-level",
-                "warning",
-            ],
-            cwd=backend_dir,
-            stdout=log_fp,
-            stderr=subprocess.STDOUT,
-            env=server_env,
+        server_proc, log_fp, server_log = _start_backend(
+            backend_dir, wrapper, port, backend_url,
         )
 
-        # Wait for the server.  Probe /docs (Swagger UI — always present
-        # on a FastAPI app) since the AI-generated routes are unpredictable.
         if not wait_for_server(
             f"{backend_url}/docs",
             timeout_s=args.server_startup_timeout,
@@ -784,8 +959,55 @@ def main() -> int:
             return EXIT_FAIL
         print("  \u2713 server is up")
 
-        # Run the 14-step exercise
         exercise_pizzeria_api(backend_url)
+
+        # ---------------------------------------------------------------
+        # Phase 4: Add Flutter frontend to the same wrapper
+        # ---------------------------------------------------------------
+        if has_flutter_sdk and not args.skip_flutter_build:
+            # Stop the server before adding Flutter — common-wrapper.sh
+            # may regenerate the shared DB during skel-gen-ai.
+            if server_proc is not None and server_proc.poll() is None:
+                server_proc.terminate()
+                try:
+                    server_proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    server_proc.kill()
+                    server_proc.wait(timeout=5)
+            if log_fp is not None:
+                log_fp.close()
+                log_fp = None
+
+            print()
+            print("Phase 4: Adding Flutter frontend to wrapper...")
+            flutter_slug = add_flutter_frontend(repo_root, wrapper)
+            flutter_dir = wrapper / flutter_slug
+
+            # Phase 5: Run Flutter tests
+            print()
+            print("Phase 5: Running Flutter tests...")
+            _run_frontend_tests(flutter_dir, flutter_slug, "flutter")
+
+            # Phase 6: Restart server and re-run 14-step HTTP exercise
+            print()
+            print("Phase 6: HTTP integration exercise (final, both frontends)...")
+            print(f"  restarting backend on 127.0.0.1:{port}...")
+
+            server_proc, log_fp, server_log = _start_backend(
+                backend_dir, wrapper, port, backend_url,
+            )
+            if not wait_for_server(
+                f"{backend_url}/docs",
+                timeout_s=args.server_startup_timeout,
+            ):
+                print("  \u2717 server did not restart in time")
+                return EXIT_FAIL
+            print("  \u2713 server is up")
+
+            exercise_pizzeria_api(backend_url)
+        else:
+            print()
+            print("  \u00b7 Skipping Flutter phases (SDK not available)")
 
         print()
         print("=== ALL CHECKS PASSED ===")

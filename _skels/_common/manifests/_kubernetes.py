@@ -39,6 +39,11 @@ RULES (non-negotiable):
    `app.kubernetes.io/instance`, and `app.kubernetes.io/managed-by: Helm`.
 5. Use `apiVersion` + `kind` that passes `kubeconform` on k8s 1.28+.
 6. Output raw YAML only. No markdown fences.
+7. ALWAYS guard .Values lookups with `default` to prevent nil pointer errors
+   during helm lint. Example: `{{ (index .Values.services "<svc>") | default dict }}`.
+   Use `{{ $svc := (index .Values.services "<svc>") | default dict }}` at the
+   top of the template, then `{{ $svc.env | default dict }}` for nested access.
+   NEVER access nested values without nil guards.
 """
 
 

@@ -14,6 +14,8 @@ chunking + corpus discovery in isolation.
 from __future__ import annotations
 
 import logging
+import sys
+import time
 from functools import lru_cache
 from typing import Any
 
@@ -41,6 +43,14 @@ def _make_embeddings_cached(
     logger.info(
         "loading embedding model %s (cache_folder=%s)", model_name, cache_folder
     )
+    # Some models (nomic, jina) need trust_remote_code for custom
+    # attention implementations. Safe for the curated list of models
+    # we recommend in _docs/RAG-IMPROVEMENT-PLAN.md.
+    model_kwargs: dict = {}
+    lower = model_name.lower()
+    if "nomic" in lower or "jina" in lower:
+        model_kwargs["trust_remote_code"] = True
+
     return HuggingFaceEmbeddings(
         model_name=model_name,
         cache_folder=cache_folder,
@@ -48,12 +58,26 @@ def _make_embeddings_cached(
         # inner product, which lines up with FAISS's IndexFlatIP path
         # and gives slightly cleaner top-K rankings on small models.
         encode_kwargs={"normalize_embeddings": True},
+        model_kwargs=model_kwargs,
     )
 
 
-def make_embeddings(rag_cfg: RagConfig) -> Any:
+def make_embeddings(rag_cfg: RagConfig, verbose: int = 0) -> Any:
     """Return a (cached) ``HuggingFaceEmbeddings`` instance for *rag_cfg*."""
 
     cache_dir = rag_cfg.cache_dir
     cache_dir.mkdir(parents=True, exist_ok=True)
-    return _make_embeddings_cached(rag_cfg.embedding_model, str(cache_dir))
+
+    t0 = time.monotonic()
+    embeddings = _make_embeddings_cached(rag_cfg.embedding_model, str(cache_dir))
+    elapsed = time.monotonic() - t0
+
+    # Only print timing on first load (elapsed > 0.5s means not cached)
+    if verbose >= 1 and elapsed > 0.5:
+        print(
+            f"  [rag] embedding model: {rag_cfg.embedding_model} "
+            f"(loaded in {elapsed:.1f}s)",
+            file=sys.stderr,
+        )
+
+    return embeddings

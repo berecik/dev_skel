@@ -80,8 +80,19 @@ class RagAgent:
     # ---- public chat helper ----------------------------------------------
 
     def chat(self, system: str, user: str) -> str:
-        """Forward a system + user turn to Ollama via LangChain."""
+        """Forward a system + user turn to Ollama via LangChain.
 
+        When ``SKEL_AI_VERBOSE >= 2``, uses :func:`chat_with_metrics`
+        to print timing, token counts, and throughput after each call.
+        """
+
+        verbose = self.rag_cfg.verbose
+        if verbose >= 2:
+            from skel_rag.llm import chat_with_metrics
+            text, _metrics = chat_with_metrics(
+                self.ollama_cfg, system, user, verbose=verbose,
+            )
+            return text
         return llm_chat(self.ollama_cfg, system, user)
 
     # ---- retrieval --------------------------------------------------------
@@ -535,8 +546,19 @@ class RagAgent:
             auth_type=ctx.auth_type,
             extras=extras,
         )
-        chunks: List[RetrievedChunk] = retriever.retrieve(
-            query, language=target.language or None
+
+        # Add model-specific query prefix for better retrieval
+        model_name = self.rag_cfg.embedding_model.lower()
+        if "bge" in model_name:
+            query = f"Represent this code task for retrieval: {query}"
+        elif "nomic" in model_name:
+            query = f"search_query: {query}"
+        # jina-code-v2 needs no prefix
+
+        chunks, _stats = retriever.retrieve(
+            query,
+            language=target.language or None,
+            verbose=self.rag_cfg.verbose,
         )
         return render_retrieved_block(
             chunks, max_chars=self.rag_cfg.max_context_chars

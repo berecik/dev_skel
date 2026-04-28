@@ -199,3 +199,59 @@ def chat(config: OllamaConfig, system: str, user: str) -> str:
     if isinstance(content, str):
         return content
     raise OllamaError(f"Unexpected ChatOllama response: {response!r}")
+
+
+# --------------------------------------------------------------------------- #
+#  Instrumented chat (observability layer)
+# --------------------------------------------------------------------------- #
+
+
+def chat_with_metrics(
+    config: OllamaConfig, system: str, user: str, *, verbose: int = 0
+) -> tuple[str, "LlmCallMetrics"]:
+    """``chat()`` with timing and token estimation.
+
+    Returns ``(response_text, metrics)``. Import is lazy so callers
+    that only use plain ``chat()`` never pull in the metrics module.
+    """
+
+    import sys
+    import time
+
+    from skel_rag.metrics import LlmCallMetrics
+
+    input_chars = len(system) + len(user)
+
+    if verbose >= 2:
+        input_tokens_est = input_chars // 4
+        print(
+            f"    [rag] prompt: system={len(system):,} chars, "
+            f"user={len(user):,} chars (~{input_tokens_est:,} tokens)",
+            file=sys.stderr,
+        )
+
+    t0 = time.monotonic()
+    response = chat(config, system=system, user=user)
+    elapsed = time.monotonic() - t0
+
+    output_chars = len(response)
+    metrics = LlmCallMetrics(
+        elapsed_s=elapsed,
+        input_chars=input_chars,
+        output_chars=output_chars,
+    )
+
+    if verbose >= 1:
+        print(
+            f"    [rag] Ollama: {elapsed:.1f}s, "
+            f"response={output_chars:,} chars "
+            f"(~{metrics.output_tokens_est} tokens)",
+            file=sys.stderr,
+        )
+    if verbose >= 2:
+        print(
+            f"    [rag] throughput: {metrics.throughput_tok_s:.1f} tok/s",
+            file=sys.stderr,
+        )
+
+    return response, metrics

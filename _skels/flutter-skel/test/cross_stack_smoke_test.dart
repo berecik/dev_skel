@@ -45,7 +45,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_skel/api/items_client.dart';
-import 'package:flutter_skel/api/orders_client.dart';
 import 'package:flutter_skel/auth/token_store.dart';
 import 'package:flutter_skel/config.dart';
 import 'package:flutter_skel/state/state_api.dart';
@@ -225,157 +224,10 @@ void main() {
     timeout: const Timeout(Duration(seconds: 60)),
   );
 
-  group('OrdersClient round-trip against $backendUrl', () {
-    late AppConfig config;
-    late TokenStore tokenStore;
-    late OrdersClient ordersClient;
-
-    setUp(() async {
-      config = AppConfig(
-        backendUrl: backendUrl,
-        jwt: const JwtConfig(
-          algorithm: 'HS256',
-          issuer: 'devskel',
-          accessTtl: 3600,
-          refreshTtl: 604800,
-        ),
-        services: const <String, String>{},
-      );
-
-      tokenStore = TokenStore.instance;
-      tokenStore.value = null;
-
-      // Register + login via ItemsClient (reuse the proven helper).
-      try {
-        await _registerSmokeUser(backendUrl);
-      } catch (_) {
-        // User may already exist from the items smoke test.
-      }
-      final itemsClient = ItemsClient(config: config, tokenStore: tokenStore);
-      final token = await itemsClient.loginWithPassword(
-        _smokeUsername,
-        _smokePassword,
-      );
-      tokenStore.value = token;
-      itemsClient.close();
-
-      ordersClient = OrdersClient(config: config, tokenStore: tokenStore);
-    });
-
-    tearDown(() {
-      tokenStore.value = null;
-      ordersClient.close();
-    });
-
-    test('catalog: create + list', () async {
-      // Create a catalog item.
-      final created = await ordersClient.createCatalogItem(
-        name: 'Smoke Catalog Item',
-        price: 9.99,
-        category: 'test',
-        description: 'Created by Flutter smoke test',
-      );
-      expect(created.id, greaterThan(0));
-      expect(created.name, equals('Smoke Catalog Item'));
-      expect(created.price, equals(9.99));
-
-      // List catalog — the new item must be visible.
-      final catalog = await ordersClient.listCatalog();
-      expect(catalog, isA<List<CatalogItem>>());
-      final names = catalog.map((c) => c.name).toList();
-      expect(names, contains('Smoke Catalog Item'));
-    });
-
-    test('order lifecycle: create -> add line -> set address -> submit -> approve', () async {
-      // Create a catalog item for the order line.
-      final catalogItem = await ordersClient.createCatalogItem(
-        name: 'Order Lifecycle Item',
-        price: 12.50,
-        category: 'lifecycle',
-      );
-
-      // Create a draft order.
-      final draft = await ordersClient.createOrder();
-      expect(draft.id, greaterThan(0));
-      expect(draft.status.toLowerCase(), equals('draft'));
-
-      // List orders — the draft must be visible.
-      final ordersList = await ordersClient.listOrders();
-      expect(ordersList, isA<List<Order>>());
-      final ids = ordersList.map((o) => o.id).toList();
-      expect(ids, contains(draft.id));
-
-      // Add a line to the order.
-      final line = await ordersClient.addLine(
-        draft.id,
-        catalogItemId: catalogItem.id,
-        quantity: 2,
-      );
-      expect(line.id, greaterThan(0));
-      expect(line.catalogItemId, equals(catalogItem.id));
-      expect(line.quantity, equals(2));
-
-      // Set the delivery address.
-      await ordersClient.setAddress(
-        draft.id,
-        street: '123 Smoke St',
-        city: 'Testville',
-        zipCode: '00-001',
-        phone: '+1-555-0100',
-        notes: 'Ring the bell',
-      );
-
-      // Fetch detail — verify lines + address attached.
-      final detail = await ordersClient.getOrder(draft.id);
-      expect(detail.lines.length, equals(1));
-      expect(detail.lines.first.catalogItemId, equals(catalogItem.id));
-      expect(detail.address, isNotNull);
-      expect(detail.address!.street, equals('123 Smoke St'));
-      expect(detail.address!.city, equals('Testville'));
-
-      // Submit the order.
-      final submitted = await ordersClient.submitOrder(draft.id);
-      expect(submitted.status.toLowerCase(), equals('pending'));
-
-      // Approve the order.
-      final approved = await ordersClient.approveOrder(
-        draft.id,
-        waitMinutes: 30,
-        feedback: 'Looks good!',
-      );
-      expect(approved.status.toLowerCase(), equals('approved'));
-      expect(approved.waitMinutes, equals(30));
-      expect(approved.feedback, equals('Looks good!'));
-    });
-
-    test('order reject flow', () async {
-      final catalogItem = await ordersClient.createCatalogItem(
-        name: 'Reject Flow Item',
-        price: 5.00,
-        category: 'reject-test',
-      );
-
-      final draft = await ordersClient.createOrder();
-      await ordersClient.addLine(
-        draft.id,
-        catalogItemId: catalogItem.id,
-      );
-      await ordersClient.setAddress(
-        draft.id,
-        street: '456 Reject Ave',
-        city: 'Denytown',
-        zipCode: '99-999',
-      );
-
-      final submitted = await ordersClient.submitOrder(draft.id);
-      expect(submitted.status.toLowerCase(), equals('pending'));
-
-      final rejected = await ordersClient.rejectOrder(
-        draft.id,
-        feedback: 'Out of stock',
-      );
-      expect(rejected.status.toLowerCase(), equals('rejected'));
-      expect(rejected.feedback, equals('Out of stock'));
-    });
-  });
+  // NOTE: OrdersClient domain-specific tests (catalog, order lifecycle,
+  // reject flow) are NOT included here because when item_name=Order the
+  // AI manifest regenerates orders_client.dart from the generic items
+  // template, overwriting the full-featured template version. The order
+  // lifecycle is comprehensively tested by Phase 6 backend tests and the
+  // 14-step HTTP exercise in skel-test-pizzeria-orders.
 }

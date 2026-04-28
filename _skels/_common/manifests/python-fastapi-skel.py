@@ -93,12 +93,15 @@ a `{item_class}` entity.
 Required transformations:
 - Class names: `ExampleItem*` → `{item_class}*`. Keep the same suffixes
   (`Base`, `Create`, `Update`, `Repository`, `Crud`, `UnitOfWork`).
-- If the user supplied domain instructions (see system prompt), create all
-  the domain model classes they asked for (e.g. MenuPosition, Order,
-  OrderPosition, OrderAddress) with the fields they specified. Each entity
-  gets its own Base/Create/Update/Repository/Crud/UnitOfWork set.
-- If NO domain instructions were given, add `title` (str) and
-  `description` (Optional[str]) Pydantic fields on the base class.
+- CRITICAL: Check the system prompt for "User-supplied domain instructions".
+  If domain instructions are present, IGNORE the ExampleItem pattern and
+  create ALL the domain model classes described there (e.g. CatalogItem,
+  Order, OrderLine, OrderAddress, OrderStatus enum, request body models,
+  detail response models). Do NOT create a generic {item_class} with
+  title/description when domain instructions exist.
+- If NO domain instructions were given (the section says "no extra backend
+  instructions"), add `title` (str) and `description` (Optional[str])
+  Pydantic fields on the base class.
 - Keep `owner_id: Optional[int] = None` only when `{auth_type}`
   is not `none`; otherwise drop it entirely along with the
   `filter_by_owner` / `get_by_owner` helpers.
@@ -220,12 +223,16 @@ Required transformations:
     just returns `{items_plural}.list()`.
   - When `{auth_type}` is anything else, keep `CurrentUser` and the existing
     superuser/owner checks unchanged.
-- If the user supplied domain instructions (see system prompt), add all
-  the endpoints they specified (e.g. /api/menu, /api/orders,
-  /api/orders/{{id}}/positions, /api/orders/{{id}}/submit, etc.) instead
-  of the generic CRUD endpoints. Follow their exact path/method spec.
-- If NO domain instructions were given, keep the endpoint paths and HTTP
-  methods the same as the REFERENCE.
+- CRITICAL: Check the system prompt for "User-supplied domain instructions".
+  If domain instructions are present, IGNORE the REFERENCE endpoints entirely
+  and implement ONLY the endpoints described in the domain instructions.
+  The domain instructions specify exact paths, HTTP methods, request bodies,
+  and response models — follow them literally. Do NOT generate generic CRUD
+  endpoints when domain instructions exist.
+- If NO domain instructions were given (the section says "no extra backend
+  instructions"), then keep the REFERENCE endpoints unchanged.
+- Use `from app.wrapper_api.deps import CurrentUser, SessionDep` for auth
+  and DB session when the domain instructions say to use direct SQLModel.
 - Match indentation/style of the REFERENCE where possible.
 
 REFERENCE (`app/example_items/routes.py`):
@@ -328,8 +335,9 @@ Coding rules:
 - Use `pytest` + `pytest-asyncio` (already pinned in
   `requirements.txt`). Async tests are OK — mark them with
   `@pytest.mark.asyncio`.
-- Read JWT material via `from core.config import settings` and
-  reference `settings.JWT_SECRET`, `settings.JWT_ALGORITHM`, etc.
+- Read JWT material via `from core import config` and
+  reference `config.JWT_SECRET`, `config.JWT_ALGORITHM`, etc.
+  Do NOT use `from core.config import settings` — there is no `settings` object.
 - Read `DATABASE_URL` indirectly via the existing `core/config.py`
   settings — do NOT touch `core/config.py` from these prompts.
 - For sibling HTTP calls prefer `httpx` (already a dependency for
@@ -460,7 +468,7 @@ Required tests:
    `value="some_data"`, read it back, and assert
    `state.value == "some_data"`.
 
-3. `test_{items_plural}_endpoint_uses_jwt` — import `create_token`
+3. `test_{items_plural}_endpoint_uses_jwt` — import `create_access_token`
    from `core.security` (or the wrapper_api security module), mint
    a token for a test user, and assert the result is a non-empty
    string.
@@ -485,8 +493,8 @@ Required tests:
 
 Imports:
 - `import os, pytest`
-- `from core.config import settings`
-- `from app.wrapper_api.db import Item, Category, ReactState, WrapperUser`
+- `from core import config` (use `config.JWT_SECRET`, NOT `settings.JWT_SECRET`)
+- `from app.wrapper_api.db import Item, Category, ReactState, WrapperUser, get_session`
 - (when {sibling_count} > 0) `from app.integrations.sibling_clients import IntegrationError, ...`
 
 Use 4-space indentation. Output the full file contents only.

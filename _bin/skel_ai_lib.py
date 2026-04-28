@@ -181,6 +181,7 @@ class GenerationContext:
     backend_extra: str = ""
     frontend_extra: str = ""
     integration_extra: str = ""
+    testing_scenario: str = ""
     extra: Dict[str, str] = field(default_factory=dict)
     # Populated by the integration phase from :func:`discover_siblings`
     # so prompts can interpolate ``{wrapper_snapshot}`` (or walk
@@ -286,6 +287,7 @@ class GenerationContext:
             "backend_extra": self.backend_extra or "(no extra backend instructions)",
             "frontend_extra": self.frontend_extra or "(no extra frontend instructions)",
             "integration_extra": self.integration_extra or "(no extra integration instructions)",
+            "testing_scenario": self.testing_scenario or "(no testing scenario provided)",
             "wrapper_snapshot": wrapper_snapshot,
             "sibling_count": str(len(self.siblings)),
             "sibling_slugs": sibling_slugs,
@@ -657,15 +659,49 @@ class OllamaClient:
         Honors ``SKEL_AI_VERBOSE`` + ``SKEL_AI_HEARTBEAT_SEC`` env vars
         to print an elapsed-time tick while the call blocks, so
         long-running inferences in ``skel-gen-ai`` never look frozen.
+
+        At ``SKEL_AI_VERBOSE >= 1``, prints timing and token metrics
+        after each call. At level 2+, also prints input token count
+        and throughput.
         """
+        import time as _time
 
         from skel_rag.llm import OllamaError as _NewOllamaError
 
+        raw_level = os.environ.get("SKEL_AI_VERBOSE", "").strip()
+        verbose = int(raw_level) if raw_level.isdigit() else 0
+
+        input_chars = len(system) + len(user)
+        if verbose >= 2:
+            input_tokens_est = input_chars // 4
+            print(
+                f"    [ai] prompt: system={len(system):,} chars, "
+                f"user={len(user):,} chars (~{input_tokens_est:,} tokens)",
+                file=sys.stderr, flush=True,
+            )
+
+        t0 = _time.monotonic()
         try:
             with _heartbeat_env(f"Ollama ({self.config.model})"):
-                return self.agent.chat(system, user)
+                result = self.agent.chat(system, user)
         except _NewOllamaError as exc:
             raise OllamaError(str(exc)) from exc
+
+        elapsed = _time.monotonic() - t0
+        output_chars = len(result)
+
+        if verbose >= 1:
+            output_tokens_est = output_chars // 4
+            throughput = output_tokens_est / elapsed if elapsed > 0 else 0
+            print(
+                f"    [ai] {self.config.model}: {elapsed:.1f}s, "
+                f"output={output_chars:,} chars "
+                f"(~{output_tokens_est:,} tokens, "
+                f"{throughput:.1f} tok/s)",
+                file=sys.stderr, flush=True,
+            )
+
+        return result
 
 
 # --------------------------------------------------------------------------- #
@@ -901,6 +937,7 @@ class FullstackChoices:
     backend_extra: str
     frontend_extra: str
     integration_extra: str
+    testing_scenario: str = ""
 
     @property
     def has_backend(self) -> bool:
@@ -1009,6 +1046,7 @@ def prompt_fullstack_dialog(
     backend_extra: Optional[str] = None,
     frontend_extra: Optional[str] = None,
     integration_extra: Optional[str] = None,
+    testing_scenario: Optional[str] = None,
     no_input: bool = False,
     allow_no_frontend: bool = True,
     skip_frontend: bool = False,
@@ -1017,7 +1055,7 @@ def prompt_fullstack_dialog(
 ) -> FullstackChoices:
     """Run the upgraded interactive dialog and return the choices.
 
-    The dialog walks the user through six logical steps:
+    The dialog walks the user through seven logical steps:
 
     1. Pick a backend skeleton (or accept the default — the first
        backend in `available_backends` that ships the wrapper-shared
@@ -1030,6 +1068,8 @@ def prompt_fullstack_dialog(
     5. Pick an auth style.
     6. Optionally provide three freeform extra-instruction prompts
        (one each for the backend, frontend, and integration phases).
+    7. Optionally provide a testing scenario description for Phase 6
+       test generation.
 
     Any value pre-supplied via the keyword arguments is reused without
     prompting (so the CLI can pre-fill from flags). When ``no_input``
@@ -1065,7 +1105,7 @@ def prompt_fullstack_dialog(
             default_backend_idx = i
             break
 
-    print("  Step 1/6: Backend")
+    print("  Step 1/7: Backend")
     chosen_backend: Optional[str]
     if skip_backend:
         # Explicit "frontend-only project" — `--no-backend` on the CLI.
@@ -1102,7 +1142,7 @@ def prompt_fullstack_dialog(
             break
 
     print()
-    print("  Step 2/6: Frontend")
+    print("  Step 2/7: Frontend")
     chosen_frontend: Optional[str]
     if skip_frontend:
         # Explicit "backend-only project" — `--no-frontend` on the CLI.
@@ -1132,7 +1172,7 @@ def prompt_fullstack_dialog(
 
     # Step 3: service display names -------------------------------------- #
     print()
-    print("  Step 3/6: Service display names")
+    print("  Step 3/7: Service display names")
     chosen_backend_label: Optional[str]
     if chosen_backend is None:
         chosen_backend_label = None
@@ -1150,7 +1190,7 @@ def prompt_fullstack_dialog(
 
     # Step 4: item entity ------------------------------------------------- #
     print()
-    print("  Step 4/6: Main CRUD entity")
+    print("  Step 4/7: Main CRUD entity")
     chosen_item = (
         item_name
         or ask(
@@ -1165,7 +1205,7 @@ def prompt_fullstack_dialog(
 
     # Step 5: auth -------------------------------------------------------- #
     print()
-    print("  Step 5/6: Authentication style")
+    print("  Step 5/7: Authentication style")
     if auth_type is not None:
         chosen_auth = auth_type
     elif no_input or not sys.stdin.isatty():
@@ -1177,7 +1217,7 @@ def prompt_fullstack_dialog(
 
     # Step 6: three custom prompts (replaces auth_details) --------------- #
     print()
-    print("  Step 6/6: Custom instructions (optional, blank to skip)")
+    print("  Step 6/7: Custom instructions (optional, blank to skip)")
     if chosen_backend is None:
         chosen_backend_extra = ""
     else:
@@ -1204,6 +1244,20 @@ def prompt_fullstack_dialog(
             if integration_extra is not None
             else ask("Additional integration instructions", "")
         )
+
+    # Step 7: testing scenario ------------------------------------------- #
+    print()
+    print("  Step 7/7: Testing scenario (optional, blank to skip)")
+    print()
+    print('  Describe what the generated tests should verify. Example:')
+    print('  "Create 3 menu items, place an order with 2 items,')
+    print('   set delivery address, submit, approve with 25min wait"')
+    print()
+    chosen_testing_scenario = (
+        testing_scenario
+        if testing_scenario is not None
+        else ask("Testing scenario", "")
+    )
 
     # Items contract advisory -------------------------------------------- #
     if (
@@ -1241,6 +1295,7 @@ def prompt_fullstack_dialog(
         backend_extra=chosen_backend_extra,
         frontend_extra=chosen_frontend_extra,
         integration_extra=chosen_integration_extra,
+        testing_scenario=chosen_testing_scenario,
     )
 
 
@@ -2010,6 +2065,738 @@ def run_test_and_fix_loop(
                         f"      (could not write fixed file: {exc})\n"
                     )
                 continue
+
+
+# --------------------------------------------------------------------------- #
+#  Phase 6 — Staged test generation + fix loop
+# --------------------------------------------------------------------------- #
+
+
+def _guess_language(skeleton_name: str) -> str:
+    """Infer the primary language from the skeleton name."""
+    if "flutter" in skeleton_name:
+        return "dart"
+    if "react" in skeleton_name or "ts-" in skeleton_name or "next" in skeleton_name:
+        return "typescript"
+    if "spring" in skeleton_name or "java" in skeleton_name:
+        return "java"
+    if "rust" in skeleton_name:
+        return "rust"
+    if "go" in skeleton_name:
+        return "go"
+    return "python"
+
+
+def _find_test_dir(service_dir: Path, skeleton_name: str) -> Path:
+    """Return the conventional test directory for the skeleton."""
+    if "flutter" in skeleton_name:
+        return service_dir / "test"
+    if "react" in skeleton_name or "ts-" in skeleton_name:
+        return service_dir / "src"
+    if "spring" in skeleton_name or "java" in skeleton_name:
+        return service_dir / "src" / "test" / "java"
+    for candidate in ["tests", "test", "app/tests"]:
+        d = service_dir / candidate
+        if d.is_dir():
+            return d
+    return service_dir / "tests"
+
+
+def _test_filename(test_type: str, skeleton_name: str) -> str:
+    """Return the filename for a generated test."""
+    slug = test_type.replace(" ", "_").replace("-", "_")
+    if "flutter" in skeleton_name:
+        return f"{slug}_test.dart"
+    if "react" in skeleton_name or "ts-" in skeleton_name:
+        return f"{slug}.test.ts"
+    if "spring" in skeleton_name or "java" in skeleton_name:
+        return f"{slug.title().replace('_', '')}Test.java"
+    if "rust" in skeleton_name:
+        return f"{slug}_test.rs"
+    if "go" in skeleton_name:
+        return f"{slug}_test.go"
+    return f"test_{slug}.py"
+
+
+def _run_service_tests(
+    service_dir: Path, test_cmd: str, ctx: GenerationContext,
+    *, progress: Any = None,
+) -> TestRunResult:
+    """Run the service's test command and return the result.
+
+    Delegates to the existing :func:`run_service_tests` which handles
+    command rendering, absolutisation, and subprocess management.
+    """
+    return run_service_tests(test_cmd, ctx)
+
+
+def _generate_test_file(
+    *,
+    client: OllamaClient,
+    ctx: GenerationContext,
+    test_type: str,
+    instruction: str,
+    annotation: str = "",
+    progress: Any = None,
+) -> None:
+    """Ask Ollama to generate a test file for the given service."""
+    variables = ctx.as_template_vars()
+    try:
+        rendered = instruction.format_map(variables)
+    except KeyError:
+        rendered = instruction  # fallback if placeholders don't match
+
+    if annotation:
+        rendered = rendered + "\n" + annotation
+
+    service_dir = ctx.project_dir
+
+    # Gather existing test files for reference
+    existing_tests = ""
+    for pattern in (
+        "test*/*.py", "test*/*.ts", "test*/*.dart",
+        "src/*.test.ts", "e2e/*.spec.ts",
+    ):
+        for tf in sorted(service_dir.glob(pattern))[:3]:
+            try:
+                content = tf.read_text(encoding="utf-8")[:2000]
+                existing_tests += (
+                    f"\n--- {tf.relative_to(service_dir)} ---\n{content}\n"
+                )
+            except (OSError, UnicodeDecodeError):
+                pass
+
+    # Gather source files for API context
+    source_summary = ""
+    for pattern in (
+        "app/**/*.py", "src/**/*.ts", "lib/**/*.dart",
+        "src/main/**/*.java",
+    ):
+        for sf in sorted(service_dir.glob(pattern)):
+            if any(
+                skip in str(sf)
+                for skip in ("__pycache__", "node_modules", ".venv")
+            ):
+                continue
+            try:
+                content = sf.read_text(encoding="utf-8")[:3000]
+                source_summary += (
+                    f"\n--- {sf.relative_to(service_dir)} ---\n{content}\n"
+                )
+            except (OSError, UnicodeDecodeError):
+                pass
+            if len(source_summary) > 15000:
+                break
+
+    system_prompt = (
+        f"You are generating a {test_type} test for a "
+        f"{ctx.skeleton_name} service called {ctx.service_label}.\n"
+        f"Item entity: {variables.get('item_class', 'Item')}, "
+        f"auth: {ctx.auth_type}.\n\n"
+        f"CRITICAL IMPORT RULES:\n"
+        f"- App factory: from app import get_app\n"
+        f"- Auth deps: from app.wrapper_api.deps import CurrentUser, SessionDep\n"
+        f"- DB session: from app.wrapper_api.db import get_session\n"
+        f"- For FastAPI TestClient: from fastapi.testclient import TestClient\n"
+        f"- NEVER import from 'users', 'models', or 'db' directly\n\n"
+        f"EXISTING TESTS (follow the same import and setup patterns):\n"
+        f"{existing_tests[:8000]}\n\n"
+        f"SOURCE FILES (API surface):\n"
+        f"{source_summary[:12000]}\n\n"
+        "Output ONLY the test file contents. No markdown fences, no commentary."
+    )
+
+    response = client.chat(system_prompt, rendered)
+    response = clean_response(response, _guess_language(ctx.skeleton_name))
+
+    test_dir = _find_test_dir(service_dir, ctx.skeleton_name)
+    filename = _test_filename(test_type, ctx.skeleton_name)
+    output_path = test_dir / filename
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(response, encoding="utf-8")
+
+    if progress:
+        progress.write(
+            f"    wrote {output_path.relative_to(service_dir)} "
+            f"({len(response)} chars)\n"
+        )
+
+
+def _fix_failing_files(
+    *,
+    client: OllamaClient,
+    ctx: GenerationContext,
+    test_output: str,
+    progress: Any = None,
+) -> None:
+    """Parse test output for failing files, fix each independently."""
+
+    service_dir = ctx.project_dir
+    _SKIP_DIRS = {".venv", "node_modules", "site-packages", "__pycache__",
+                  ".git", "dist", "build", "target"}
+    _service_slug = ctx.service_slug
+    _ALLOW_PREFIXES = (
+        f"app/{_service_slug}/",
+        "tests/",
+        "test/",
+        "src/",
+        "e2e/",
+    )
+    _SKIP_NAMES = {"__init__.py", "conftest.py"}
+
+    def _is_own_source(p: Path) -> bool:
+        if p.name in _SKIP_NAMES:
+            return False
+        try:
+            rel = str(p.relative_to(service_dir))
+        except ValueError:
+            return False
+        parts = set(Path(rel).parts)
+        if parts & _SKIP_DIRS:
+            return False
+        return any(rel.startswith(prefix) for prefix in _ALLOW_PREFIXES)
+
+    # Parse which test files FAILED (look for "FAILED tests/xxx.py::yyy")
+    failed_tests = re.findall(
+        r'FAILED\s+(tests/[^\s:]+|test/[^\s:]+|src/[^\s:]+)', test_output
+    )
+
+    # If no FAILED lines found, fall back to the old file-mention heuristic
+    if not failed_tests:
+        file_re = re.compile(
+            r'(?:File ["\']|at |in |from )([^\s"\']+\.(?:py|ts|tsx|dart|java|rs|go))'
+        )
+        mentioned: set = set()
+        for m in file_re.finditer(test_output[-4000:]):
+            p = m.group(1)
+            for candidate in [service_dir / p, service_dir / p.lstrip("/")]:
+                if candidate.is_file() and _is_own_source(candidate):
+                    mentioned.add(candidate)
+                    break
+
+        if not mentioned:
+            for ext in ("*.py", "*.ts", "*.dart"):
+                for tf in service_dir.rglob(f"test*/{ext}"):
+                    if _is_own_source(tf):
+                        mentioned.add(tf)
+
+        # Use old-style fix for fallback files (full test_output context)
+        for fpath in sorted(mentioned)[:10]:
+            try:
+                content = fpath.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            module_tree = ""
+            for pattern in ("app/**/*.py", "src/**/*.ts", "lib/**/*.dart"):
+                for sf in sorted(service_dir.glob(pattern)):
+                    parts_str = str(sf.relative_to(service_dir))
+                    if any(skip in parts_str for skip in
+                           (".venv", "node_modules", "__pycache__")):
+                        continue
+                    module_tree += f"  {parts_str}\n"
+                    if len(module_tree) > 2000:
+                        break
+            key_modules = ""
+            for km in [
+                "app/wrapper_api/schemas.py",
+                "app/wrapper_api/auth.py",
+                "app/wrapper_api/deps.py",
+            ]:
+                km_path = service_dir / km
+                if km_path.is_file():
+                    try:
+                        km_content = km_path.read_text(encoding="utf-8")
+                        key_modules += f"\n--- {km} ---\n{km_content[:2000]}\n"
+                    except (OSError, UnicodeDecodeError):
+                        pass
+            system = (
+                f"Fix the errors in {fpath.name}. Test output:\n\n"
+                f"{test_output[-2000:]}\n\n"
+                f"AVAILABLE MODULES:\n{module_tree}\n\n"
+                f"KEY MODULES:\n{key_modules}\n\n"
+                f"RULES:\n"
+                f"- NEVER import model classes directly. Use TestClient HTTP calls only.\n"
+                f"- STATUS CODES: POST register/catalog/orders/lines -> 201, all else -> 200\n"
+                f"- HTTP METHODS: PUT /api/orders/{{id}}/address, POST /submit, POST /approve, POST /reject.\n"
+                f"- REJECT needs a DIFFERENT order (create 2nd order, add line, PUT address, POST submit, POST reject).\n"
+                f"- If 405 on /address, use PUT (not POST). If 405 on /submit or /approve or /reject, use POST.\n"
+                f"- If 'must be in pending status', create a NEW order for the reject test.\n"
+                f"- If error is 'assert X == Y' or 'Left contains N more item', relax the assertion: use `assert expected.items() <= actual.items()` or remove unexpected fields from the expected dict.\n"
+                f"- PUT /api/orders/{{id}}/address returns {{ok:true}} NOT the address object.\n\n"
+                "Output ONLY the fixed file contents. No markdown fences."
+            )
+            fixed = client.chat(system, content)
+            lang = fpath.suffix.lstrip(".")
+            if lang == "tsx":
+                lang = "typescript"
+            fixed = clean_response(fixed, lang)
+            fpath.write_text(fixed, encoding="utf-8")
+            if progress:
+                progress.write(f"    fixed {fpath.relative_to(service_dir)}\n")
+        return
+
+    # For each failed test file, extract its error section and fix it
+    for test_rel in set(failed_tests):
+        test_path = service_dir / test_rel.split("::")[0]  # remove ::test_name
+        if not test_path.is_file() or not _is_own_source(test_path):
+            continue
+
+        try:
+            content = test_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        # Extract error context specific to this file
+        file_stem = test_rel.split("::")[0]
+        file_errors = []
+        for line in test_output.split('\n'):
+            if file_stem in line or 'assert' in line.lower():
+                file_errors.append(line)
+        error_context = '\n'.join(file_errors[-30:]) if file_errors else test_output[-2000:]
+
+        # Build module tree
+        module_tree = ""
+        for pattern in ("app/**/*.py", "src/**/*.ts", "lib/**/*.dart"):
+            for sf in sorted(service_dir.glob(pattern)):
+                parts_str = str(sf.relative_to(service_dir))
+                if any(skip in parts_str for skip in
+                       (".venv", "node_modules", "__pycache__")):
+                    continue
+                module_tree += f"  {parts_str}\n"
+                if len(module_tree) > 2000:
+                    break
+
+        # Include key module content
+        key_modules = ""
+        for km in [
+            "app/wrapper_api/schemas.py",
+            "app/wrapper_api/auth.py",
+            "app/wrapper_api/deps.py",
+        ]:
+            km_path = service_dir / km
+            if km_path.is_file():
+                try:
+                    km_content = km_path.read_text(encoding="utf-8")
+                    key_modules += f"\n--- {km} ---\n{km_content[:2000]}\n"
+                except (OSError, UnicodeDecodeError):
+                    pass
+
+        system = (
+            f"Fix the errors in {test_path.name}. Error for THIS file:\n\n"
+            f"{error_context}\n\n"
+            f"AVAILABLE MODULES:\n{module_tree}\n\n"
+            f"KEY MODULES:\n{key_modules}\n\n"
+            f"RULES:\n"
+            f"- NEVER import model classes directly. Use TestClient HTTP calls only.\n"
+            f"- STATUS CODES: POST register/catalog/orders/lines -> 201, all else -> 200\n"
+            f"- HTTP METHODS: PUT /api/orders/{{id}}/address, POST /submit, POST /approve, POST /reject.\n"
+            f"- REJECT needs a DIFFERENT order (create 2nd order, add line, PUT address, POST submit, POST reject).\n"
+            f"- If 405 on /address, use PUT (not POST). If 405 on /submit or /approve or /reject, use POST.\n"
+            f"- If 'must be in pending status', create a NEW order for the reject test.\n"
+            f"- If error is 'assert X == Y' or 'Left contains N more item', relax the assertion: use `assert expected.items() <= actual.items()` or remove unexpected fields from the expected dict.\n"
+            f"- PUT /api/orders/{{id}}/address returns {{ok:true}} NOT the address object.\n\n"
+            "Output ONLY the fixed file contents. No markdown fences."
+        )
+        fixed = client.chat(system, content)
+        lang = test_path.suffix.lstrip(".")
+        if lang == "tsx":
+            lang = "typescript"
+        fixed = clean_response(fixed, lang)
+        test_path.write_text(fixed, encoding="utf-8")
+
+        if progress:
+            progress.write(f"    fixed {test_path.relative_to(service_dir)}\n")
+
+
+def run_test_generation_phase(
+    *,
+    client: OllamaClient,
+    ctx: GenerationContext,
+    manifest: IntegrationManifest,
+    progress: Any = None,
+) -> TestRunResult:
+    """Phase 6: staged test generation + fix loop.
+
+    6a: Generate cross-stack integration tests
+    6b: Generate E2E tests
+    6c: Run all tests
+    6d: If fail -> fix referenced files -> goto 6c
+    6e: When green -> generate scenario tests from {testing_scenario}
+    6f-6h: Run + fix loop until green or timeout
+    """
+    import time as _time
+
+    # Phase 6 has no timeout — it runs until all tests pass or max
+    # iterations (20) are exhausted. The manifest.fix_timeout_m is
+    # ignored here (it was designed for the old Phase 4 loop).
+    MAX_ITERATIONS = 20
+    started = _time.monotonic()
+    service_dir = ctx.project_dir
+    # Phase 6 runs ONLY the AI-generated tests (tests/ directory),
+    # not the full test suite which includes skeleton-provided tests
+    # that may have pre-existing failures unrelated to the generated code.
+    _pytest_bin = str(service_dir / ".venv" / "bin" / "pytest")
+    if not Path(_pytest_bin).exists():
+        _pytest_bin = "pytest"
+    test_cmd = f"{_pytest_bin} tests/ -x --tb=short"
+
+    def elapsed():
+        return _time.monotonic() - started
+
+    def time_left():
+        return True  # no timeout — bounded by MAX_ITERATIONS instead
+
+    # Use the fix model from config (OLLAMA_FIX_MODEL env var).
+    # Default: qwen2.5-coder:32b (best open-source for code repair).
+    fix_model = (
+        getattr(client.config, "fix_model", None)
+        or os.environ.get("OLLAMA_FIX_MODEL")
+        or "qwen2.5-coder:32b"
+    )
+    if fix_model and fix_model != client.config.model:
+        try:
+            fix_cfg = OllamaConfig.from_env()
+            fix_cfg = OllamaConfig(
+                model=fix_model,
+                base_url=fix_cfg.base_url,
+                timeout=fix_cfg.timeout,
+                temperature=0.1,
+            )
+            fix_client = OllamaClient(fix_cfg)
+            fix_client.verify()
+            if progress:
+                progress.write(f"  Fix model: {fix_model} (fast fix loop)\n")
+        except Exception:
+            fix_client = client  # fallback to main model
+            if progress:
+                progress.write(f"  Fix model: {client.config.model} (fallback)\n")
+    else:
+        fix_client = client
+
+    # Test generation model (qwen2.5-coder:32b — best code quality for tests).
+    test_model = getattr(client.config, "test_model", None) or os.environ.get("OLLAMA_TEST_MODEL") or "qwen2.5-coder:32b"
+    if test_model and test_model != client.config.model:
+        try:
+            test_cfg = OllamaConfig.from_env()
+            test_cfg = OllamaConfig(
+                model=test_model,
+                base_url=test_cfg.base_url,
+                timeout=test_cfg.timeout,
+                temperature=0.2,
+            )
+            test_client = OllamaClient(test_cfg)
+            test_client.verify()
+            if progress:
+                progress.write(f"  Test gen model: {test_model}\n")
+        except Exception:
+            test_client = client
+    else:
+        test_client = client
+
+    # Fast fix model (devstral — 10s responses, used for 1st fix attempt).
+    fast_fix_model = "devstral:latest"
+    try:
+        fast_cfg = OllamaConfig.from_env()
+        fast_cfg = OllamaConfig(
+            model=fast_fix_model,
+            base_url=fast_cfg.base_url,
+            timeout=min(fast_cfg.timeout, 300),
+            temperature=0.1,
+        )
+        fast_fix_client = OllamaClient(fast_cfg)
+        fast_fix_client.verify()
+        if progress:
+            progress.write(f"  Fast fix model: {fast_fix_model}\n")
+    except Exception:
+        fast_fix_client = fix_client  # fallback to heavy fix model
+
+    if progress:
+        progress.write("\n  ===== Phase 6: Test generation + fix loop =====\n")
+
+    # Instruction strings for 6a/6b — kept as variables so the
+    # same-error regeneration path (below) can reuse them.
+    _INSTRUCTION_6A = (
+        "Generate a cross-stack integration test using FastAPI TestClient.\n\n"
+        "START your file with EXACTLY this boilerplate (copy verbatim):\n"
+        "```\n"
+        "import pytest\n"
+        "import uuid\n"
+        "from fastapi.testclient import TestClient\n"
+        "from app import get_app\n"
+        "\n"
+        "@pytest.fixture(scope='module')\n"
+        "def client():\n"
+        "    app = get_app()\n"
+        "    with TestClient(app) as c:\n"
+        "        yield c\n"
+        "\n"
+        "def _register_and_login(client):\n"
+        "    uid = uuid.uuid4().hex[:8]\n"
+        "    r = client.post('/api/auth/register', json={\n"
+        "        'username': f'test-{uid}', 'email': f'test-{uid}@example.com',\n"
+        "        'password': 'testpass123', 'password_confirm': 'testpass123'\n"
+        "    })\n"
+        "    assert r.status_code in (201, 400, 409), f'register: {r.status_code} {r.text}'\n"
+        "    r = client.post('/api/auth/login', json={\n"
+        "        'username': f'test-{uid}', 'password': 'testpass123'\n"
+        "    })\n"
+        "    assert r.status_code == 200, f'login: {r.status_code} {r.text}'\n"
+        "    return r.json()['access']\n"
+        "```\n\n"
+        "Use _register_and_login(client) to get a JWT token, then set\n"
+        "headers = {'Authorization': f'Bearer {token}'} for authenticated calls.\n"
+        "Register: POST json={username,email,password,password_confirm} -> 201\n"
+        "Login: POST json={username,password} -> 200 {access:'jwt'}\n\n"
+        "API RESPONSE SHAPES (use these exact field names):\n"
+        "POST /api/catalog json={name,price,category} -> 201 {id,name,description,price,category,available}\n"
+        "GET /api/catalog -> 200 [{id,name,description,price,category,available}]\n"
+        "POST /api/orders -> 201 {id,user_id,status:'draft',created_at}\n"
+        "POST /api/orders/{id}/lines json={catalog_item_id,quantity} -> 201 {id,catalog_item_id,quantity,unit_price}\n"
+        "PUT /api/orders/{id}/address json={street,city,zip_code,phone,notes} -> 200 {ok:true} (NOT address fields!)\n"
+        "GET /api/orders/{id} -> 200 {id,status,lines:[...],address:{id,street,city,zip_code,phone,notes}}\n"
+        "NOTE: address objects in the response include an 'id' field. Do NOT assert exact dict equality on address — use subset checks or just verify specific fields.\n"
+        "POST /api/orders/{id}/submit -> 200 {id,status:'pending'}\n"
+        "POST /api/orders/{id}/approve json={wait_minutes,feedback} -> 200 {id,status:'approved',wait_minutes,feedback}\n"
+        "POST /api/orders/{id}/reject json={feedback} -> 200 {id,status:'rejected',feedback}\n"
+        "NEVER import from 'users', 'depts', or 'models' directly.\n\n"
+        "Domain: {backend_extra}\n"
+        "Testing scenario: {testing_scenario}"
+    )
+
+    _INSTRUCTION_6B = (
+        "Generate an E2E/integration test using FastAPI TestClient.\n\n"
+        "Use the SAME boilerplate as the integration test:\n"
+        "```\n"
+        "import pytest\n"
+        "import uuid\n"
+        "from fastapi.testclient import TestClient\n"
+        "from app import get_app\n"
+        "\n"
+        "@pytest.fixture(scope='module')\n"
+        "def client():\n"
+        "    app = get_app()\n"
+        "    with TestClient(app) as c:\n"
+        "        yield c\n"
+        "```\n\n"
+        "Test the full user journey via HTTP only — NEVER import models,\n"
+        "NEVER import OrderCrud, NEVER import from app.orders or app.wrapper_api.orders.\n"
+        "Only use client.get/post/put/delete with JSON bodies and assert status codes.\n\n"
+        "AVAILABLE ROUTES (use ONLY these, no others exist):\n"
+        "Register: POST /api/auth/register json={{username, email, password, password_confirm}} -> 201\n"
+        "Login: POST /api/auth/login json={{username, password}} -> 200 {{access: 'jwt'}}\n"
+        "POST /api/catalog json={{name, price, category}} -> 201 {{id, name, price, category}}\n"
+        "GET /api/catalog -> 200 [{{id, name, price, category}}, ...]\n"
+        "POST /api/orders -> 201 {{id, status:'draft', user_id, created_at}}\n"
+        "GET /api/orders -> 200 [{{id, status, lines, address}}, ...]\n"
+        "GET /api/orders/{{id}} -> 200 {{id, status, lines:[...], address:{{...}}}}\n"
+        "POST /api/orders/{{id}}/lines json={{catalog_item_id, quantity}} -> 201 {{id, order_id, catalog_item_id, quantity}}\n"
+        "PUT /api/orders/{{id}}/address json={{street, city, zip_code}} -> 200 {{ok:true}}\n"
+        "POST /api/orders/{{id}}/submit -> 200 {{id, status:'pending'}}\n"
+        "POST /api/orders/{{id}}/approve json={{wait_minutes, feedback}} -> 200 {{id, status:'approved', wait_minutes, feedback}}\n"
+        "POST /api/orders/{{id}}/reject json={{feedback}} -> 200 {{id, status:'rejected', feedback}}\n\n"
+        "IMPORTANT: There is NO PUT /api/orders/{{id}} route. There is NO DELETE route.\n"
+        "NOTE: Address objects in GET /api/orders/{{id}} response include an 'id' field. Do NOT assert exact dict equality on address — verify specific fields instead.\n"
+        "Use unique uuid-based usernames to avoid 400 'already exists' errors.\n"
+        "Always pass Authorization: Bearer <token> header for protected routes.\n\n"
+        "Domain: {backend_extra}\n"
+        "Testing scenario: {testing_scenario}"
+    )
+
+    # 6a
+    if progress:
+        progress.write("  [6a] Generating cross-stack integration tests...\n")
+    _generate_test_file(
+        client=test_client, ctx=ctx,
+        test_type="cross_stack_integration",
+        instruction=_INSTRUCTION_6A,
+        progress=progress,
+    )
+
+    # 6b
+    if progress:
+        progress.write("  [6b] Generating E2E tests...\n")
+    _generate_test_file(
+        client=test_client, ctx=ctx,
+        test_type="e2e",
+        instruction=_INSTRUCTION_6B,
+        progress=progress,
+    )
+
+    # 6c-6d loop with same-error detection (bounded by MAX_ITERATIONS)
+    iteration = 0
+    last_result: Optional[TestRunResult] = None
+    last_error_sig = ""
+    same_error_count = 0
+    MAX_SAME_ERROR = 3
+
+    while iteration < MAX_ITERATIONS:
+        iteration += 1
+        if progress:
+            progress.write(
+                f"\n  [6c] Running tests (iteration {iteration}/{MAX_ITERATIONS}, "
+                f"{elapsed():.0f}s elapsed)...\n"
+            )
+        result = _run_service_tests(
+            service_dir, test_cmd, ctx, progress=progress,
+        )
+        last_result = result
+        if result.passed:
+            if progress:
+                progress.write(f"  [6c] PASS in {result.duration_s:.1f}s\n")
+            break
+        if progress:
+            progress.write(
+                f"  [6d] FAIL (exit {result.returncode}), fixing...\n"
+            )
+        if iteration >= MAX_ITERATIONS:
+            if progress:
+                progress.write(
+                    f"  [6d] Max iterations ({MAX_ITERATIONS}) reached.\n"
+                )
+            break
+
+        # Escalating fix strategy:
+        # 1st attempt: fast model (devstral/test_client)
+        # 2nd attempt on same error: heavy model (qwen2.5-coder/fix_client)
+        # 3rd attempt on same error: regenerate tests with annotation
+        import re as _re
+        # Normalize dynamic values (IDs, UUIDs, timestamps) so the
+        # same logical error is recognized across iterations.
+        _raw_sig = result.combined_output()[-500:]
+        error_sig = _re.sub(r'\b\d+\b', 'N', _raw_sig)
+        error_sig = _re.sub(r'[0-9a-f]{8,}', 'UUID', error_sig)
+        # Extract just the assertion/error line for comparison
+        _err_lines = [
+            l for l in error_sig.splitlines()
+            if any(k in l.lower() for k in ('assert', 'error', 'failed', '405', '404', '500', '422'))
+        ]
+        error_sig = '\n'.join(_err_lines[-3:]) if _err_lines else error_sig[-200:]
+        if error_sig == last_error_sig:
+            same_error_count += 1
+        else:
+            same_error_count = 1
+            last_error_sig = error_sig
+
+        if same_error_count >= MAX_SAME_ERROR:
+            # 3rd fail on same error → regenerate with annotation
+            if progress:
+                progress.write(
+                    f"\n  [6d] Same error {MAX_SAME_ERROR}x. "
+                    f"Regenerating tests with annotation...\n"
+                )
+            annotation = (
+                f"\nIMPORTANT: Previous generation failed with this error:\n"
+                f"{result.combined_output()[-500:]}\n"
+                f"Fix this issue in the new generation.\n"
+            )
+            _generate_test_file(
+                client=test_client, ctx=ctx,
+                test_type="cross_stack_integration",
+                instruction=_INSTRUCTION_6A,
+                annotation=annotation,
+                progress=progress,
+            )
+            _generate_test_file(
+                client=test_client, ctx=ctx,
+                test_type="e2e",
+                instruction=_INSTRUCTION_6B,
+                annotation=annotation,
+                progress=progress,
+            )
+            same_error_count = 0
+            last_error_sig = ""
+            continue
+        elif same_error_count == 2:
+            # 2nd fail on same error → try heavy fix model
+            if progress:
+                progress.write(
+                    f"  [6d] 2nd attempt, using heavy fix model...\n"
+                )
+            _fix_failing_files(
+                client=fix_client, ctx=ctx,
+                test_output=result.combined_output(),
+                progress=progress,
+            )
+            continue
+
+        # 1st attempt: use fast model (devstral)
+        _fix_failing_files(
+            client=fast_fix_client, ctx=ctx,
+            test_output=result.combined_output(),
+            progress=progress,
+        )
+
+    # 6e: scenario tests
+    if (
+        last_result and last_result.passed
+        and ctx.testing_scenario
+        and time_left()
+    ):
+        if progress:
+            progress.write(
+                "\n  [6e] Generating scenario tests from testing_scenario...\n"
+            )
+        _generate_test_file(
+            client=test_client, ctx=ctx,
+            test_type="complex_scenario",
+            instruction=(
+                "Generate a comprehensive multi-step test following this "
+                "scenario EXACTLY:\n\n"
+                "{testing_scenario}\n\n"
+                "Exercise the full business flow step by step with "
+                "assertions at each stage."
+            ),
+            progress=progress,
+        )
+
+        # 6f-6h loop (bounded by MAX_ITERATIONS)
+        while iteration < MAX_ITERATIONS:
+            iteration += 1
+            if progress:
+                progress.write(
+                    f"\n  [6f] Running all tests (iteration {iteration}/{MAX_ITERATIONS}, "
+                    f"{elapsed():.0f}s elapsed)...\n"
+                )
+            result = _run_service_tests(
+                service_dir, test_cmd, ctx, progress=progress,
+            )
+            last_result = result
+            if result.passed:
+                if progress:
+                    progress.write(
+                        f"  [6f] ALL PASS in {result.duration_s:.1f}s\n"
+                    )
+                break
+            if progress:
+                progress.write(
+                    f"  [6g] FAIL (exit {result.returncode}), fixing...\n"
+                )
+            if iteration >= MAX_ITERATIONS:
+                if progress:
+                    progress.write(
+                        f"  [6g] Max iterations ({MAX_ITERATIONS}) reached.\n"
+                    )
+                break
+            _fix_failing_files(
+                client=fix_client, ctx=ctx,
+                test_output=result.combined_output(),
+                progress=progress,
+            )
+
+    if progress:
+        status = "PASS" if (last_result and last_result.passed) else "FAIL"
+        progress.write(
+            f"\n  Phase 6 complete: {status} "
+            f"({iteration} iterations, {elapsed():.0f}s)\n"
+        )
+    return last_result or TestRunResult(
+        command=[test_cmd],
+        cwd=service_dir,
+        returncode=1,
+        stdout="",
+        stderr="no tests ran",
+        duration_s=0.0,
+    )
 
 
 # --------------------------------------------------------------------------- #

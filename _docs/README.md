@@ -53,6 +53,14 @@ service.
   the five-phase orchestrator, the fix-loop, the sibling discovery
   format, prompt placeholders. **Start here** when extending
   `skel-gen-ai`, adding a manifest, or debugging a generation.
+* [**RAG-IMPROVEMENT-PLAN.md**](RAG-IMPROVEMENT-PLAN.md) — plan to
+  improve RAG efficiency (incremental indexing, batch embedding),
+  embedding model cooperation (BGE prefix, score exposure, model
+  selection guide), and full observability (-v/-vv/-vvv output, metrics
+  export, OTel integration).
+* [**RAG-LLM-RERANKING.md**](RAG-LLM-RERANKING.md) — design for
+  replacing/augmenting embedding retrieval with LLM-based chunk
+  reranking via Ollama.
 * [**SKELETONS.md**](SKELETONS.md) — per-skeleton summary: what AI
   manifest each skel ships, what entity slots it exposes
   (`{item_class}`, `{items_plural}`, `{backend_extra}` …), items API

@@ -17,10 +17,13 @@ from __future__ import annotations
 
 import fnmatch
 import logging
+import sys
+import time
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 
 from skel_rag.config import RagConfig
+from skel_rag.metrics import RetrievalStats
 
 logger = logging.getLogger("skel_rag.retriever")
 
@@ -37,6 +40,7 @@ class RetrievedChunk:
     start_line: int
     end_line: int
     source: str
+    score: float = 0.0  # cosine similarity (0.0 - 1.0)
 
     @property
     def header(self) -> str:
@@ -62,8 +66,9 @@ class Retriever:
         language: Optional[str] = None,
         file_glob: Optional[str] = None,
         k: Optional[int] = None,
-    ) -> List[RetrievedChunk]:
-        """Return up to ``k`` chunks for *query*, language-aware.
+        verbose: int = 0,
+    ) -> Tuple[List[RetrievedChunk], RetrievalStats]:
+        """Return up to ``k`` chunks for *query* plus retrieval stats.
 
         We over-fetch ``2 * top_k`` so post-filtering for language /
         glob still has enough headroom to satisfy ``min_k``. The
@@ -73,15 +78,18 @@ class Retriever:
 
         target_k = k or self.cfg.top_k
         over_fetch = max(target_k * 2, target_k + self.cfg.min_k)
+        t0 = time.monotonic()
 
         try:
-            documents = self.store.similarity_search(query, k=over_fetch)
+            results_with_scores = self.store.similarity_search_with_score(
+                query, k=over_fetch
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("similarity_search failed: %s", exc)
-            return []
+            return [], RetrievalStats()
 
         chunks: List[RetrievedChunk] = []
-        for doc in documents:
+        for doc, score in results_with_scores:
             meta = doc.metadata or {}
             chunk = RetrievedChunk(
                 rel_path=str(meta.get("rel_path", meta.get("file", ""))),
@@ -92,13 +100,47 @@ class Retriever:
                 start_line=int(meta.get("start_line", 1) or 1),
                 end_line=int(meta.get("end_line", 1) or 1),
                 source=doc.page_content or "",
+                score=float(score),
             )
             chunks.append(chunk)
 
+        pre_filter_count = len(chunks)
         filtered = self._apply_filters(
             chunks, language=language, file_glob=file_glob, target_k=target_k
         )
-        return self._budget(filtered, max_chars=self.cfg.max_context_chars)
+        kept = self._budget(filtered, max_chars=self.cfg.max_context_chars)
+        elapsed = time.monotonic() - t0
+
+        total_chars = sum(len(c.source) for c in kept)
+        stats = RetrievalStats(
+            query_length=len(query),
+            candidates_fetched=pre_filter_count,
+            results_kept=len(kept),
+            total_chars=total_chars,
+            elapsed_s=elapsed,
+            scores=[c.score for c in kept],
+        )
+
+        if verbose >= 1:
+            print(
+                f"    [rag] retrieved {len(kept)}/{pre_filter_count} "
+                f"candidates in {elapsed:.2f}s ({total_chars:,} chars)",
+                file=sys.stderr,
+            )
+        if verbose >= 2:
+            score_str = ", ".join(f"{s:.2f}" for s in stats.scores[:8])
+            print(f"    [rag] scores: [{score_str}]", file=sys.stderr)
+            budget_pct = (
+                total_chars / self.cfg.max_context_chars * 100
+            ) if self.cfg.max_context_chars else 0
+            print(
+                f"    [rag] context: {total_chars:,}/"
+                f"{self.cfg.max_context_chars:,} chars "
+                f"({budget_pct:.0f}% of budget)",
+                file=sys.stderr,
+            )
+
+        return kept, stats
 
     # ---- internal helpers -------------------------------------------------
 

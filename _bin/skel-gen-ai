@@ -160,12 +160,13 @@ from skel_ai_lib import (
     run_integration_phase,
     run_kubernetes_phase,
     run_test_and_fix_loop,
+    run_test_generation_phase,
     split_skels_by_kind,
 )
 
 
 def _run_kube_phase_with_fallback(*, client, wrapper_dir, args) -> None:
-    """Run Phase 4 (Kubernetes lifecycle) and report outcome.
+    """Run Phase 5 (Kubernetes lifecycle) and report outcome.
 
     Never raises — any exception is logged so the user still sees the
     happy-path summary for the services themselves. On failure the
@@ -173,7 +174,7 @@ def _run_kube_phase_with_fallback(*, client, wrapper_dir, args) -> None:
     ``./project kube bootstrap`` or ``./project kube sync --e2e``.
     """
     print()
-    print("  ===== Kubernetes lifecycle (Phase 4) =====")
+    print("  ===== Kubernetes lifecycle (Phase 5) =====")
     try:
         result = run_kubernetes_phase(
             client=client,
@@ -328,6 +329,14 @@ def parse_args() -> argparse.Namespace:
             "via the {integration_extra} placeholder."
         ),
     )
+    fs.add_argument(
+        "--testing-scenario",
+        help=(
+            "Testing scenario description for Phase 6 test generation. "
+            "Describes what the generated tests should verify. Available "
+            "to test generation prompts via the {testing_scenario} placeholder."
+        ),
+    )
 
     parser.add_argument("--ollama-model", help="Override OLLAMA_MODEL for this run")
     parser.add_argument("--ollama-url", help="Override Ollama URL (takes precedence over OLLAMA_HOST)")
@@ -372,12 +381,20 @@ def parse_args() -> argparse.Namespace:
             "the generated tests before running them."
         ),
     )
+    parser.add_argument(
+        "--legacy-test-fix",
+        action="store_true",
+        help=(
+            "Use the old Phase 4 test-fix behavior (patch all files on "
+            "failure) instead of the new Phase 6 staged test generation."
+        ),
+    )
 
     parser.add_argument(
         "--no-docs",
         action="store_true",
         help=(
-            "Skip the documentation generation phase (Phase 5). The project "
+            "Skip the documentation generation phase (Phase 4). The project "
             "will still be fully functional but README.md, AGENTS.md, "
             "CLAUDE.md, and JUNIE-RULES.md will contain the generic "
             "templates instead of project-specific content."
@@ -388,7 +405,7 @@ def parse_args() -> argparse.Namespace:
         "--no-kube",
         action="store_true",
         help=(
-            "Skip the Phase-4 Kubernetes lifecycle (Tier-1 helm-gen + "
+            "Skip the Phase-5 Kubernetes lifecycle (Tier-1 helm-gen + "
             "Tier-2 AI + kind E2E). Use on machines without `kind` or "
             "when iterating on service code. You can still run the "
             "lifecycle later with `./project kube bootstrap`."
@@ -397,7 +414,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--keep-kube",
         action="store_true",
-        help="Leave the kind cluster running after Phase 4 (debugging).",
+        help="Leave the kind cluster running after Phase 5 (debugging).",
     )
     parser.add_argument(
         "--kube-fix-timeout",
@@ -946,6 +963,7 @@ def _generate_per_target_overlay(
     backend_extra: str,
     frontend_extra: str,
     integration_extra: str,
+    testing_scenario: str,
     client: Optional[OllamaClient],
     skip_base: bool,
     dry_run: bool,
@@ -1010,6 +1028,7 @@ def _generate_per_target_overlay(
         backend_extra=backend_extra,
         frontend_extra=frontend_extra,
         integration_extra=integration_extra,
+        testing_scenario=testing_scenario,
     )
 
     # Load the per-target manifest.
@@ -1093,6 +1112,8 @@ def _print_fullstack_summary(
         print(f"  Frontend extra    : {choices.frontend_extra}")
     if choices.integration_extra:
         print(f"  Integration extra : {choices.integration_extra}")
+    if choices.testing_scenario:
+        print(f"  Testing scenario  : {choices.testing_scenario}")
     if choices.has_frontend:
         if choices.backend_serves_items:
             print(
@@ -1156,6 +1177,7 @@ def _run_fullstack_flow(
         backend_extra=legacy_backend_extra,
         frontend_extra=args.frontend_extra,
         integration_extra=args.integration_extra,
+        testing_scenario=args.testing_scenario,
         no_input=args.no_input,
         allow_no_frontend=True,
         skip_frontend=args.no_frontend,
@@ -1200,6 +1222,7 @@ def _run_fullstack_flow(
                 backend_extra=choices.backend_extra,
                 frontend_extra=choices.frontend_extra,
                 integration_extra=choices.integration_extra,
+                testing_scenario=choices.testing_scenario,
                 client=client,
                 skip_base=args.skip_base,
                 dry_run=args.dry_run,
@@ -1229,6 +1252,7 @@ def _run_fullstack_flow(
                 backend_extra=choices.backend_extra,
                 frontend_extra=choices.frontend_extra,
                 integration_extra=choices.integration_extra,
+                testing_scenario=choices.testing_scenario,
                 client=client,
                 skip_base=args.skip_base,
                 dry_run=args.dry_run,
@@ -1339,50 +1363,10 @@ def _run_fullstack_flow(
             "skipping integration phase)"
         )
 
-    # ----- Phase 4: test-and-fix loop ----------------------------------- #
-    if (
-        backend_integration
-        and integration_results
-        and not args.no_test_fix
-        and not args.dry_run
-    ):
-        print()
-        print("  ===== Phase 4: Test & fix =====")
-        try:
-            final = run_test_and_fix_loop(
-                client=client,
-                ctx=backend_ctx,
-                manifest=backend_integration,
-                integration_results=integration_results,
-                progress=_PROGRESS,
-            )
-        except OllamaError as exc:
-            print(f"  Test-and-fix loop Ollama error: {exc}")
-            print("  (the inner repair was aborted; the test command output above is what we have)")
-            final = None  # type: ignore[assignment]
-        except Exception as exc:  # noqa: BLE001 — last-resort safety net
-            print(f"  Test-and-fix loop raised unexpectedly: {exc!r}")
-            print("  (inspect the generated files and re-run manually)")
-            final = None  # type: ignore[assignment]
-        else:
-            print()
-            if final.passed:
-                print(
-                    f"  Test-and-fix loop: PASS "
-                    f"(exit 0 in {final.duration_s:.1f}s)"
-                )
-            else:
-                print(
-                    f"  Test-and-fix loop: FAIL "
-                    f"(exit {final.returncode} after "
-                    f"{backend_integration.fix_timeout_m}m timeout). "
-                    f"Inspect the generated files and re-run manually."
-                )
-
-    # ----- Phase 5: documentation generation ----------------------------- #
+    # ----- Phase 4: documentation generation ----------------------------- #
     if not args.dry_run and client is not None and not args.no_docs:
         print()
-        print("  ===== Phase 5: Documentation & LLM instructions =====")
+        print("  ===== Phase 4: Documentation & LLM instructions =====")
         service_contexts = []
         if backend_ctx is not None:
             service_contexts.append(backend_ctx)
@@ -1406,17 +1390,40 @@ def _run_fullstack_flow(
     elif args.dry_run:
         print()
         print(
-            "  (dry-run) Phase 5: would generate README.md, AGENTS.md, "
+            "  (dry-run) Phase 4: would generate README.md, AGENTS.md, "
             "CLAUDE.md, JUNIE-RULES.md + per-service docs"
         )
 
-    # ----- Phase 6: Kubernetes lifecycle -------------------------------- #
+    # ----- Phase 5: Kubernetes lifecycle -------------------------------- #
     if not args.dry_run and not args.no_kube:
         _run_kube_phase_with_fallback(
             client=client,
             wrapper_dir=target,
             args=args,
         )
+
+    # ----- Phase 6: Test generation + fix loop ----------------------- #
+    if not args.no_test_fix and not args.dry_run:
+        if getattr(args, 'legacy_test_fix', False):
+            # Legacy behavior: old patch-all-files loop
+            print()
+            print("  ===== Phase 6: Test & fix (legacy mode) =====")
+            final = run_test_and_fix_loop(
+                client=client,
+                ctx=backend_ctx,
+                manifest=backend_integration,
+                integration_results=integration_results,
+                progress=_PROGRESS,
+            )
+        else:
+            # New behavior: staged test generation + targeted fix
+            print()
+            final = run_test_generation_phase(
+                client=client,
+                ctx=backend_ctx,
+                manifest=backend_integration,
+                progress=_PROGRESS,
+            )
 
     print()
     print("  Done. Review the generated files and run the project's tests.")

@@ -47,7 +47,9 @@ def _resolve_base_url() -> str:
     return DEFAULT_OLLAMA_BASE_URL
 
 
-DEFAULT_OLLAMA_MODEL = "gemma4:31b"
+DEFAULT_OLLAMA_MODEL = "qwen3.6:27b"
+DEFAULT_OLLAMA_FIX_MODEL = "qwen2.5-coder:32b"
+DEFAULT_OLLAMA_TEST_MODEL = "qwen2.5-coder:32b"
 # Seconds. Local Ollama can be slow on big models. The default is sized for
 # ~30B-class instruction models like ``gemma4:31b`` — a single completion
 # can include a 30-40 s cold-load on the first call plus several minutes
@@ -62,6 +64,8 @@ class OllamaConfig:
     """Connection details for an Ollama server (OpenAI-compatible API)."""
 
     model: str = DEFAULT_OLLAMA_MODEL
+    fix_model: str = DEFAULT_OLLAMA_FIX_MODEL
+    test_model: str = DEFAULT_OLLAMA_TEST_MODEL
     base_url: str = DEFAULT_OLLAMA_BASE_URL
     timeout: int = DEFAULT_TIMEOUT
     temperature: float = DEFAULT_TEMPERATURE
@@ -93,9 +97,44 @@ class OllamaConfig:
             temperature = DEFAULT_TEMPERATURE
         return cls(
             model=os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL),
+            fix_model=os.environ.get(
+                "OLLAMA_FIX_MODEL", DEFAULT_OLLAMA_FIX_MODEL
+            ),
+            test_model=os.environ.get(
+                "OLLAMA_TEST_MODEL", DEFAULT_OLLAMA_TEST_MODEL
+            ),
             base_url=base,
             timeout=timeout,
             temperature=temperature,
+        )
+
+    def for_fix(self) -> "OllamaConfig":
+        """Return a config variant using the fix model.
+
+        Lower temperature (0.1) for deterministic patches, shorter
+        timeout (300s) since fixes should be fast.
+        """
+        return OllamaConfig(
+            model=self.fix_model,
+            fix_model=self.fix_model,
+            test_model=self.test_model,
+            base_url=self.base_url,
+            timeout=min(self.timeout, 300),
+            temperature=0.1,
+        )
+
+    def for_test(self) -> "OllamaConfig":
+        """Return a config variant using the test generation model.
+
+        devstral produces better test structure than code-focused models.
+        """
+        return OllamaConfig(
+            model=self.test_model,
+            fix_model=self.fix_model,
+            test_model=self.test_model,
+            base_url=self.base_url,
+            timeout=self.timeout,
+            temperature=0.2,
         )
 
 
@@ -108,12 +147,12 @@ class OllamaConfig:
 # strong on code/text. Override with ``SKEL_RAG_EMBEDDING_MODEL`` if you
 # want to swap in a heavier model (e.g. ``BAAI/bge-base-en-v1.5``) or the
 # claude-context-local default (``google/embeddinggemma-300m``).
-DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+DEFAULT_EMBEDDING_MODEL = "nomic-ai/nomic-embed-text-v1.5"
 DEFAULT_INDEX_DIRNAME = ".skel_rag_index"
 DEFAULT_TOP_K = 8
 DEFAULT_MIN_K = 3
 DEFAULT_MAX_CONTEXT_CHARS = 12000
-DEFAULT_CHUNK_MAX_CHARS = 2000
+DEFAULT_CHUNK_MAX_CHARS = 6000
 DEFAULT_FALLBACK_CHUNK_SIZE = 1500
 DEFAULT_FALLBACK_CHUNK_OVERLAP = 150
 
@@ -146,6 +185,7 @@ class RagConfig:
     chunk_max_chars: int = DEFAULT_CHUNK_MAX_CHARS
     fallback_chunk_size: int = DEFAULT_FALLBACK_CHUNK_SIZE
     fallback_chunk_overlap: int = DEFAULT_FALLBACK_CHUNK_OVERLAP
+    verbose: int = 0
 
     @classmethod
     def from_env(cls) -> "RagConfig":
@@ -177,4 +217,5 @@ class RagConfig:
             fallback_chunk_overlap=_int(
                 "SKEL_RAG_FALLBACK_CHUNK_OVERLAP", DEFAULT_FALLBACK_CHUNK_OVERLAP
             ),
+            verbose=_int("SKEL_AI_VERBOSE", 0),
         )
