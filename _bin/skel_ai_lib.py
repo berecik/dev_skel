@@ -1406,6 +1406,9 @@ def build_system_prompt(manifest: AiManifest, ctx: GenerationContext) -> str:
     )
     if ctx.auth_details:
         constraints += f"- Auth notes from the user: {ctx.auth_details}\n"
+    # Disable thinking mode in Qwen 3.x models — saves 30-50% tokens
+    # on code generation where we want direct output, not reasoning.
+    constraints += "\n/no_think\n"
     return base + constraints
 
 
@@ -2323,7 +2326,7 @@ def _fix_failing_files(
                 f"- If 'must be in pending status', create a NEW order for the reject test.\n"
                 f"- If error is 'assert X == Y' or 'Left contains N more item', relax the assertion: use `assert expected.items() <= actual.items()` or remove unexpected fields from the expected dict.\n"
                 f"- PUT /api/orders/{{id}}/address returns {{ok:true}} NOT the address object.\n\n"
-                "Output ONLY the fixed file contents. No markdown fences."
+                "Output ONLY the fixed file contents. No markdown fences.\n/no_think"
             )
             fixed = client.chat(system, content)
             lang = fpath.suffix.lstrip(".")
@@ -2395,7 +2398,7 @@ def _fix_failing_files(
             f"- If 'must be in pending status', create a NEW order for the reject test.\n"
             f"- If error is 'assert X == Y' or 'Left contains N more item', relax the assertion: use `assert expected.items() <= actual.items()` or remove unexpected fields from the expected dict.\n"
             f"- PUT /api/orders/{{id}}/address returns {{ok:true}} NOT the address object.\n\n"
-            "Output ONLY the fixed file contents. No markdown fences."
+            "Output ONLY the fixed file contents. No markdown fences.\n/no_think"
         )
         fixed = client.chat(system, content)
         lang = test_path.suffix.lstrip(".")

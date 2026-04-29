@@ -782,7 +782,7 @@ def _run_frontend_tests(
     elif kind == "react":
         print(f"  running npm test in {slug}/...")
         result = subprocess.run(
-            ["npm", "test", "--", "--watchAll=false", "--passWithNoTests"],
+            ["npm", "test"],
             cwd=frontend_dir,
             capture_output=True,
             text=True,

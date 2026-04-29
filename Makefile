@@ -33,7 +33,15 @@
         test-project-ux test-project-ux-keep \
         test-kube-layout test-kube-diagnose test-kube-manifest test-kube-phase \
         test-flutter-django-bolt test-flutter-django-bolt-keep \
-        test-flutter-fastapi test-flutter-fastapi-keep test-flutter-cross-stack \
+        test-flutter-fastapi test-flutter-fastapi-keep \
+        test-flutter-flask test-flutter-flask-keep \
+        test-flutter-django test-flutter-django-keep \
+        test-flutter-spring test-flutter-spring-keep \
+        test-flutter-actix test-flutter-actix-keep \
+        test-flutter-axum test-flutter-axum-keep \
+        test-flutter-go test-flutter-go-keep \
+        test-flutter-nextjs test-flutter-nextjs-keep \
+        test-flutter-cross-stack \
         test-pizzeria-orders test-pizzeria-orders-keep \
         test-cross-stack
 
@@ -564,10 +572,66 @@ test-flutter-fastapi: ## Cross-stack integration test (fastapi + flutter)
 test-flutter-fastapi-keep: ## Same, but leave _test_projects/test-flutter-fastapi on disk
 	@_bin/skel-test-flutter-fastapi --keep
 
+test-flutter-flask: ## Cross-stack integration test (flask + flutter)
+	@echo "$(GREEN)=== Flutter + Flask integration test ===$(NC)"
+	@_bin/skel-test-flutter-flask
+
+test-flutter-flask-keep: ## Same, but leave _test_projects/test-flutter-flask on disk
+	@_bin/skel-test-flutter-flask --keep
+
+test-flutter-django: ## Cross-stack integration test (django + flutter)
+	@echo "$(GREEN)=== Flutter + Django integration test ===$(NC)"
+	@_bin/skel-test-flutter-django
+
+test-flutter-django-keep: ## Same, but leave _test_projects/test-flutter-django on disk
+	@_bin/skel-test-flutter-django --keep
+
+test-flutter-spring: ## Cross-stack integration test (spring + flutter)
+	@echo "$(GREEN)=== Flutter + Spring Boot integration test ===$(NC)"
+	@_bin/skel-test-flutter-spring
+
+test-flutter-spring-keep: ## Same, but leave _test_projects/test-flutter-spring on disk
+	@_bin/skel-test-flutter-spring --keep
+
+test-flutter-actix: ## Cross-stack integration test (actix + flutter)
+	@echo "$(GREEN)=== Flutter + Actix integration test ===$(NC)"
+	@_bin/skel-test-flutter-actix
+
+test-flutter-actix-keep: ## Same, but leave _test_projects/test-flutter-actix on disk
+	@_bin/skel-test-flutter-actix --keep
+
+test-flutter-axum: ## Cross-stack integration test (axum + flutter)
+	@echo "$(GREEN)=== Flutter + Axum integration test ===$(NC)"
+	@_bin/skel-test-flutter-axum
+
+test-flutter-axum-keep: ## Same, but leave _test_projects/test-flutter-axum on disk
+	@_bin/skel-test-flutter-axum --keep
+
+test-flutter-go: ## Cross-stack integration test (go + flutter)
+	@echo "$(GREEN)=== Flutter + Go integration test ===$(NC)"
+	@_bin/skel-test-flutter-go
+
+test-flutter-go-keep: ## Same, but leave _test_projects/test-flutter-go on disk
+	@_bin/skel-test-flutter-go --keep
+
+test-flutter-nextjs: ## Cross-stack integration test (nextjs + flutter)
+	@echo "$(GREEN)=== Flutter + Next.js integration test ===$(NC)"
+	@_bin/skel-test-flutter-nextjs
+
+test-flutter-nextjs-keep: ## Same, but leave _test_projects/test-flutter-nextjs on disk
+	@_bin/skel-test-flutter-nextjs --keep
+
 test-flutter-cross-stack: ## Run every Flutter + backend cross-stack integration test in sequence
 	@echo "$(GREEN)=== Running all Flutter + backend integration tests ===$(NC)"
 	@$(MAKE) test-flutter-django-bolt
 	@$(MAKE) test-flutter-fastapi
+	@$(MAKE) test-flutter-flask
+	@$(MAKE) test-flutter-django
+	@$(MAKE) test-flutter-spring
+	@$(MAKE) test-flutter-actix
+	@$(MAKE) test-flutter-axum
+	@$(MAKE) test-flutter-go
+	@$(MAKE) test-flutter-nextjs
 	@echo "$(GREEN)All Flutter + backend integration tests passed.$(NC)"
 
 #

@@ -91,18 +91,38 @@ if not _HAS_LANGCHAIN:
 
 
 def _chat_stdlib(config: OllamaConfig, system: str, user: str) -> str:
-    """Direct HTTP fallback via Ollama's OpenAI-compatible endpoint."""
+    """Direct HTTP via Ollama's OpenAI-compatible endpoint.
+
+    This is the primary chat path (not a fallback). LangChain's
+    ChatOllama uses httpx which deadlocks on large responses from
+    remote Ollama servers. The stdlib ``urllib.request`` path is
+    simpler and fully reliable.
+
+    Supports optional ``OLLAMA_NUM_CTX`` and ``OLLAMA_NUM_PREDICT``
+    env vars to control context window and output cap. Sends
+    ``keep_alive: "24h"`` to prevent model unloading between calls.
+    """
+    import os as _os
 
     url = f"{config.base_url}/v1/chat/completions"
-    body = {
+    body: dict = {
         "model": config.model,
         "temperature": config.temperature,
         "stream": False,
+        "keep_alive": "24h",
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
     }
+    # Optional context window and output cap via env vars.
+    _num_ctx = _os.environ.get("OLLAMA_NUM_CTX", "").strip()
+    if _num_ctx:
+        body["num_ctx"] = int(_num_ctx)
+    _num_predict = _os.environ.get("OLLAMA_NUM_PREDICT", "").strip()
+    if _num_predict:
+        body["num_predict"] = int(_num_predict)
+
     data = json.dumps(body).encode("utf-8")
     request = urllib.request.Request(
         url, data=data, headers={"Content-Type": "application/json"},
@@ -137,13 +157,25 @@ def _chat_stdlib(config: OllamaConfig, system: str, user: str) -> str:
 def _make_chat_model(model: str, base_url: str, temperature: float, timeout: int) -> Any:
     if not _HAS_LANGCHAIN:
         return None
-    return ChatOllama(
-        model=model,
-        base_url=base_url,
-        temperature=temperature,
-        # langchain-ollama uses ``request_timeout`` (seconds, float).
-        request_timeout=float(timeout),
-    )
+
+    import os as _os
+
+    kwargs: dict = {
+        "model": model,
+        "base_url": base_url,
+        "temperature": temperature,
+        "request_timeout": float(timeout),
+    }
+    # Optional: set explicit context window and output cap via env vars.
+    # Leave unset by default so Ollama uses the model's native defaults.
+    _num_ctx = _os.environ.get("OLLAMA_NUM_CTX", "").strip()
+    if _num_ctx:
+        kwargs["num_ctx"] = int(_num_ctx)
+    _num_predict = _os.environ.get("OLLAMA_NUM_PREDICT", "").strip()
+    if _num_predict:
+        kwargs["num_predict"] = int(_num_predict)
+
+    return ChatOllama(**kwargs)
 
 
 def make_chat_model(config: OllamaConfig) -> Any:
@@ -157,6 +189,10 @@ def make_chat_model(config: OllamaConfig) -> Any:
     )
 
 
+_MAX_RETRIES = 3
+_RETRY_DELAY_S = 10
+
+
 def chat(config: OllamaConfig, system: str, user: str) -> str:
     """Send one ``system + user`` turn and return the assistant text.
 
@@ -168,37 +204,43 @@ def chat(config: OllamaConfig, system: str, user: str) -> str:
     Falls back to a direct HTTP call via Ollama's OpenAI-compatible
     endpoint when ``langchain-ollama`` / ``langchain-core`` are not
     installed.
+
+    Retries up to ``_MAX_RETRIES`` times on transient connection
+    errors (peer closed, connection refused, timeout) with a short
+    delay between attempts. This handles Ollama model reloads and
+    transient OOM-recovery on GPU-constrained hosts.
     """
 
-    if not _HAS_LANGCHAIN:
-        return _chat_stdlib(config, system, user)
+    # Always use the stdlib HTTP path — it's more reliable than
+    # LangChain's ChatOllama which can hang on large responses due to
+    # httpx/streaming issues. The stdlib path uses urllib.request with
+    # explicit timeouts and retry logic.
+    import time as _time
 
-    model = make_chat_model(config)
-    try:
-        response = model.invoke(
-            [SystemMessage(content=system), HumanMessage(content=user)]
-        )
-    except Exception as exc:  # noqa: BLE001 — surface a single friendly error
-        raise OllamaError(
-            f"Ollama request failed: {exc}. Is `ollama serve` running?"
-        ) from exc
+    last_exc: Exception | None = None
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            return _chat_stdlib(config, system, user)
+        except OllamaError as exc:
+            last_exc = exc
+            err_str = str(exc).lower()
+            is_transient = any(k in err_str for k in (
+                "peer closed", "connection refused", "incomplete chunked",
+                "connection reset", "timed out", "eof occurred",
+            ))
+            if is_transient and attempt < _MAX_RETRIES:
+                logger.warning(
+                    "Ollama transient error (attempt %d/%d): %s — "
+                    "retrying in %ds...",
+                    attempt, _MAX_RETRIES, exc, _RETRY_DELAY_S,
+                )
+                _time.sleep(_RETRY_DELAY_S)
+                continue
+            raise
 
-    content = getattr(response, "content", None)
-    if isinstance(content, list):
-        # Some langchain providers wrap multimodal output in a list of
-        # ``{"type": "text", "text": "..."}`` dicts. Concatenate text
-        # blocks so the rest of the pipeline keeps treating chat output
-        # as a single string.
-        text_parts = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                text_parts.append(str(block.get("text", "")))
-            elif isinstance(block, str):
-                text_parts.append(block)
-        return "".join(text_parts)
-    if isinstance(content, str):
-        return content
-    raise OllamaError(f"Unexpected ChatOllama response: {response!r}")
+    raise OllamaError(
+        f"Ollama request failed after {_MAX_RETRIES} retries: {last_exc}"
+    )
 
 
 # --------------------------------------------------------------------------- #

@@ -47,15 +47,22 @@ def _resolve_base_url() -> str:
     return DEFAULT_OLLAMA_BASE_URL
 
 
-DEFAULT_OLLAMA_MODEL = "qwen3.6:27b"
+DEFAULT_OLLAMA_MODEL = "qwen3-coder:30b"
 DEFAULT_OLLAMA_FIX_MODEL = "qwen2.5-coder:32b"
 DEFAULT_OLLAMA_TEST_MODEL = "qwen2.5-coder:32b"
-# Seconds. Local Ollama can be slow on big models. The default is sized for
-# ~30B-class instruction models like ``gemma4:31b`` — a single completion
-# can include a 30-40 s cold-load on the first call plus several minutes
-# of generation on long files. Override with ``OLLAMA_TIMEOUT`` in the
-# environment when running on faster hardware or against a smaller model.
-DEFAULT_TIMEOUT = 1800
+# Seconds. Covers cold-load (30-40 s) + generation time. Set to 600
+# (10 min) with 3x retry logic so transient Ollama errors are recovered
+# within a reasonable window. Override with ``OLLAMA_TIMEOUT``.
+#
+# Performance env vars (set on the Ollama server):
+#   OLLAMA_FLASH_ATTENTION=1    — 1.8-2.3x speedup on Ampere+ GPUs
+#   OLLAMA_KV_CACHE_TYPE=q8_0   — 50% less KV cache VRAM
+#   OLLAMA_KEEP_ALIVE=24h       — keep model loaded between requests
+#
+# Per-request env vars (set on the client):
+#   OLLAMA_NUM_CTX=32768         — explicit context window size
+#   OLLAMA_NUM_PREDICT=4096      — cap output tokens
+DEFAULT_TIMEOUT = 600
 DEFAULT_TEMPERATURE = 0.2
 
 

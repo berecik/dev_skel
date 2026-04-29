@@ -467,7 +467,12 @@
       "Bash(OLLAMA_HOST=paul:11434 OLLAMA_MODEL=qwen3.6:27b OLLAMA_FIX_MODEL=qwen2.5-coder:32b OLLAMA_TEST_MODEL=qwen2.5-coder:32b SKEL_AI_VERBOSE=1 PYTHONUNBUFFERED=1 python3 _bin/skel-test-pizzeria-orders --keep)",
       "Bash(xargs basename *)",
       "Bash(git -C /Users/beret/dev_skel log --oneline --all -- _skels/flutter-skel/lib/api/orders_client.dart)",
-      "Bash(OLLAMA_HOST=paul:11434 OLLAMA_MODEL=qwen3.6:27b OLLAMA_FIX_MODEL=qwen2.5-coder:32b OLLAMA_TEST_MODEL=qwen2.5-coder:32b SKEL_AI_VERBOSE=2 PYTHONUNBUFFERED=1 python3 _bin/skel-test-pizzeria-orders --keep)"
+      "Bash(OLLAMA_HOST=paul:11434 OLLAMA_MODEL=qwen3.6:27b OLLAMA_FIX_MODEL=qwen2.5-coder:32b OLLAMA_TEST_MODEL=qwen2.5-coder:32b SKEL_AI_VERBOSE=2 PYTHONUNBUFFERED=1 python3 _bin/skel-test-pizzeria-orders --keep)",
+      "Bash(system_profiler SPHardwareDataType)",
+      "Bash(cd /Users/beret/dev_skel/_test_projects/test-pizzeria-orders/orders_api)",
+      "Bash(cat app/orders_api/__init__.py)",
+      "Bash(wc -c app/orders_api/__init__.py)",
+      "Bash(OLLAMA_HOST=paul:11434 SKEL_AI_VERBOSE=2 PYTHONUNBUFFERED=1 python3 _bin/skel-test-pizzeria-orders --keep)"
     ],
     "deny": [],
     "ask": []

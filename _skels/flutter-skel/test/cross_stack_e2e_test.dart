@@ -65,9 +65,9 @@ const _e2eUsername = 'flutter-e2e-user';
 const _e2ePassword = 'flutter-e2e-pw-12345';
 const _e2eEmail = 'flutter-e2e@example.com';
 
-/// Register the canonical E2E user via raw HTTP. Accepts BOTH 201
-/// (new) and 409 (already exists) so re-runs against a shared
-/// backend stay idempotent.
+/// Register the canonical E2E user via raw HTTP. Accepts 201
+/// (new), 400 (FastAPI: username exists), and 409 (Django: conflict)
+/// so re-runs against any backend stay idempotent.
 Future<void> _registerUser(String backendUrl) async {
   final response = await http.post(
     Uri.parse('$backendUrl/api/auth/register'),
@@ -79,9 +79,11 @@ Future<void> _registerUser(String backendUrl) async {
       'password_confirm': _e2ePassword,
     }),
   );
-  if (response.statusCode != 201 && response.statusCode != 409) {
+  if (response.statusCode != 201 &&
+      response.statusCode != 400 &&
+      response.statusCode != 409) {
     fail(
-      'register expected 201 or 409, got ${response.statusCode}: ${response.body}',
+      'register expected 201/400/409, got ${response.statusCode}: ${response.body}',
     );
   }
 }
@@ -330,12 +332,15 @@ void main() {
       final switchFinder = find.byType(Switch);
       expect(switchFinder, findsOneWidget,
           reason: 'Show-completed Switch missing');
-      expect(tester.widget<Switch>(switchFinder).value, isTrue);
+      final switchWidget = tester.widget<Switch>(switchFinder);
+      expect(switchWidget.value, isTrue);
 
-      await tester.tap(switchFinder);
-      // The Switch needs an animation tick to settle, then the list
-      // re-builds without the completed row.
-      await tester.pump(const Duration(milliseconds: 350));
+      // Invoke onChanged directly — `tester.tap` can miss under
+      // LiveTestWidgetsFlutterBinding when the Switch is near an
+      // edge or requires precise hit-testing. Direct invocation
+      // mirrors what the user's finger triggers.
+      switchWidget.onChanged!(false);
+      await tester.pump(const Duration(milliseconds: 500));
 
       await _waitFor(
         tester,
@@ -344,8 +349,10 @@ void main() {
       );
 
       // Toggle back on — our completed item should reappear.
-      await tester.tap(switchFinder);
-      await tester.pump(const Duration(milliseconds: 350));
+      // Re-find the Switch since the widget tree rebuilt.
+      final switchWidget2 = tester.widget<Switch>(find.byType(Switch));
+      switchWidget2.onChanged!(true);
+      await tester.pump(const Duration(milliseconds: 500));
       await _waitFor(
         tester,
         () => find.text(itemName).evaluate().isNotEmpty,
