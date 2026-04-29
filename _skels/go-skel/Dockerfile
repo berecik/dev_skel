@@ -31,7 +31,6 @@ RUN groupadd --system appgroup && \
 WORKDIR /app
 
 COPY --from=builder /build/app .
-COPY --from=builder /build/.env.example .env.example
 
 RUN chown -R appuser:appgroup /app
 

@@ -474,7 +474,8 @@
       "Bash(wc -c app/orders_api/__init__.py)",
       "Bash(OLLAMA_HOST=paul:11434 SKEL_AI_VERBOSE=2 PYTHONUNBUFFERED=1 python3 _bin/skel-test-pizzeria-orders --keep)",
       "Bash(act --version)",
-      "Bash(./maintenance --quick)"
+      "Bash(./maintenance --quick)",
+      "Bash(_skels/go-skel/test_skel)"
     ],
     "deny": [],
     "ask": []
