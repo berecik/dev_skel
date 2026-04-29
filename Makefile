@@ -178,25 +178,25 @@ test-generators: ## Test all generators by creating test projects
 test-gen-fastapi: ## Test FastAPI generator
 	@echo "$(YELLOW)>>> Testing FastAPI generator$(NC)"
 	@$(MAKE) gen-fastapi NAME=$(TEST_OUTPUT)/test-fastapi-ddd-app
-	@cd $(TEST_OUTPUT)/test-fastapi-ddd-app/backend && . .venv/bin/activate && python -c "from app import get_app; from core.repository import AbstractRepository; print('FastAPI import OK')"
+	@cd $(TEST_OUTPUT)/test-fastapi-ddd-app/backend && .venv/bin/python -c "from app import get_app; from core.repository import AbstractRepository; print('FastAPI import OK')"
 	@echo "$(GREEN)FastAPI generator test passed$(NC)"
 
 test-gen-flask: ## Test Flask generator
 	@echo "$(YELLOW)>>> Testing Flask generator$(NC)"
 	@$(MAKE) gen-flask NAME=$(TEST_OUTPUT)/test-flask-app
-	@cd $(TEST_OUTPUT)/test-flask-app/backend && . .venv/bin/activate && python -c "from flask import Flask; print('Flask import OK')"
+	@cd $(TEST_OUTPUT)/test-flask-app/backend && .venv/bin/python -c "from flask import Flask; print('Flask import OK')"
 	@echo "$(GREEN)Flask generator test passed$(NC)"
 
 test-gen-django: ## Test Django generator
 	@echo "$(YELLOW)>>> Testing Django generator$(NC)"
 	@$(MAKE) gen-django NAME=$(TEST_OUTPUT)/test-django-app
-	@cd $(TEST_OUTPUT)/test-django-app/backend && . .venv/bin/activate && python -c "import django; print('Django import OK')"
+	@cd $(TEST_OUTPUT)/test-django-app/backend && .venv/bin/python -c "import django; print('Django import OK')"
 	@echo "$(GREEN)Django generator test passed$(NC)"
 
 test-gen-django-bolt: ## Test Django-Bolt generator
 	@echo "$(YELLOW)>>> Testing Django-Bolt generator$(NC)"
 	@$(MAKE) gen-django-bolt NAME=$(TEST_OUTPUT)/test-django-bolt-app
-	@cd $(TEST_OUTPUT)/test-django-bolt-app/backend && . .venv/bin/activate && python -c "import django, django_bolt, msgspec; print('Django-Bolt import OK')" && python manage.py check
+	@cd $(TEST_OUTPUT)/test-django-bolt-app/backend && .venv/bin/python -c "import django, django_bolt, msgspec; print('Django-Bolt import OK')" && .venv/bin/python manage.py check
 	@echo "$(GREEN)Django-Bolt generator test passed$(NC)"
 
 test-gen-react: ## Test React+Vite generator
