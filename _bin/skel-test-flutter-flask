@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""End-to-end integration test: Flask backend + Flutter frontend.
+
+Generates a wrapper containing both ``python-flask-skel`` and
+``flutter-skel``, configures ``BACKEND_URL`` to a non-conflicting
+port, re-copies the wrapper-shared ``.env`` into the Flutter project's
+bundled asset, runs ``flutter pub get`` + ``flutter build web``
+(verifying the URL is bundled into the asset), starts the Flask
+backend in the background via the venv's own ``python run.py``, and
+exercises the canonical ``register -> login -> CRUD -> complete``
+flow over real HTTP.
+
+The HTTP exercise hits the BACKEND directly (not the Flutter app),
+proving that the same items API contract works for both frontends.
+The Flutter-specific value-add is the bundled-``.env`` inspection,
+which confirms ``flutter_dotenv`` will read the right ``BACKEND_URL``
+at runtime.
+
+Usage::
+
+    _bin/skel-test-flutter-flask              # full run
+    _bin/skel-test-flutter-flask --keep       # leave wrapper on disk
+    _bin/skel-test-flutter-flask --port 18782 # custom port
+    _bin/skel-test-flutter-flask --no-skip    # fail on missing Flutter
+
+Exit codes::
+
+    0 — every check passed
+    1 — at least one check failed
+    2 — toolchain (Flutter / Python) missing or setup error
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from dev_skel_lib import DevSkelConfig, detect_root, load_config  # noqa: E402
+
+from _frontend_backend_lib import (  # noqa: E402
+    DEFAULT_STARTUP_TIMEOUT,
+    FLUTTER_FRONTEND,
+    BackendSpec,
+    run_frontend_backend_integration,
+)
+
+
+PROJECT_NAME = "test-flutter-flask"
+BACKEND_SKEL = "python-flask-skel"
+BACKEND_SERVICE_NAME = "Items API"
+
+# Use a different default port from the React tests so the two
+# integration suites can run back-to-back without colliding on a stale
+# socket from a previous interrupted run.
+FLUTTER_DEFAULT_PORT = 18782
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Integration test that generates a wrapper containing "
+            "python-flask-skel + flutter-skel, builds the Flutter web "
+            "bundle, starts the Flask backend, and verifies the items "
+            "API end-to-end via real HTTP."
+        ),
+    )
+    parser.add_argument(
+        "--keep",
+        action="store_true",
+        help=(
+            "Leave the generated wrapper at "
+            "_test_projects/test-flutter-flask on disk after the test "
+            "finishes. Useful for poking at the build or running the "
+            "server manually."
+        ),
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=FLUTTER_DEFAULT_PORT,
+        help=(
+            "TCP port the Flask backend should bind to. The wrapper "
+            f"BACKEND_URL is rewritten to http://127.0.0.1:<port> before "
+            f"the Flutter web build runs. Default: {FLUTTER_DEFAULT_PORT}."
+        ),
+    )
+    parser.add_argument(
+        "--server-startup-timeout",
+        type=int,
+        default=DEFAULT_STARTUP_TIMEOUT,
+        help=(
+            "Seconds to wait for the Flask server to become reachable on "
+            f"the chosen port (default: {DEFAULT_STARTUP_TIMEOUT})."
+        ),
+    )
+    parser.add_argument(
+        "--no-skip",
+        action="store_true",
+        help=(
+            "Treat missing Flutter SDK as a hard failure (exit 1) instead "
+            "of the default toolchain skip (exit 2)."
+        ),
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+
+    cfg: DevSkelConfig = load_config()
+    repo_root = detect_root(SCRIPT_DIR, cfg.skel_dir)
+
+    spec = BackendSpec(
+        skeleton=BACKEND_SKEL,
+        service_name=BACKEND_SERVICE_NAME,
+        server_argv_template=[
+            ".venv/bin/python",
+            "run.py",
+        ],
+        # `db.create_all()` runs from inside `create_app()`, so no
+        # explicit pre-server setup is needed for the schema.
+        pre_server_setup=[],
+        extra_env={
+            "SERVICE_HOST": "127.0.0.1",
+            "SERVICE_PORT": str(args.port),
+            "DATABASE_URL": "sqlite:///flutter_flask_test.db",
+            # Disable Flask's debug auto-reloader so we get a single
+            # PID we can clean up.
+            "FLASK_DEBUG": "0",
+        },
+    )
+
+    return run_frontend_backend_integration(
+        frontend=FLUTTER_FRONTEND,
+        project_name=PROJECT_NAME,
+        title="Flutter + Flask integration test",
+        spec=spec,
+        repo_root=repo_root,
+        port=args.port,
+        server_startup_timeout=args.server_startup_timeout,
+        keep=args.keep,
+        no_skip=args.no_skip,
+    )
+
+
+if __name__ == "__main__":
+    sys.exit(main())

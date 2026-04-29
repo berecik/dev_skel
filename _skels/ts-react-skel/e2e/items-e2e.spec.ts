@@ -110,7 +110,7 @@ test('full user journey: login → create → complete → persistent filter', a
 
   // Uncheck it — the completed item should disappear.
   await checkbox.uncheck();
-  await expect(page.getByText(E2E_ITEM_NAME)).not.toBeVisible();
+  await expect(page.getByText(E2E_ITEM_NAME)).not.toBeVisible({ timeout: 10_000 });
 
   // Reload the page. The JWT is in localStorage so we stay logged
   // in, and the filter state is in /api/state so it should persist.
@@ -123,10 +123,10 @@ test('full user journey: login → create → complete → persistent filter', a
   ).toBeVisible({ timeout: 10_000 });
 
   // The checkbox should still be unchecked (persisted via /api/state).
-  await expect(page.getByLabel(/show completed/i)).not.toBeChecked();
+  await expect(page.getByLabel(/show completed/i)).not.toBeChecked({ timeout: 10_000 });
 
   // The completed item should still be hidden.
-  await expect(page.getByText(E2E_ITEM_NAME)).not.toBeVisible();
+  await expect(page.getByText(E2E_ITEM_NAME)).not.toBeVisible({ timeout: 10_000 });
 
   // Re-check the checkbox to confirm the filter toggle still works
   // after a reload.

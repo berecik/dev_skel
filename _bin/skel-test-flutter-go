@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""End-to-end integration test: Go (net/http) backend + Flutter frontend.
+
+Generates a wrapper containing both ``go-skel`` and ``flutter-skel``,
+configures ``BACKEND_URL`` to a non-conflicting port, re-copies the
+wrapper-shared ``.env`` into the Flutter project's bundled asset, runs
+``flutter pub get`` + ``flutter build web`` (verifying the URL is
+bundled into the asset), compiles + starts the Go backend in the
+background, and exercises the canonical
+``register -> login -> CRUD -> complete`` flow over real HTTP.
+
+The HTTP exercise hits the BACKEND directly (not the Flutter app),
+proving that the same items API contract works for both frontends.
+The Flutter-specific value-add is the bundled-``.env`` inspection,
+which confirms ``flutter_dotenv`` will read the right ``BACKEND_URL``
+at runtime.
+
+Usage::
+
+    _bin/skel-test-flutter-go              # full run
+    _bin/skel-test-flutter-go --keep       # leave wrapper on disk
+    _bin/skel-test-flutter-go --port 18787 # custom port
+    _bin/skel-test-flutter-go --no-skip    # fail on missing Flutter/Go
+
+Exit codes::
+
+    0 — every check passed
+    1 — at least one check failed
+    2 — toolchain (Flutter / go) missing or setup error
+"""
+
+from __future__ import annotations
+
+import argparse
+import shutil
+import sys
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from dev_skel_lib import DevSkelConfig, detect_root, load_config  # noqa: E402
+
+from _frontend_backend_lib import (  # noqa: E402
+    DEFAULT_STARTUP_TIMEOUT,
+    EXIT_FAIL,
+    EXIT_SETUP,
+    FLUTTER_FRONTEND,
+    BackendSpec,
+    run_frontend_backend_integration,
+)
+
+
+PROJECT_NAME = "test-flutter-go"
+BACKEND_SKEL = "go-skel"
+BACKEND_SERVICE_NAME = "Items API"
+
+FLUTTER_DEFAULT_PORT = 18787
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Integration test that generates a wrapper containing "
+            "go-skel + flutter-skel, builds the Flutter web bundle, "
+            "compiles + starts the Go backend, and verifies the items "
+            "API end-to-end via real HTTP."
+        ),
+    )
+    parser.add_argument(
+        "--keep",
+        action="store_true",
+        help=(
+            "Leave the generated wrapper at "
+            "_test_projects/test-flutter-go on disk after the test "
+            "finishes. Useful for poking at the build or running the "
+            "server manually."
+        ),
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=FLUTTER_DEFAULT_PORT,
+        help=(
+            "TCP port the Go backend should bind to. The wrapper "
+            f"BACKEND_URL is rewritten to http://127.0.0.1:<port> before "
+            f"the Flutter web build runs. Default: {FLUTTER_DEFAULT_PORT}."
+        ),
+    )
+    parser.add_argument(
+        "--server-startup-timeout",
+        type=int,
+        default=max(DEFAULT_STARTUP_TIMEOUT, 90),
+        help=(
+            "Seconds to wait for the Go server to become reachable on "
+            f"the chosen port (default: {max(DEFAULT_STARTUP_TIMEOUT, 90)}). "
+            "Higher than the FastAPI/django-bolt default because a cold "
+            "Go build (with sqlx-style deps) can take longer than uvicorn boot."
+        ),
+    )
+    parser.add_argument(
+        "--no-skip",
+        action="store_true",
+        help=(
+            "Treat missing Flutter SDK or go as a hard failure (exit 1) "
+            "instead of the default toolchain skip (exit 2)."
+        ),
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+
+    if not shutil.which("go"):
+        msg = "go not on PATH (required to build the Go backend)"
+        if args.no_skip:
+            print(f"  \u2717 {msg}")
+            return EXIT_FAIL
+        print(f"  \u00b7 skipping ({msg})")
+        return EXIT_SETUP
+
+    cfg: DevSkelConfig = load_config()
+    repo_root = detect_root(SCRIPT_DIR, cfg.skel_dir)
+
+    # Pre-build the binary so the server starts almost instantly.
+    pre_setup = [
+        (
+            "go build -o bin/app .",
+            ["bash", "-c", "CGO_ENABLED=0 go build -o bin/app ."],
+        ),
+    ]
+
+    spec = BackendSpec(
+        skeleton=BACKEND_SKEL,
+        service_name=BACKEND_SERVICE_NAME,
+        server_argv_template=[
+            "./bin/app",
+        ],
+        pre_server_setup=pre_setup,
+        extra_env={
+            "SERVICE_HOST": "127.0.0.1",
+            "SERVICE_PORT": str(args.port),
+            "DATABASE_URL": "sqlite:./flutter_go_test.db",
+        },
+    )
+
+    return run_frontend_backend_integration(
+        frontend=FLUTTER_FRONTEND,
+        project_name=PROJECT_NAME,
+        title="Flutter + Go integration test",
+        spec=spec,
+        repo_root=repo_root,
+        port=args.port,
+        server_startup_timeout=args.server_startup_timeout,
+        keep=args.keep,
+        no_skip=args.no_skip,
+    )
+
+
+if __name__ == "__main__":
+    sys.exit(main())

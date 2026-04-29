@@ -115,13 +115,19 @@ def _chat_stdlib(config: OllamaConfig, system: str, user: str) -> str:
             {"role": "user", "content": user},
         ],
     }
-    # Optional context window and output cap via env vars.
+    # Optional context window via env var.
     _num_ctx = _os.environ.get("OLLAMA_NUM_CTX", "").strip()
     if _num_ctx:
         body["num_ctx"] = int(_num_ctx)
-    _num_predict = _os.environ.get("OLLAMA_NUM_PREDICT", "").strip()
-    if _num_predict:
-        body["num_predict"] = int(_num_predict)
+    # Output cap: default 8192 tokens to prevent runaway generation.
+    # qwen3-coder MoE can produce 60K+ tokens if uncapped (694KB for
+    # a single doc file). The OpenAI-compatible endpoint uses
+    # `max_tokens` (not `num_predict` which is Ollama-native only).
+    # Override with OLLAMA_NUM_PREDICT=-1 for unlimited.
+    _num_predict = _os.environ.get("OLLAMA_NUM_PREDICT", "8192").strip()
+    _cap = int(_num_predict)
+    if _cap > 0:
+        body["max_tokens"] = _cap
 
     data = json.dumps(body).encode("utf-8")
     request = urllib.request.Request(
