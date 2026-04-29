@@ -101,8 +101,9 @@ def parse_dependencies(section):
         if not line or line.startswith('#'):
             continue
 
-        # Skip python version constraint
-        if line.startswith('python'):
+        # Skip python version constraint (e.g. python = "^3.11")
+        # but NOT python-jose, python-dotenv, etc.
+        if re.match(r'^python\s*=', line):
             continue
 
         # Parse: package = "version" or package = "*"
