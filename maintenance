@@ -3,50 +3,56 @@ set -euo pipefail
 
 # Maintenance test runner
 #
-# This script runs all tests required by the default maintenance scenario:
-#   1. make clean-test
-#   2. make test-generators
-#   3. make test-shared-db-python (cross-language env contract)
-#   4. ./test (per-skeleton e2e tests via test_skel)
+# Runs the CI-equivalent test suite locally:
+#   1. Clean test artifacts
+#   2. Test all generators (create + smoke-build each skeleton)
+#   3. Shared-DB cross-stack contract test
+#   4. Per-skeleton e2e tests (test_skel)
+#
+# Usage:
+#   ./maintenance              # full run
+#   ./maintenance --quick      # generators + shared-db only (no e2e)
+#   ./maintenance --ci         # CI mode: skip toolchains not installed
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Colors (match root test script)
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
+QUICK=false
+for arg in "$@"; do
+  case $arg in
+    --quick) QUICK=true ;;
+    --ci) export CI=true ;;
+  esac
+done
+
+STEP=0
+TOTAL=4
+[[ "$QUICK" == true ]] && TOTAL=3
+
+run_step() {
+  STEP=$((STEP + 1))
+  echo ""
+  echo -e "${YELLOW}>>> Step ${STEP}/${TOTAL}: $1${NC}"
+  if ! eval "$2"; then
+    echo -e "${RED}FAILED: $1${NC}"
+    exit 1
+  fi
+}
+
 echo -e "${GREEN}=== Maintenance: running full test suite ===${NC}"
 
-echo ""
-echo -e "${YELLOW}>>> Step 1/3: make clean-test${NC}"
-if ! make clean-test; then
-  echo -e "${RED}make clean-test failed${NC}"
-  exit 1
+run_step "make clean-test" "make clean-test"
+run_step "make test-generators" "make test-generators"
+run_step "make test-shared-db-python" "make test-shared-db-python"
+
+if [[ "$QUICK" != true ]]; then
+  run_step "./test (per-skeleton e2e)" "./test"
 fi
 
 echo ""
-echo -e "${YELLOW}>>> Step 2/3: make test-generators${NC}"
-if ! make test-generators; then
-  echo -e "${RED}make test-generators failed${NC}"
-  exit 1
-fi
-
-echo ""
-echo -e "${YELLOW}>>> Step 3/4: make test-shared-db-python${NC}"
-if ! make test-shared-db-python; then
-  echo -e "${RED}make test-shared-db-python failed${NC}"
-  exit 1
-fi
-
-echo ""
-echo -e "${YELLOW}>>> Step 4/4: ./test (per-skeleton e2e tests)${NC}"
-if ! ./test; then
-  echo -e "${RED}./test failed${NC}"
-  exit 1
-fi
-
-echo ""
-echo -e "${GREEN}Maintenance tests completed successfully.${NC}"
+echo -e "${GREEN}All ${STEP} maintenance steps passed.${NC}"

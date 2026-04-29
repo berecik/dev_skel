@@ -2,16 +2,15 @@ name: Maintenance Tests
 
 on:
   push:
-    branches:
-      - master
+    branches: [master]
   pull_request:
-    branches:
-      - master
+    branches: [master]
 
 jobs:
   maintenance:
     name: Run maintenance test suite
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -20,7 +19,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -46,26 +45,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y python3-venv python3-pip build-essential pkg-config libssl-dev
 
-      - name: Install uv (Python package manager)
+      - name: Install uv
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Verify dependencies
+      - name: Verify toolchains
         run: |
-          echo "=== Verifying installed dependencies ==="
           python3 --version
-          pip3 --version || pip --version
-          node --version
-          npm --version
-          java -version
-          mvn -version
-          rustc --version
-          cargo --version
+          node --version && npm --version
+          java -version && mvn -version
+          rustc --version && cargo --version
           go version
-          uv --version || echo "uv not in path yet"
+          uv --version
 
-      - name: Run maintenance test suite
+      - name: Run maintenance tests
+        env:
+          UV_PYTHON: python3
         run: |
-          chmod +x maintenance
-          ./maintenance
+          chmod +x maintenance test
+          ./maintenance --ci

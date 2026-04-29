@@ -2,7 +2,7 @@
 # Generate, test, and run projects across all skeleton templates
 
 .PHONY: help list test test-all run info info-all clean clean-all status \
-        ci-status ci-watch ci-log \
+        ci-local ci-status ci-watch ci-log \
         contracts-info contracts-export \
         deploy-helm-gen \
         gen-stack-web gen-stack-enterprise \
@@ -773,6 +773,13 @@ status: ## Show status of all skeleton directories
 #   ci-watch     Watch the latest CI run in real time (blocks until done).
 #   ci-log       Show the full log of the most recent CI run.
 #
+
+ci-local: ## Run the CI pipeline locally (same as GitHub Actions maintenance.yml)
+	@echo "$(GREEN)=== Running CI pipeline locally ===$(NC)"
+	@chmod +x maintenance test
+	@./maintenance
+	@echo ""
+	@echo "$(GREEN)=== CI pipeline passed locally ===$(NC)"
 
 ci-status: ## Show status of recent GitHub Actions runs (requires `gh auth login`)
 	@if ! command -v gh >/dev/null 2>&1; then \
