@@ -63,8 +63,10 @@ COPY --from=builder /app/app ./app
 COPY --from=builder /app/core ./core
 COPY --from=builder /app/main.py /app/config.py ./
 
-# Copy .env.example as fallback
-COPY .env.example .env.example
+# NOTE: Do NOT bundle .env.example in production images.
+# In k8s, env vars come from the pod spec and must take precedence.
+# python-dotenv/starlette reads .env files BEFORE os.environ, so
+# bundling .env.example would override k8s-injected DATABASE_URL etc.
 
 ENV PYTHONPATH="/app"
 

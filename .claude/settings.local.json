@@ -475,7 +475,22 @@
       "Bash(OLLAMA_HOST=paul:11434 SKEL_AI_VERBOSE=2 PYTHONUNBUFFERED=1 python3 _bin/skel-test-pizzeria-orders --keep)",
       "Bash(act --version)",
       "Bash(./maintenance --quick)",
-      "Bash(_skels/go-skel/test_skel)"
+      "Bash(_skels/go-skel/test_skel)",
+      "Bash(kubectl cluster-info *)",
+      "Bash(kubectl get *)",
+      "Bash(ssh paul *)",
+      "Bash(_bin/skel-k8s-push *)",
+      "Bash(_bin/skel-k8s-deploy status *)",
+      "Bash(_bin/skel-k8s-deploy up *)",
+      "Bash(_bin/skel-k8s-deploy down *)",
+      "Bash(helm uninstall *)",
+      "Bash(kubectl delete *)",
+      "Bash(kubectl describe *)",
+      "Bash(kubectl logs *)",
+      "Bash(kubectl rollout *)",
+      "Bash(_bin/skel-test-k8s-react-fastapi *)",
+      "Bash(kill 29399 29391)",
+      "Bash(rm -rf _test_projects/test-k8s-react-fastapi)"
     ],
     "deny": [],
     "ask": []

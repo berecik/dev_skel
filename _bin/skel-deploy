@@ -59,8 +59,6 @@ def _read_project_yml(wrapper: Path) -> dict:
 
 def _health_path(tech: str) -> str:
     """Return the health check path for a skeleton tech."""
-    if "next-js" in tech:
-        return "/api/health"
     return "/api/health"
 
 

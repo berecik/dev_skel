@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build, tag, and push dev_skel service Docker images to DockerHub.
+#
+# Usage:
+#   _bin/skel-k8s-push <wrapper-dir>                  # build + push all services
+#   _bin/skel-k8s-push <wrapper-dir> --registry beret  # push to DockerHub as beret/*
+#   _bin/skel-k8s-push <wrapper-dir> --tag v1.0        # use specific tag
+#   _bin/skel-k8s-push <wrapper-dir> --platform linux/amd64  # cross-compile
+#   _bin/skel-k8s-push <wrapper-dir> --dry-run         # show commands only
+#   _bin/skel-k8s-push <wrapper-dir> --service backend # build only one service
+#
+# Environment variables (compatible with swarm_digital_twin):
+#   SWARM_REGISTRY  — DockerHub user/org (default: beret)
+#   SWARM_IMAGE_TAG — image tag (default: latest)
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Defaults (same env vars as swarm_digital_twin)
+REGISTRY="${SWARM_REGISTRY:-beret}"
+TAG="${SWARM_IMAGE_TAG:-latest}"
+DRY_RUN=false
+ONLY_SERVICE=""
+PLATFORM=""
+
+# Parse args
+WRAPPER_DIR=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --registry) REGISTRY="$2"; shift 2 ;;
+    --registry=*) REGISTRY="${1#*=}"; shift ;;
+    --tag) TAG="$2"; shift 2 ;;
+    --tag=*) TAG="${1#*=}"; shift ;;
+    --platform) PLATFORM="$2"; shift 2 ;;
+    --platform=*) PLATFORM="${1#*=}"; shift ;;
+    --dry-run) DRY_RUN=true; shift ;;
+    --service) ONLY_SERVICE="$2"; shift 2 ;;
+    --service=*) ONLY_SERVICE="${1#*=}"; shift ;;
+    -h|--help)
+      echo "Usage: _bin/skel-k8s-push <wrapper-dir> [options]"
+      echo ""
+      echo "Options:"
+      echo "  --registry USER      DockerHub user/org (default: beret)"
+      echo "  --tag TAG            Image tag (default: latest)"
+      echo "  --platform PLATFORM  Target platform (e.g. linux/amd64)"
+      echo "  --service NAME       Build only one service"
+      echo "  --dry-run            Show commands without executing"
+      exit 0
+      ;;
+    -*) echo "Unknown option: $1" >&2; exit 1 ;;
+    *) WRAPPER_DIR="$1"; shift ;;
+  esac
+done
+
+if [[ -z "$WRAPPER_DIR" ]]; then
+  echo "Error: wrapper directory required" >&2
+  echo "Usage: _bin/skel-k8s-push <wrapper-dir> [--registry USER]" >&2
+  exit 1
+fi
+
+WRAPPER_DIR="$(cd "$WRAPPER_DIR" && pwd)"
+
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m'
+
+run() {
+  echo -e "${YELLOW}  \$ $*${NC}"
+  if [[ "$DRY_RUN" != true ]]; then
+    "$@"
+  fi
+}
+
+echo -e "${GREEN}=== skel-k8s-push ===${NC}"
+echo "  wrapper:  $WRAPPER_DIR"
+echo "  registry: $REGISTRY"
+echo "  tag:      $TAG"
+[[ -n "$PLATFORM" ]] && echo "  platform: $PLATFORM"
+echo ""
+
+# Build args
+BUILD_ARGS=()
+[[ -n "$PLATFORM" ]] && BUILD_ARGS+=(--platform "$PLATFORM")
+
+# Discover services with Dockerfiles
+BUILT=0
+for svc_dir in "$WRAPPER_DIR"/*/; do
+  svc_name="$(basename "$svc_dir")"
+
+  # Skip non-service dirs
+  [[ "$svc_name" == _* || "$svc_name" == contracts || "$svc_name" == deploy ]] && continue
+  [[ ! -f "$svc_dir/Dockerfile" ]] && continue
+  [[ -n "$ONLY_SERVICE" && "$svc_name" != "$ONLY_SERVICE" ]] && continue
+
+  # Helm uses hyphenated names (demo-api), Docker dirs use underscores
+  # (demo_api). Push with hyphens to match what k8s will pull.
+  IMAGE_NAME="${svc_name//_/-}"
+  IMAGE_REMOTE="${REGISTRY}/${IMAGE_NAME}:${TAG}"
+
+  echo -e "${GREEN}--- Building ${IMAGE_NAME} ---${NC}"
+  # Target the production stage (Dockerfiles may have dev as last stage)
+  run docker build "${BUILD_ARGS[@]}" --target production -t "$IMAGE_REMOTE" "$svc_dir" 2>&1 || \
+  run docker build "${BUILD_ARGS[@]}" -t "$IMAGE_REMOTE" "$svc_dir"
+
+  echo -e "${GREEN}--- Pushing ${svc_name} to ${REGISTRY} ---${NC}"
+  run docker push "$IMAGE_REMOTE"
+
+  # Also push :latest if tag is a version
+  if [[ "$TAG" != "latest" ]]; then
+    LATEST_TAG="${REGISTRY}/${IMAGE_NAME}:latest"
+    run docker tag "$IMAGE_REMOTE" "$LATEST_TAG"
+    run docker push "$LATEST_TAG"
+  fi
+
+  BUILT=$((BUILT + 1))
+  echo ""
+done
+
+if [[ $BUILT -eq 0 ]]; then
+  echo "No services with Dockerfiles found in $WRAPPER_DIR"
+  exit 1
+fi
+
+echo -e "${GREEN}=== ${BUILT} image(s) pushed to ${REGISTRY} ===${NC}"
+echo ""
+echo "Deploy to k8s:"
+echo "  _bin/skel-k8s-deploy up $WRAPPER_DIR"

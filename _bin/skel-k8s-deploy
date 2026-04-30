@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Deploy a dev_skel wrapper to Kubernetes via Helm.
+#
+# Wraps `skel-deploy helm-gen` + `helm upgrade --install` with
+# sensible defaults for k3s testing.
+#
+# Usage:
+#   _bin/skel-k8s-deploy up <wrapper-dir>                    # deploy
+#   _bin/skel-k8s-deploy up <wrapper-dir> --k3s              # deploy with k3s defaults (NodePort)
+#   _bin/skel-k8s-deploy down <wrapper-dir>                  # teardown
+#   _bin/skel-k8s-deploy status <wrapper-dir>                # show pods + services
+#   _bin/skel-k8s-deploy logs <wrapper-dir> [service]        # tail logs
+#   _bin/skel-k8s-deploy test <wrapper-dir>                  # run helm tests
+#
+# Environment variables (compatible with swarm_digital_twin):
+#   SWARM_REGISTRY      — image registry (default: beret)
+#   SWARM_IMAGE_TAG     — image tag (default: latest)
+#   SKEL_K8S_NAMESPACE  — namespace (default: derived from wrapper name)
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+# Defaults (same env vars as swarm_digital_twin)
+REGISTRY="${SWARM_REGISTRY:-beret}"
+TAG="${SWARM_IMAGE_TAG:-latest}"
+K3S_MODE=false
+EXTRA_HELM_ARGS=()
+
+usage() {
+  echo "Usage: _bin/skel-k8s-deploy <command> <wrapper-dir> [options]"
+  echo ""
+  echo "Commands:"
+  echo "  up      Deploy (helm upgrade --install)"
+  echo "  down    Teardown (helm uninstall + delete namespace)"
+  echo "  status  Show pods, services, and endpoints"
+  echo "  logs    Tail logs (optional: service name)"
+  echo "  test    Run helm test (pod health + connectivity)"
+  echo ""
+  echo "Options:"
+  echo "  --k3s              Use NodePort services (for k3s external access)"
+  echo "  --namespace NS     Override namespace"
+  echo "  --registry REG     Image registry (default: beret)"
+  echo "  --tag TAG          Image tag (default: latest)"
+  echo "  --set KEY=VALUE    Pass extra --set to helm"
+}
+
+COMMAND=""
+WRAPPER_DIR=""
+NAMESPACE=""
+SVC_NAME=""
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    up|down|status|logs|test) COMMAND="$1"; shift ;;
+    --k3s) K3S_MODE=true; shift ;;
+    --namespace) NAMESPACE="$2"; shift 2 ;;
+    --namespace=*) NAMESPACE="${1#*=}"; shift ;;
+    --registry) REGISTRY="$2"; shift 2 ;;
+    --tag) TAG="$2"; shift 2 ;;
+    --set) EXTRA_HELM_ARGS+=("--set" "$2"); shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    -*) echo "Unknown option: $1" >&2; usage; exit 1 ;;
+    *)
+      if [[ -z "$WRAPPER_DIR" ]]; then
+        WRAPPER_DIR="$1"
+      else
+        SVC_NAME="$1"
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$COMMAND" || -z "$WRAPPER_DIR" ]]; then
+  usage
+  exit 1
+fi
+
+WRAPPER_DIR="$(cd "$WRAPPER_DIR" && pwd)"
+WRAPPER_NAME="$(basename "$WRAPPER_DIR")"
+
+# Derive namespace from wrapper name if not set
+if [[ -z "$NAMESPACE" ]]; then
+  NAMESPACE="${SKEL_K8S_NAMESPACE:-$WRAPPER_NAME}"
+fi
+
+HELM_DIR="$WRAPPER_DIR/deploy/helm"
+RELEASE_NAME="$WRAPPER_NAME"
+
+# Ensure helm chart exists
+ensure_helm_chart() {
+  if [[ ! -f "$HELM_DIR/Chart.yaml" ]]; then
+    echo -e "${YELLOW}Generating Helm chart...${NC}"
+    "$SCRIPT_DIR/skel-deploy" helm-gen "$WRAPPER_DIR"
+  fi
+}
+
+case $COMMAND in
+  up)
+    ensure_helm_chart
+
+    echo -e "${GREEN}=== Deploying ${WRAPPER_NAME} to namespace ${NAMESPACE} ===${NC}"
+
+    HELM_ARGS=(
+      upgrade --install "$RELEASE_NAME" "$HELM_DIR"
+      --namespace "$NAMESPACE" --create-namespace
+      --set "images.registry=$REGISTRY"
+      --set "images.tag=$TAG"
+    )
+
+    if $K3S_MODE; then
+      echo "  mode: k3s (NodePort services)"
+      # Set NodePort for each service defined in values.yaml
+      for svc in $(helm template "$RELEASE_NAME" "$HELM_DIR" 2>/dev/null | grep "app.kubernetes.io/name:" | awk '{print $2}' | sort -u | grep -v postgres); do
+        HELM_ARGS+=(--set "services.${svc}.serviceType=NodePort")
+      done
+      # Fallback: if no services discovered, use the wrapper name
+      if ! printf '%s\n' "${HELM_ARGS[@]}" | grep -q serviceType; then
+        HELM_ARGS+=(--set "services.${WRAPPER_NAME}.serviceType=NodePort")
+      fi
+    fi
+
+    HELM_ARGS+=("${EXTRA_HELM_ARGS[@]}")
+
+    echo -e "${YELLOW}  \$ helm ${HELM_ARGS[*]}${NC}"
+    helm "${HELM_ARGS[@]}"
+
+    echo ""
+    echo -e "${GREEN}Waiting for pods to be ready...${NC}"
+    kubectl wait --for=condition=Ready pods --all \
+      -n "$NAMESPACE" --timeout=120s 2>/dev/null || true
+
+    echo ""
+    kubectl get pods -n "$NAMESPACE"
+    echo ""
+    kubectl get svc -n "$NAMESPACE"
+
+    if $K3S_MODE; then
+      echo ""
+      echo -e "${GREEN}NodePort endpoints:${NC}"
+      kubectl get svc -n "$NAMESPACE" -o wide | grep NodePort || echo "  (no NodePort services)"
+    fi
+
+    echo ""
+    echo -e "${GREEN}Deployed. Use '_bin/skel-k8s-deploy status $WRAPPER_DIR' to check.${NC}"
+    ;;
+
+  down)
+    echo -e "${GREEN}=== Tearing down ${WRAPPER_NAME} from namespace ${NAMESPACE} ===${NC}"
+
+    if helm status "$RELEASE_NAME" -n "$NAMESPACE" &>/dev/null; then
+      helm uninstall "$RELEASE_NAME" -n "$NAMESPACE"
+      echo "  Helm release uninstalled."
+    else
+      echo "  No Helm release found."
+    fi
+
+    if kubectl get ns "$NAMESPACE" &>/dev/null; then
+      kubectl delete ns "$NAMESPACE" --wait=false
+      echo "  Namespace $NAMESPACE marked for deletion."
+    fi
+
+    echo -e "${GREEN}Done.${NC}"
+    ;;
+
+  status)
+    echo -e "${GREEN}=== Status: ${WRAPPER_NAME} (ns: ${NAMESPACE}) ===${NC}"
+    echo ""
+
+    if helm status "$RELEASE_NAME" -n "$NAMESPACE" &>/dev/null; then
+      helm status "$RELEASE_NAME" -n "$NAMESPACE" | head -15
+    else
+      echo "  No Helm release found for $RELEASE_NAME in $NAMESPACE"
+    fi
+
+    echo ""
+    echo "Pods:"
+    kubectl get pods -n "$NAMESPACE" -o wide 2>/dev/null || echo "  (namespace not found)"
+
+    echo ""
+    echo "Services:"
+    kubectl get svc -n "$NAMESPACE" -o wide 2>/dev/null || echo "  (namespace not found)"
+    ;;
+
+  logs)
+    if [[ -n "$SVC_NAME" ]]; then
+      echo -e "${GREEN}=== Logs: ${SVC_NAME} (ns: ${NAMESPACE}) ===${NC}"
+      kubectl logs -n "$NAMESPACE" -l "app.kubernetes.io/component=$SVC_NAME" \
+        --tail=50 --follow 2>/dev/null || \
+      kubectl logs -n "$NAMESPACE" "deploy/$SVC_NAME" --tail=50 --follow 2>/dev/null || \
+      echo "No pods found for $SVC_NAME"
+    else
+      echo -e "${GREEN}=== Logs: all pods (ns: ${NAMESPACE}) ===${NC}"
+      kubectl logs -n "$NAMESPACE" --all-containers --tail=20 2>/dev/null || echo "  (no pods)"
+    fi
+    ;;
+
+  test)
+    ensure_helm_chart
+
+    echo -e "${GREEN}=== Running Helm tests for ${WRAPPER_NAME} ===${NC}"
+    helm test "$RELEASE_NAME" -n "$NAMESPACE" --timeout 60s
+    ;;
+esac

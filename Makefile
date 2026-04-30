@@ -3,6 +3,11 @@
 
 .PHONY: help list test test-all run info info-all clean clean-all status \
         ci-local ci-status ci-watch ci-log \
+        k8s-push k8s-push-k3s k8s-deploy k8s-deploy-k3s k8s-down k8s-status k8s-logs \
+        test-k8s-react-fastapi test-k8s-react-fastapi-keep \
+        test-k8s-react-django-bolt test-k8s-react-flask test-k8s-react-django \
+        test-k8s-react-spring test-k8s-react-actix test-k8s-react-axum \
+        test-k8s-react-go test-k8s-react-nextjs test-k8s-cross-stack \
         contracts-info contracts-export \
         deploy-helm-gen \
         gen-stack-web gen-stack-enterprise \
@@ -833,3 +838,76 @@ contracts-export: ## Export the canonical spec to a wrapper (WRAPPER=path)
 
 deploy-helm-gen: ## Generate Helm chart for a wrapper (WRAPPER=path)
 	@_bin/skel-deploy helm-gen $(WRAPPER)
+
+k8s-push: ## Build + push Docker images for a wrapper (WRAPPER=path [--k3s] [--registry beret])
+	@_bin/skel-k8s-push $(WRAPPER) $(K8S_ARGS)
+
+k8s-push-k3s: ## Build + import images to k3s on paul (WRAPPER=path)
+	@_bin/skel-k8s-push $(WRAPPER) --k3s
+
+k8s-deploy: ## Deploy wrapper to k8s via Helm (WRAPPER=path [--k3s])
+	@_bin/skel-k8s-deploy up $(WRAPPER) $(K8S_ARGS)
+
+k8s-deploy-k3s: ## Deploy to k3s with NodePort (WRAPPER=path)
+	@_bin/skel-k8s-deploy up $(WRAPPER) --k3s
+
+k8s-down: ## Teardown k8s deployment (WRAPPER=path)
+	@_bin/skel-k8s-deploy down $(WRAPPER)
+
+k8s-status: ## Show k8s deployment status (WRAPPER=path)
+	@_bin/skel-k8s-deploy status $(WRAPPER)
+
+k8s-logs: ## Tail k8s logs (WRAPPER=path [SERVICE=name])
+	@_bin/skel-k8s-deploy logs $(WRAPPER) $(SERVICE)
+
+test-k8s-react-fastapi: ## K8s cross-stack test (FastAPI + React on k3s)
+	@echo "$(GREEN)=== K8s: React + FastAPI ===$(NC)"
+	@_bin/skel-test-k8s-react-fastapi
+
+test-k8s-react-fastapi-keep: ## Same, keep k8s resources
+	@_bin/skel-test-k8s-react-fastapi --keep
+
+test-k8s-react-django-bolt: ## K8s cross-stack test (Django-Bolt + React)
+	@echo "$(GREEN)=== K8s: React + Django-Bolt ===$(NC)"
+	@_bin/skel-test-k8s-react-django-bolt
+
+test-k8s-react-flask: ## K8s cross-stack test (Flask + React)
+	@echo "$(GREEN)=== K8s: React + Flask ===$(NC)"
+	@_bin/skel-test-k8s-react-flask
+
+test-k8s-react-django: ## K8s cross-stack test (Django + React)
+	@echo "$(GREEN)=== K8s: React + Django ===$(NC)"
+	@_bin/skel-test-k8s-react-django
+
+test-k8s-react-spring: ## K8s cross-stack test (Spring + React)
+	@echo "$(GREEN)=== K8s: React + Spring ===$(NC)"
+	@_bin/skel-test-k8s-react-spring
+
+test-k8s-react-actix: ## K8s cross-stack test (Actix + React)
+	@echo "$(GREEN)=== K8s: React + Actix ===$(NC)"
+	@_bin/skel-test-k8s-react-actix
+
+test-k8s-react-axum: ## K8s cross-stack test (Axum + React)
+	@echo "$(GREEN)=== K8s: React + Axum ===$(NC)"
+	@_bin/skel-test-k8s-react-axum
+
+test-k8s-react-go: ## K8s cross-stack test (Go + React)
+	@echo "$(GREEN)=== K8s: React + Go ===$(NC)"
+	@_bin/skel-test-k8s-react-go
+
+test-k8s-react-nextjs: ## K8s cross-stack test (Next.js + React)
+	@echo "$(GREEN)=== K8s: React + Next.js ===$(NC)"
+	@_bin/skel-test-k8s-react-nextjs
+
+test-k8s-cross-stack: ## Run all K8s cross-stack tests
+	@echo "$(GREEN)=== Running all K8s cross-stack tests ===$(NC)"
+	@$(MAKE) test-k8s-react-fastapi
+	@$(MAKE) test-k8s-react-django-bolt
+	@$(MAKE) test-k8s-react-flask
+	@$(MAKE) test-k8s-react-django
+	@$(MAKE) test-k8s-react-spring
+	@$(MAKE) test-k8s-react-actix
+	@$(MAKE) test-k8s-react-axum
+	@$(MAKE) test-k8s-react-go
+	@$(MAKE) test-k8s-react-nextjs
+	@echo "$(GREEN)All K8s cross-stack tests passed.$(NC)"

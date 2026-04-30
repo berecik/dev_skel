@@ -41,6 +41,7 @@ sqlalchemy = {extras = ["asyncio"], version = ">=2.0"}
 sqlalchemy-utils = "*"
 aiosqlite = "*"
 asyncpg = "*"
+psycopg2-binary = "*"
 alembic = "*"
 
 # Redis

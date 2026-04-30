@@ -1,0 +1,344 @@
+#!/usr/bin/env python3
+"""K8s cross-stack test: Flask + React deployed to k3s on paul.
+
+Generates a wrapper, builds Docker images, pushes to DockerHub,
+deploys via Helm to k3s, and runs the standard HTTP exercise
+against the NodePort endpoint.
+
+Usage::
+
+    _bin/skel-test-k8s-react-flask              # full run
+    _bin/skel-test-k8s-react-flask --keep       # leave k8s resources deployed
+    _bin/skel-test-k8s-react-flask --no-skip    # fail on missing toolchain
+
+Exit codes::
+
+    0 — every check passed
+    1 — at least one check failed
+    2 — toolchain missing or setup error
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from dev_skel_lib import DevSkelConfig, detect_root, load_config  # noqa: E402
+
+from _frontend_backend_lib import (  # noqa: E402
+    EXIT_FAIL,
+    EXIT_OK,
+    EXIT_SETUP,
+    exercise_items_api,
+    exercise_orders_api,
+    http_request,
+)
+
+PROJECT_NAME = "test-k8s-react-flask"
+BACKEND_SKEL = "python-flask-skel"
+BACKEND_SERVICE_NAME = "Items API"
+K3S_HOST = os.environ.get("SKEL_K3S_HOST", "paul")
+NAMESPACE = PROJECT_NAME  # namespace matches project name
+REGISTRY = os.environ.get("SWARM_REGISTRY", "beret")
+
+GREEN = "\033[0;32m"
+YELLOW = "\033[0;33m"
+RED = "\033[0;31m"
+NC = "\033[0m"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="K8s cross-stack test: Flask + React on k3s",
+    )
+    parser.add_argument("--keep", action="store_true",
+                        help="Leave k8s resources deployed after test")
+    parser.add_argument("--no-skip", action="store_true",
+                        help="Treat missing toolchain as hard failure")
+    return parser.parse_args()
+
+
+def run(cmd: list, **kwargs) -> subprocess.CompletedProcess:
+    """Run a command, print it, and return the result."""
+    print(f"  $ {' '.join(str(c) for c in cmd)}")
+    return subprocess.run(cmd, **kwargs)
+
+
+def check_toolchain(no_skip: bool) -> bool:
+    """Verify kubectl, helm, docker are available."""
+    for tool in ["kubectl", "helm", "docker"]:
+        if not shutil.which(tool):
+            msg = f"{tool} not on PATH"
+            if no_skip:
+                print(f"  {RED}x{NC} {msg}")
+                return False
+            print(f"  {YELLOW}.{NC} skipping ({msg})")
+            return False
+
+    # Check kubectl can reach the cluster
+    result = subprocess.run(
+        ["kubectl", "cluster-info"],
+        capture_output=True, text=True, timeout=15,
+    )
+    if result.returncode != 0:
+        msg = "kubectl cannot reach cluster"
+        if no_skip:
+            print(f"  {RED}x{NC} {msg}")
+            return False
+        print(f"  {YELLOW}.{NC} skipping ({msg})")
+        return False
+
+    return True
+
+
+def get_nodeport(namespace: str, service: str) -> int | None:
+    """Get the NodePort for a service."""
+    result = subprocess.run(
+        ["kubectl", "get", "svc", service, "-n", namespace,
+         "-o", "jsonpath={.spec.ports[0].nodePort}"],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        return int(result.stdout.strip())
+    return None
+
+
+def wait_for_ready(namespace: str, timeout: int = 180) -> bool:
+    """Wait for all pods in namespace to be Ready."""
+    result = subprocess.run(
+        ["kubectl", "wait", "--for=condition=Ready", "pods", "--all",
+         "-n", namespace, f"--timeout={timeout}s"],
+        capture_output=True, text=True,
+    )
+    return result.returncode == 0
+
+
+def main() -> int:
+    args = parse_args()
+
+    cfg: DevSkelConfig = load_config()
+    repo_root = detect_root(SCRIPT_DIR, cfg.skel_dir)
+    wrapper = repo_root / "_test_projects" / PROJECT_NAME
+
+    print()
+    print(f"{GREEN}=== K8s Cross-Stack Test: Flask + React ==={NC}")
+    print(f"  k3s host:   {K3S_HOST}")
+    print(f"  namespace:  {NAMESPACE}")
+    print(f"  registry:   {REGISTRY}")
+    print()
+
+    # Phase 0: Toolchain check
+    if not check_toolchain(args.no_skip):
+        return EXIT_SETUP
+
+    final_exit = EXIT_OK
+
+    try:
+        # Phase 1: Generate wrapper
+        print(f"\n{GREEN}Phase 1: Generating wrapper...{NC}")
+        if wrapper.exists():
+            shutil.rmtree(wrapper)
+
+        result = run(
+            [sys.executable, str(repo_root / "_bin" / "skel-gen-static"),
+             wrapper.name, BACKEND_SKEL, BACKEND_SERVICE_NAME],
+            cwd=wrapper.parent,
+            capture_output=True, text=True, timeout=300,
+        )
+        if result.returncode != 0:
+            print(f"  {RED}x{NC} skel-gen-static failed")
+            print(result.stdout[-2000:] if result.stdout else "")
+            print(result.stderr[-2000:] if result.stderr else "")
+            return EXIT_FAIL
+        print(f"  {GREEN}v{NC} wrapper generated")
+
+        # Find backend slug — check skel_context.json or fall back to
+        # first directory with a Dockerfile
+        backend_slug = None
+        for child in sorted(wrapper.iterdir()):
+            if not child.is_dir() or child.name.startswith((".", "_")):
+                continue
+            if child.name in ("contracts", "deploy"):
+                continue
+            ctx = child / ".skel_context.json"
+            if ctx.is_file():
+                data = json.loads(ctx.read_text())
+                if data.get("service_name") == BACKEND_SERVICE_NAME:
+                    backend_slug = child.name
+                    break
+                # Fallback: check skeleton name
+                if data.get("skeleton") and "flask" in data.get("skeleton", ""):
+                    backend_slug = child.name
+                    break
+            # Last resort: first dir with a Dockerfile
+            if (child / "Dockerfile").is_file() and backend_slug is None:
+                backend_slug = child.name
+        if not backend_slug:
+            print(f"  {RED}x{NC} backend service not found in wrapper")
+            return EXIT_FAIL
+        print(f"  backend: {backend_slug}")
+
+        # Phase 2: Build + push Docker image
+        print(f"\n{GREEN}Phase 2: Building and pushing Docker image...{NC}")
+        result = run(
+            [str(repo_root / "_bin" / "skel-k8s-push"),
+             str(wrapper), "--platform", "linux/amd64"],
+            capture_output=True, text=True, timeout=600,
+        )
+        if result.returncode != 0:
+            print(f"  {RED}x{NC} image build/push failed")
+            print(result.stdout[-2000:] if result.stdout else "")
+            print(result.stderr[-2000:] if result.stderr else "")
+            return EXIT_FAIL
+        print(f"  {GREEN}v{NC} image pushed to {REGISTRY}")
+
+        # Phase 3: Generate Helm chart + deploy
+        print(f"\n{GREEN}Phase 3: Deploying to k8s...{NC}")
+        result = run(
+            [str(repo_root / "_bin" / "skel-k8s-deploy"), "up", str(wrapper),
+             "--k3s", "--namespace", NAMESPACE,
+             "--set", "images.pullPolicy=Always"],
+            capture_output=True, text=True, timeout=180,
+        )
+        if result.returncode != 0:
+            print(f"  {RED}x{NC} helm deploy failed")
+            print(result.stdout[-2000:] if result.stdout else "")
+            print(result.stderr[-2000:] if result.stderr else "")
+            return EXIT_FAIL
+        print(f"  {GREEN}v{NC} deployed to namespace {NAMESPACE}")
+
+        # Wait for pods
+        print(f"  waiting for pods to be ready...")
+        if not wait_for_ready(NAMESPACE, timeout=180):
+            print(f"  {RED}x{NC} pods not ready after 180s")
+            subprocess.run(["kubectl", "get", "pods", "-n", NAMESPACE])
+            subprocess.run(["kubectl", "logs", "-n", NAMESPACE,
+                          f"deploy/{backend_slug.replace('_', '-')}",
+                          "--tail=20"])
+            return EXIT_FAIL
+        print(f"  {GREEN}v{NC} all pods ready")
+
+        # Get NodePort
+        svc_name = backend_slug.replace("_", "-")
+        nodeport = get_nodeport(NAMESPACE, svc_name)
+        if not nodeport:
+            print(f"  {RED}x{NC} could not get NodePort for {svc_name}")
+            subprocess.run(["kubectl", "get", "svc", "-n", NAMESPACE])
+            return EXIT_FAIL
+        backend_url = f"http://{K3S_HOST}:{nodeport}"
+        print(f"  {GREEN}v{NC} backend at {backend_url}")
+
+        # Wait for server to respond
+        print(f"  waiting for server to respond...")
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            try:
+                status, _ = http_request("GET", f"{backend_url}/api/health",
+                                        timeout=5)
+                if status == 200:
+                    break
+            except Exception:
+                pass
+            time.sleep(2)
+        else:
+            print(f"  {RED}x{NC} server not responding after 60s")
+            return EXIT_FAIL
+        print(f"  {GREEN}v{NC} server is up")
+
+        # Phase 4: HTTP exercise
+        print(f"\n{GREEN}Phase 4: HTTP integration exercise...{NC}")
+
+        # Register + login
+        status, body = http_request(
+            "POST", f"{backend_url}/api/auth/register",
+            body={
+                "username": "k8s-test-user",
+                "email": "k8s@test.com",
+                "password": "k8s-test-pass-12345",
+                "password_confirm": "k8s-test-pass-12345",
+            },
+        )
+        assert status in (201, 400, 409), f"register: {status} {body}"
+        print(f"  {GREEN}v{NC} register OK")
+
+        status, body = http_request(
+            "POST", f"{backend_url}/api/auth/login",
+            body={"username": "k8s-test-user", "password": "k8s-test-pass-12345"},
+        )
+        assert status == 200, f"login: {status} {body}"
+        token = body.get("access") or body.get("access_token") or body.get("token")
+        assert token, f"no token: {body}"
+        auth = {"Authorization": f"Bearer {token}"}
+        print(f"  {GREEN}v{NC} login OK")
+
+        # Items CRUD
+        status, body = http_request(
+            "POST", f"{backend_url}/api/items",
+            body={"name": "k8s-test-item", "description": "from k8s"},
+            headers=auth,
+        )
+        assert status in (200, 201), f"create item: {status} {body}"
+        item_id = body.get("id")
+        print(f"  {GREEN}v{NC} POST /api/items -> {status} (id={item_id})")
+
+        status, body = http_request(
+            "GET", f"{backend_url}/api/items", headers=auth,
+        )
+        assert status == 200, f"list items: {status}"
+        print(f"  {GREEN}v{NC} GET /api/items -> {status} ({len(body)} items)")
+
+        status, body = http_request(
+            "POST", f"{backend_url}/api/items/{item_id}/complete",
+            headers=auth,
+        )
+        assert status == 200, f"complete: {status}"
+        print(f"  {GREEN}v{NC} POST /api/items/{item_id}/complete -> 200")
+
+        # JWT enforcement
+        status, _ = http_request("GET", f"{backend_url}/api/items")
+        assert status in (401, 403), f"anon expected 401: {status}"
+        print(f"  {GREEN}v{NC} GET /api/items without token -> {status}")
+
+        # Order workflow
+        exercise_orders_api(backend_url, auth)
+
+        print(f"\n  {GREEN}=== ALL K8S CHECKS PASSED ==={NC}")
+
+    except AssertionError as exc:
+        print(f"\n  {RED}x{NC} assertion failed: {exc}")
+        final_exit = EXIT_FAIL
+    except subprocess.TimeoutExpired as exc:
+        print(f"\n  {RED}x{NC} timeout: {exc}")
+        final_exit = EXIT_FAIL
+    except Exception as exc:
+        print(f"\n  {RED}x{NC} error: {exc!r}")
+        final_exit = EXIT_FAIL
+    finally:
+        if not args.keep:
+            print(f"\n{GREEN}Cleanup...{NC}")
+            subprocess.run(
+                [str(repo_root / "_bin" / "skel-k8s-deploy"), "down",
+                 str(wrapper), "--namespace", NAMESPACE],
+                capture_output=True, timeout=60,
+            )
+            if wrapper.exists():
+                shutil.rmtree(wrapper)
+            print(f"  {GREEN}v{NC} cleaned up")
+        else:
+            print(f"\n  --keep: resources left in namespace {NAMESPACE}")
+            print(f"  Teardown: _bin/skel-k8s-deploy down {wrapper} --namespace {NAMESPACE}")
+
+    return final_exit
+
+
+if __name__ == "__main__":
+    sys.exit(main())
