@@ -30,7 +30,7 @@ mkdir -p "$PROJECT_DIR"
 tmpzip="$(mktemp -t spring-XXXXXX.zip)"
 tmpdir="$(mktemp -dt spring-unzip-XXXXXX)"
 
-GROUP_ID="com.example"
+GROUP_ID="app.marysia"
 ARTIFACT_ID="$(basename "$PROJECT_DIR")"
 NAME="$ARTIFACT_ID"
 PACKAGE="${GROUP_ID}.${ARTIFACT_ID}"
@@ -57,18 +57,18 @@ fi
 rm -rf "$tmpzip" "$tmpdir"
 
 # Spring Initializr scaffolds files under the artifact-derived package
-# (`com.example.<artifact>`) plus a duplicate `application.properties`.
-# Our skel uses a stable `com.example.skel` package and ships its own
+# (`app.marysia.<artifact>`) plus a duplicate `application.properties`.
+# Our skel uses a stable `app.marysia.skel` package and ships its own
 # properties + Application.java — drop the initializr leftovers so the
 # generated project compiles with a single Spring Boot main class.
-ARTIFACT_PKG_PATH="com/example/${ARTIFACT_ID}"
+ARTIFACT_PKG_PATH="app/marysia/${ARTIFACT_ID}"
 rm -rf \
   "$PROJECT_DIR/src/main/java/${ARTIFACT_PKG_PATH}" \
   "$PROJECT_DIR/src/test/java/${ARTIFACT_PKG_PATH}" \
   "$PROJECT_DIR/src/main/resources/application.properties"
 
 # Merge skeleton overlays into inner project directory. The merge
-# script overwrites every file under `com.example.skel/` and the
+# script overwrites every file under `app.marysia.skel/` and the
 # resources / pom.xml so re-running gen against an existing project
 # always picks up the latest skel state.
 bash "$SKEL_DIR/merge" "$SKEL_DIR" "$PROJECT_DIR"

@@ -11,7 +11,7 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.example</groupId>
+    <groupId>app.marysia</groupId>
     <artifactId>java-spring-skel</artifactId>
     <version>1.0.0</version>
     <name>java-spring-skel</name>

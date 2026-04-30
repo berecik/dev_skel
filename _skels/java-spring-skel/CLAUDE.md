@@ -49,7 +49,7 @@ This is the default maintenance/test-fix loop and should be commonly understood 
   and JWT material from `${JWT_SECRET}` / `${JWT_ALGORITHM}` / `${JWT_ISSUER}`
   / `${JWT_ACCESS_TTL}` / `${JWT_REFRESH_TTL}`. Those variables come from
   the wrapper-shared `<wrapper>/.env`. The
-  `com.example.skel.config.JwtProperties` bean (registered via
+  `app.marysia.skel.config.JwtProperties` bean (registered via
   `@ConfigurationPropertiesScan` on `Application`) exposes them as
   `app.jwt.*` for injection. Never put a JWT secret in a Java constant
   or in `application.properties` itself — the env-driven flow is the
