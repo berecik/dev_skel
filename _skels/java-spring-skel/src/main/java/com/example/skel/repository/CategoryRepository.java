@@ -8,6 +8,8 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 import java.sql.PreparedStatement;
+import java.sql.Types;
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -72,7 +74,10 @@ public class CategoryRepository {
      * assigned id and timestamps).
      */
     public Category insert(String name, String description) {
-        String now = nowIso();
+        // See ItemRepository#insert — bind via setObject(LocalDateTime)
+        // so Postgres TIMESTAMP columns accept the value.
+        LocalDateTime nowDt = LocalDateTime.now(ZoneOffset.UTC);
+        String nowStr = OffsetDateTime.of(nowDt, ZoneOffset.UTC).format(ISO);
         var keyHolder = new org.springframework.jdbc.support.GeneratedKeyHolder();
         jdbc.update(connection -> {
             PreparedStatement ps = connection.prepareStatement(
@@ -82,12 +87,12 @@ public class CategoryRepository {
             );
             ps.setString(1, name);
             ps.setString(2, description);
-            ps.setString(3, now);
-            ps.setString(4, now);
+            ps.setObject(3, nowDt, Types.TIMESTAMP);
+            ps.setObject(4, nowDt, Types.TIMESTAMP);
             return ps;
         }, keyHolder);
         Number key = Objects.requireNonNull(keyHolder.getKey(), "INSERT did not return a generated key");
-        return new Category(key.longValue(), name, description, now, now);
+        return new Category(key.longValue(), name, description, nowStr, nowStr);
     }
 
     /**
@@ -96,10 +101,10 @@ public class CategoryRepository {
      * the row no longer exists.
      */
     public Optional<Category> update(long id, String name, String description) {
-        String now = nowIso();
+        LocalDateTime nowDt = LocalDateTime.now(ZoneOffset.UTC);
         int updated = jdbc.update(
             "UPDATE categories SET name = ?, description = ?, updated_at = ? WHERE id = ?",
-            name, description, now, id
+            name, description, nowDt, id
         );
         if (updated == 0) {
             return Optional.empty();
@@ -113,9 +118,5 @@ public class CategoryRepository {
     public boolean deleteById(long id) {
         int deleted = jdbc.update("DELETE FROM categories WHERE id = ?", id);
         return deleted > 0;
-    }
-
-    private static String nowIso() {
-        return OffsetDateTime.now(ZoneOffset.UTC).format(ISO);
     }
 }

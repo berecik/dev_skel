@@ -239,6 +239,41 @@ Before making changes, read these files:
     django-bolt/fastapi matrix), and `make test-cross-stack` (the
     umbrella that runs the shared-db check, the full React matrix,
     then the full Flutter matrix).
+15. **`_bin/skel-test-devcontainer-<backend>` (× 9) +
+    `_bin/_devcontainer_lib.py`** - Devcontainer cross-stack
+    integration tests. Each per-backend script is a thin wrapper
+    that calls `run_devcontainer_test()` on the shared lib. The
+    driver generates a wrapper, patches its `.env` to bind on
+    `0.0.0.0` and point `DATABASE_URL` at the compose-managed
+    Postgres pod (Python/Java/Next.js) or an in-container
+    `/tmp/devcontainer-test.db` SQLite path (Rust/Go), pins the
+    backend service to `linux/amd64` (django-bolt wheel resolution
+    on Apple Silicon), runs Django migrations as a one-off
+    container before booting the long-lived backend (so
+    `runbolt` doesn't crash on missing tables), warms up
+    lazy-init backends (Next.js bcrypt seed), then runs the
+    canonical items + orders HTTP exercise from
+    `_frontend_backend_lib.exercise_items_api` /
+    `exercise_orders_api`. Backs `make test-devcontainer-<backend>`
+    and `make test-devcontainer-cross-stack`.
+
+16. **`_bin/skel-test-k8s-react-<backend>` (× 9) +
+    `_bin/_k8s_lib.py` + `_bin/skel-k8s-push` +
+    `_bin/skel-k8s-deploy`** - K8s cross-stack integration
+    tests. Each per-backend script is a thin wrapper around
+    `run_k8s_test()` from the shared lib; the lib generates a
+    wrapper, builds + pushes the backend image to DockerHub
+    (`beret/*`), deploys via Helm to the `paul` k3s cluster,
+    runs Django migrations via `kubectl exec` when needed, and
+    exercises an inline items + orders HTTP flow (registers a
+    fresh test user — the helm template does NOT propagate the
+    wrapper's `USER_*` / `SUPERUSER_*` seed env vars). Backs
+    `make test-k8s-react-<backend>` and `make test-k8s-cross-stack`.
+    Spring k8s currently falls back to H2 in-memory because the
+    helm template does not export `SPRING_DATASOURCE_URL` — the
+    devcontainer Spring test is the one that actually exercises
+    Postgres.
+
 14. **`_skels/ts-react-skel/src/cross-stack.smoke.test.ts` and
     `_skels/flutter-skel/test/cross_stack_smoke_test.dart`** -
     Frontend smoke tests shipped with each frontend skeleton. Both

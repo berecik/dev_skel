@@ -8,6 +8,8 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 import java.sql.PreparedStatement;
+import java.sql.Types;
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -80,7 +82,13 @@ public class ItemRepository {
      * {@code RETURNING ...} which has divergent dialects.
      */
     public Item insert(String name, String description, boolean isCompleted, Long categoryId) {
-        String now = nowIso();
+        // Bind the timestamp as a LocalDateTime via setObject — Postgres
+        // rejects setString for TIMESTAMP columns ("expression is of
+        // type character varying"), while SQLite and H2 accept either.
+        // The string returned to clients still uses the same ISO 8601
+        // ``...'Z'`` format the row mapper produces on read.
+        LocalDateTime nowDt = LocalDateTime.now(ZoneOffset.UTC);
+        String nowStr = OffsetDateTime.of(nowDt, ZoneOffset.UTC).format(ISO);
         var keyHolder = new org.springframework.jdbc.support.GeneratedKeyHolder();
         jdbc.update(connection -> {
             // Pass `new String[]{"id"}` instead of
@@ -100,14 +108,14 @@ public class ItemRepository {
             if (categoryId != null) {
                 ps.setLong(4, categoryId);
             } else {
-                ps.setNull(4, java.sql.Types.BIGINT);
+                ps.setNull(4, Types.BIGINT);
             }
-            ps.setString(5, now);
-            ps.setString(6, now);
+            ps.setObject(5, nowDt, Types.TIMESTAMP);
+            ps.setObject(6, nowDt, Types.TIMESTAMP);
             return ps;
         }, keyHolder);
         Number key = Objects.requireNonNull(keyHolder.getKey(), "INSERT did not return a generated key");
-        return new Item(key.longValue(), name, description, isCompleted, categoryId, now, now);
+        return new Item(key.longValue(), name, description, isCompleted, categoryId, nowStr, nowStr);
     }
 
     /**
@@ -115,10 +123,10 @@ public class ItemRepository {
      * {@link Optional#empty()} when the row no longer exists.
      */
     public Optional<Item> markCompleted(long id) {
-        String now = nowIso();
+        LocalDateTime nowDt = LocalDateTime.now(ZoneOffset.UTC);
         int updated = jdbc.update(
             "UPDATE items SET is_completed = ?, updated_at = ? WHERE id = ?",
-            true, now, id
+            true, nowDt, id
         );
         if (updated == 0) {
             return Optional.empty();
@@ -126,7 +134,4 @@ public class ItemRepository {
         return findById(id);
     }
 
-    private static String nowIso() {
-        return OffsetDateTime.now(ZoneOffset.UTC).format(ISO);
-    }
 }

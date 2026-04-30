@@ -36,6 +36,7 @@ bash "$SKEL_DIR/merge" "$SKEL_DIR" "$PROJECT_DIR"
 
 # Create wrapper-level README, Makefile, and thin scripts
 export SKEL_NAME="$(basename "$SKEL_DIR")"
+export SERVICE_PORT=3000  # Next.js defaults to port 3000
 bash "$COMMON_DIR/common-wrapper.sh" "$MAIN_DIR" "$PROJECT_SUBDIR" "Next.js API Backend"
 
 echo "[next-js] Done."

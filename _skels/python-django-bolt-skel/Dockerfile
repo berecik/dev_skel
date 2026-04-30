@@ -27,7 +27,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Copy application code
 COPY app/ app/
 COPY manage.py conftest.py ./
-COPY _scripts/ _scripts/
 
 # Production stage
 ARG PYTHON_VERSION=3.14
@@ -61,7 +60,6 @@ COPY --from=builder /app/deps /usr/local/lib/python${PYTHON_VERSION}/site-packag
 # Copy application code
 COPY --from=builder /app/app ./app
 COPY --from=builder /app/manage.py /app/conftest.py ./
-COPY --from=builder /app/_scripts ./_scripts
 
 ENV PYTHONPATH="/app"
 
@@ -72,7 +70,7 @@ USER appuser
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/')" || exit 1
 
-CMD ["python", "manage.py", "runbolt", "0.0.0.0:8000"]
+CMD ["python", "manage.py", "runbolt", "--host", "0.0.0.0", "--port", "8000"]
 
 # Development stage
 ARG PYTHON_VERSION=3.14
@@ -107,4 +105,4 @@ ENV PYTHONPATH="/app"
 
 EXPOSE 8000
 
-CMD ["python", "manage.py", "runbolt", "0.0.0.0:8000", "--dev"]
+CMD ["python", "manage.py", "runbolt", "--host", "0.0.0.0", "--port", "8000", "--dev"]

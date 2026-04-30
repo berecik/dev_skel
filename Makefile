@@ -911,3 +911,53 @@ test-k8s-cross-stack: ## Run all K8s cross-stack tests
 	@$(MAKE) test-k8s-react-go
 	@$(MAKE) test-k8s-react-nextjs
 	@echo "$(GREEN)All K8s cross-stack tests passed.$(NC)"
+
+# Devcontainer cross-stack tests (requires Docker daemon)
+test-devcontainer-fastapi: ## Devcontainer test (FastAPI under docker compose)
+	@echo "$(GREEN)=== Devcontainer: FastAPI ===$(NC)"
+	@_bin/skel-test-devcontainer-fastapi
+
+test-devcontainer-django-bolt: ## Devcontainer test (Django-Bolt)
+	@echo "$(GREEN)=== Devcontainer: Django-Bolt ===$(NC)"
+	@_bin/skel-test-devcontainer-django-bolt
+
+test-devcontainer-flask: ## Devcontainer test (Flask)
+	@echo "$(GREEN)=== Devcontainer: Flask ===$(NC)"
+	@_bin/skel-test-devcontainer-flask
+
+test-devcontainer-django: ## Devcontainer test (Django)
+	@echo "$(GREEN)=== Devcontainer: Django ===$(NC)"
+	@_bin/skel-test-devcontainer-django
+
+test-devcontainer-spring: ## Devcontainer test (Spring Boot)
+	@echo "$(GREEN)=== Devcontainer: Spring ===$(NC)"
+	@_bin/skel-test-devcontainer-spring
+
+test-devcontainer-actix: ## Devcontainer test (Rust Actix)
+	@echo "$(GREEN)=== Devcontainer: Actix ===$(NC)"
+	@_bin/skel-test-devcontainer-actix
+
+test-devcontainer-axum: ## Devcontainer test (Rust Axum)
+	@echo "$(GREEN)=== Devcontainer: Axum ===$(NC)"
+	@_bin/skel-test-devcontainer-axum
+
+test-devcontainer-go: ## Devcontainer test (Go)
+	@echo "$(GREEN)=== Devcontainer: Go ===$(NC)"
+	@_bin/skel-test-devcontainer-go
+
+test-devcontainer-nextjs: ## Devcontainer test (Next.js)
+	@echo "$(GREEN)=== Devcontainer: Next.js ===$(NC)"
+	@_bin/skel-test-devcontainer-nextjs
+
+test-devcontainer-cross-stack: ## Run every devcontainer cross-stack test
+	@echo "$(GREEN)=== Running all devcontainer cross-stack tests ===$(NC)"
+	@$(MAKE) test-devcontainer-fastapi
+	@$(MAKE) test-devcontainer-django-bolt
+	@$(MAKE) test-devcontainer-flask
+	@$(MAKE) test-devcontainer-django
+	@$(MAKE) test-devcontainer-spring
+	@$(MAKE) test-devcontainer-actix
+	@$(MAKE) test-devcontainer-axum
+	@$(MAKE) test-devcontainer-go
+	@$(MAKE) test-devcontainer-nextjs
+	@echo "$(GREEN)All devcontainer cross-stack tests passed.$(NC)"

@@ -33,7 +33,11 @@ spec:
               protocol: TCP
           env:
             - name: DATABASE_URL
+            {{- if $.Values.postgres.enabled }}
               value: "postgresql://{{ $.Values.postgres.credentials.user }}:{{ $.Values.postgres.credentials.password }}@{{ include "devskel.fullname" $ }}-postgres:5432/{{ $.Values.postgres.credentials.database }}"
+            {{- else }}
+              value: {{ $svc.env.DATABASE_URL | default "sqlite:///tmp/service.db" | quote }}
+            {{- end }}
             - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:

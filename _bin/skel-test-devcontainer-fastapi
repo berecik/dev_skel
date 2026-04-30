@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+"""Devcontainer cross-stack test: FastAPI backend running under docker compose.
+
+Generates a wrapper, brings up postgres + the FastAPI container with
+``docker compose up -d --build``, runs the canonical items + orders
+HTTP exercise, then tears down with ``docker compose down -v``.
+
+Usage::
+
+    _bin/skel-test-devcontainer-fastapi          # full run
+    _bin/skel-test-devcontainer-fastapi --keep   # leave the stack up
+    _bin/skel-test-devcontainer-fastapi --no-skip  # fail on missing toolchain
+
+Exit codes mirror the k8s tests: 0 pass / 1 fail / 2 setup error.
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _devcontainer_lib import run_devcontainer_test  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(run_devcontainer_test("python-fastapi-skel"))

@@ -1,3 +1,15 @@
+---
+# JWT secret — always created (used by all backends regardless of DB)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "devskel.fullname" . }}-jwt
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "devskel.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  secret: {{ .Values.jwtSecret | default "change-me-32-bytes-of-random-data" }}
 {{- if .Values.postgres.enabled }}
 ---
 apiVersion: v1
@@ -12,17 +24,6 @@ stringData:
   POSTGRES_USER: {{ .Values.postgres.credentials.user }}
   POSTGRES_PASSWORD: {{ .Values.postgres.credentials.password }}
   POSTGRES_DB: {{ .Values.postgres.credentials.database }}
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: {{ include "devskel.fullname" . }}-jwt
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "devskel.labels" . | nindent 4 }}
-type: Opaque
-stringData:
-  secret: {{ .Values.jwtSecret | default "change-me-32-bytes-of-random-data" }}
 ---
 apiVersion: apps/v1
 kind: StatefulSet

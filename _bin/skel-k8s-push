@@ -99,10 +99,15 @@ for svc_dir in "$WRAPPER_DIR"/*/; do
   IMAGE_NAME="${svc_name//_/-}"
   IMAGE_REMOTE="${REGISTRY}/${IMAGE_NAME}:${TAG}"
 
-  echo -e "${GREEN}--- Building ${IMAGE_NAME} ---${NC}"
-  # Target the production stage (Dockerfiles may have dev as last stage)
-  run docker build "${BUILD_ARGS[@]}" --target production -t "$IMAGE_REMOTE" "$svc_dir" 2>&1 || \
-  run docker build "${BUILD_ARGS[@]}" -t "$IMAGE_REMOTE" "$svc_dir"
+  # Use --target production if the Dockerfile has that stage,
+  # otherwise build the default (last) stage.
+  TARGET_ARGS=()
+  if grep -q "AS production" "$svc_dir/Dockerfile" 2>/dev/null; then
+    TARGET_ARGS=(--target production)
+  fi
+
+  echo -e "${GREEN}--- Building ${IMAGE_NAME} ${TARGET_ARGS[*]:-} ---${NC}"
+  run docker build "${BUILD_ARGS[@]}" "${TARGET_ARGS[@]}" -t "$IMAGE_REMOTE" "$svc_dir"
 
   echo -e "${GREEN}--- Pushing ${svc_name} to ${REGISTRY} ---${NC}"
   run docker push "$IMAGE_REMOTE"

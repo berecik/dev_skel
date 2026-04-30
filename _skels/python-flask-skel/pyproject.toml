@@ -21,6 +21,7 @@ dependencies = [
     # passwords. Both are pure-Python (no native build needed).
     "PyJWT>=2.8.0",
     "bcrypt>=4.0.0",
+    "psycopg2-binary",
 ]
 
 [project.optional-dependencies]

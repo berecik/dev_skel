@@ -392,6 +392,35 @@ When the user asks Claude to "use Ollama" / "AI-generate a service" / etc:
    React `src/api/items.ts` to confirm the cross-stack contract still
    holds. Skips gracefully when Node/npm is missing. Takes ~3 minutes
    on a cold cache (npm install + pip install dominate the runtime).
+9. **Devcontainer cross-stack tests**: `make test-devcontainer-<backend>`
+   (one per backend: `fastapi`, `django-bolt`, `flask`, `django`,
+   `spring`, `actix`, `axum`, `go`, `nextjs`) generates a wrapper,
+   pins the backend service to `linux/amd64` (so django-bolt's wheel
+   resolution works on Apple Silicon), brings up the wrapper-level
+   `docker compose` stack (postgres for backends in
+   `_devcontainer_lib._POSTGRES_SKELS`, an in-container SQLite path
+   for the rest), runs Django migrations as a one-off container when
+   needed, warms up the backend (Next.js bcrypt seed) and runs the
+   canonical items + orders HTTP exercise. `make test-devcontainer-cross-stack`
+   runs all 9 in sequence. Driver: `_bin/_devcontainer_lib.py`. Per-
+   backend entry scripts: `_bin/skel-test-devcontainer-<backend>`. Run
+   after changing any wrapper-level `docker-compose.yml` template or
+   the Dockerfile of a backend skel.
+10. **K8s cross-stack tests**: `make test-k8s-react-<backend>` (same nine
+    backends) generates a wrapper, builds + pushes the backend image
+    to `beret/*` on DockerHub, deploys via Helm to the `paul` k3s
+    cluster, runs Django migrations via `kubectl exec` when needed,
+    and exercises an inline items + orders HTTP flow against the
+    NodePort. The flow is inline (not the canonical
+    `exercise_items_api`) because the helm template does not
+    propagate the wrapper's `USER_*` / `SUPERUSER_*` seed env
+    vars, so a fresh k8s pod has no seeded accounts.
+    `make test-k8s-cross-stack` runs all 9. Driver:
+    `_bin/_k8s_lib.py`. Per-backend entry scripts:
+    `_bin/skel-test-k8s-react-<backend>`. Notes: Spring k8s falls
+    back to H2 in-memory because `SPRING_DATASOURCE_URL` is not
+    set by the helm template — Postgres is exercised by the
+    devcontainer Spring test instead.
 
 ## 6.2 Complex AI Generation Test: Pizzeria Orders (FastAPI + Flutter)
 

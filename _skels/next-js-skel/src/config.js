@@ -11,7 +11,7 @@
  */
 
 const { existsSync } = require('node:fs');
-const { resolve, dirname } = require('node:path');
+const { resolve } = require('node:path');
 const dotenv = require('dotenv');
 
 // Walk up one directory from `src/` (the package root) to find the

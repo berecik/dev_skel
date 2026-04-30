@@ -59,7 +59,11 @@ def _read_project_yml(wrapper: Path) -> dict:
 
 def _health_path(tech: str) -> str:
     """Return the health check path for a skeleton tech."""
-    return "/api/health"
+    # FastAPI, Django-Bolt, Next.js have /api/health
+    if any(k in tech for k in ("fastapi", "django-bolt", "next-js")):
+        return "/api/health"
+    # Flask, Django, Spring, Rust, Go use /health
+    return "/health"
 
 
 def _render_template(template_path: Path, replacements: dict) -> str:

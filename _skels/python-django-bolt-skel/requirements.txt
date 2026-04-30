@@ -3,3 +3,4 @@ django-bolt>=0.7
 msgspec>=0.18
 python-dotenv
 gunicorn
+psycopg2-binary

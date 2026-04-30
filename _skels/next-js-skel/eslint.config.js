@@ -7,6 +7,11 @@ module.exports = [
     languageOptions: {
       ecmaVersion: 2024,
       sourceType: 'module',
+      parserOptions: {
+        ecmaFeatures: {
+          jsx: true,
+        },
+      },
     },
     rules: {
       'no-unused-vars': 'warn',

@@ -115,8 +115,8 @@ JWT_REFRESH_TTL=604800
 DJANGO_SECRET_KEY=
 
 # ----- Per-service ports / hosts (override as needed) ---------------------- #
-SERVICE_HOST=127.0.0.1
-SERVICE_PORT=8000
+SERVICE_HOST=${SERVICE_HOST:-127.0.0.1}
+SERVICE_PORT=${SERVICE_PORT:-8000}
 
 # ----- Default backend URL ------------------------------------------------- #
 # The frontend(s) in this wrapper read BACKEND_URL to know which backend
@@ -437,18 +437,33 @@ fi
 if [[ -f "$MAIN_DIR/$PROJECT_SUBDIR/Dockerfile" ]] && \
    ! grep -q "^  ${PROJECT_SUBDIR}:" "$MAIN_DIR/docker-compose.yml" 2>/dev/null; then
 
-  # Resolve the port from service-urls.env (or default to 8000)
+  # Resolve the port. Gen scripts that bind to a non-8000 default
+  # (next-js-skel binds 3000) export SERVICE_PORT before invoking
+  # common-wrapper.sh; honor that first, fall back to the auto-
+  # allocated value in service-urls.env, finally default to 8000.
   _UPPER=$(echo "$PROJECT_SUBDIR" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
   _PORT=""
-  if [[ -f "$MAIN_DIR/_shared/service-urls.env" ]]; then
+  if [[ -n "${SERVICE_PORT:-}" ]]; then
+    _PORT="${SERVICE_PORT}"
+  elif [[ -f "$MAIN_DIR/_shared/service-urls.env" ]]; then
     _PORT=$(grep "^SERVICE_PORT_${_UPPER}=" "$MAIN_DIR/_shared/service-urls.env" 2>/dev/null | cut -d= -f2 || true)
   fi
   _PORT="${_PORT:-8000}"
 
+  # Multi-stage Dockerfiles (the Python skels) ship a `production` stage
+  # that bundles the source code; without `target: production`, docker
+  # compose builds the LAST stage which is `development` and assumes a
+  # bind-mount for code (k8s/wrapper compose has no such mount).
+  if grep -q "^FROM .* AS production$" "$MAIN_DIR/$PROJECT_SUBDIR/Dockerfile" 2>/dev/null; then
+    _BUILD_BLOCK=$'    build:\n      context: ./'"${PROJECT_SUBDIR}"$'\n      target: production'
+  else
+    _BUILD_BLOCK="    build: ./${PROJECT_SUBDIR}"
+  fi
+
   cat >>"$MAIN_DIR/docker-compose.yml" <<SVCEOF
 
   ${PROJECT_SUBDIR}:
-    build: ./${PROJECT_SUBDIR}
+${_BUILD_BLOCK}
     container_name: \${COMPOSE_PROJECT_NAME:-devskel}-${PROJECT_SUBDIR}
     env_file:
       - .env
