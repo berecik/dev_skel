@@ -7,7 +7,6 @@ package auth
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -15,9 +14,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example/go-skel/internal/config"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
+
+	"github.com/example/go-skel/internal/config"
+	"github.com/example/go-skel/internal/models"
 )
 
 // User is the authenticated principal published into the request
@@ -121,7 +123,7 @@ func verifyToken(cfg config.Config, raw string) (int64, string, error) {
 // Middleware returns an http.Handler middleware that enforces a
 // valid Bearer JWT on the wrapped handler. The authenticated User is
 // published into the request context via UserFromContext.
-func Middleware(cfg config.Config, conn *sql.DB) func(http.Handler) http.Handler {
+func Middleware(cfg config.Config, db *gorm.DB) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			header := r.Header.Get("Authorization")
@@ -139,14 +141,17 @@ func Middleware(cfg config.Config, conn *sql.DB) func(http.Handler) http.Handler
 				writeUnauthorized(w, "refresh token cannot authenticate this request")
 				return
 			}
-			row := conn.QueryRowContext(r.Context(),
-				`SELECT id, username FROM users WHERE id = ?`, userID)
-			var u User
-			if err := row.Scan(&u.ID, &u.Username); err != nil {
+			var record models.User
+			if err := db.WithContext(r.Context()).
+				Select("id", "username").
+				First(&record, userID).Error; err != nil {
 				writeUnauthorized(w, "user no longer exists")
 				return
 			}
-			ctx := context.WithValue(r.Context(), userContextKey, u)
+			ctx := context.WithValue(r.Context(), userContextKey, User{
+				ID:       int64(record.ID),
+				Username: record.Username,
+			})
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

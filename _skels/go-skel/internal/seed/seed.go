@@ -5,11 +5,14 @@ package seed
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"log"
 	"os"
 
+	"gorm.io/gorm"
+
 	"github.com/example/go-skel/internal/auth"
+	"github.com/example/go-skel/internal/models"
 )
 
 // account describes a single default user to seed.
@@ -25,7 +28,7 @@ type account struct {
 // SeedDefaultAccounts reads USER_* and SUPERUSER_* env vars and
 // inserts the corresponding rows into the users table when they do
 // not already exist.
-func SeedDefaultAccounts(ctx context.Context, db *sql.DB) error {
+func SeedDefaultAccounts(ctx context.Context, db *gorm.DB) error {
 	accounts := []account{
 		{
 			loginEnv:    "USER_LOGIN",
@@ -45,30 +48,32 @@ func SeedDefaultAccounts(ctx context.Context, db *sql.DB) error {
 		},
 	}
 
+	tx := db.WithContext(ctx)
 	for _, a := range accounts {
 		login := envOr(a.loginEnv, a.loginDef)
 		email := envOr(a.emailEnv, a.emailDef)
 		password := envOr(a.passwordEnv, a.passwordDef)
 
-		var count int
-		if err := db.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM users WHERE username = ?`, login,
-		).Scan(&count); err != nil {
-			return err
-		}
-		if count > 0 {
+		var existing models.User
+		err := tx.Where("username = ?", login).First(&existing).Error
+		if err == nil {
 			log.Printf("seed: user %q already exists, skipping", login)
 			continue
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
 		}
 
 		hashed, err := auth.HashPassword(password)
 		if err != nil {
 			return err
 		}
-		if _, err := db.ExecContext(ctx,
-			`INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)`,
-			login, email, hashed,
-		); err != nil {
+		user := models.User{
+			Username:     login,
+			Email:        email,
+			PasswordHash: hashed,
+		}
+		if err := tx.Create(&user).Error; err != nil {
 			return err
 		}
 		log.Printf("seed: created default user %q (%s)", login, email)

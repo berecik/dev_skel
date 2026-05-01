@@ -21,29 +21,31 @@
 //   - POST            /api/orders/{id}/approve → submitted → approved
 //   - POST            /api/orders/{id}/reject  → submitted → rejected
 //
-// Routes are registered in main.go via Register; this package keeps
-// the per-resource logic isolated and uses Go 1.22's method-aware
-// http.ServeMux for routing (no third-party router required).
+// Every database access goes through GORM (`gorm.io/gorm`) — no raw
+// SQL anywhere in the handler layer. Datetime columns are
+// `time.Time` so they serialise as RFC3339 in responses and the
+// generic `created_at` / `updated_at` ORM hooks fire on writes.
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
+
+	"gorm.io/gorm"
 
 	"github.com/example/go-skel/internal/auth"
 	"github.com/example/go-skel/internal/config"
+	"github.com/example/go-skel/internal/models"
 )
 
 // Deps bundles every collaborator the handlers need so main.go can
 // wire them once and pass a single value into Register.
 type Deps struct {
 	Cfg config.Config
-	DB  *sql.DB
+	DB  *gorm.DB
 }
 
 // Register attaches every wrapper-shared route to mux. The JWT
@@ -139,15 +141,14 @@ func (d Deps) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var existing int64
-	err := d.DB.QueryRowContext(r.Context(),
-		`SELECT id FROM users WHERE username = ?`, body.Username,
-	).Scan(&existing)
+	tx := d.DB.WithContext(r.Context())
+	var existing models.User
+	err := tx.Where("username = ?", body.Username).First(&existing).Error
 	if err == nil {
 		writeError(w, http.StatusConflict, "user '"+body.Username+"' already exists")
 		return
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		writeError(w, http.StatusInternalServerError, "database error: "+err.Error())
 		return
 	}
@@ -157,33 +158,29 @@ func (d Deps) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "password hash failed: "+err.Error())
 		return
 	}
-	res, err := d.DB.ExecContext(r.Context(),
-		`INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)`,
-		body.Username, body.Email, hashed,
-	)
-	if err != nil {
+	user := models.User{
+		Username:     body.Username,
+		Email:        body.Email,
+		PasswordHash: hashed,
+	}
+	if err := tx.Create(&user).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, "insert user failed: "+err.Error())
 		return
 	}
-	newID, err := res.LastInsertId()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not read new user id")
-		return
-	}
 
-	access, err := auth.MintAccessToken(d.Cfg, newID)
+	access, err := auth.MintAccessToken(d.Cfg, int64(user.ID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "mint access token failed: "+err.Error())
 		return
 	}
-	refresh, err := auth.MintRefreshToken(d.Cfg, newID)
+	refresh, err := auth.MintRefreshToken(d.Cfg, int64(user.ID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "mint refresh token failed: "+err.Error())
 		return
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"user":    map[string]any{"id": newID, "username": body.Username, "email": body.Email},
+		"user":    map[string]any{"id": user.ID, "username": user.Username, "email": user.Email},
 		"access":  access,
 		"refresh": refresh,
 	})
@@ -200,34 +197,29 @@ func (d Deps) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var (
-		id           int64
-		username     string
-		passwordHash string
-	)
-	query := `SELECT id, username, password_hash FROM users WHERE username = ?`
+	column := "username"
 	if strings.Contains(body.Username, "@") {
-		query = `SELECT id, username, password_hash FROM users WHERE email = ?`
+		column = "email"
 	}
-	err := d.DB.QueryRowContext(r.Context(),
-		query,
-		body.Username,
-	).Scan(&id, &username, &passwordHash)
+	var user models.User
+	err := d.DB.WithContext(r.Context()).
+		Where(column+" = ?", body.Username).
+		First(&user).Error
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
-	if !auth.VerifyPassword(body.Password, passwordHash) {
+	if !auth.VerifyPassword(body.Password, user.PasswordHash) {
 		writeError(w, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
 
-	access, err := auth.MintAccessToken(d.Cfg, id)
+	access, err := auth.MintAccessToken(d.Cfg, int64(user.ID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "mint access token failed: "+err.Error())
 		return
 	}
-	refresh, err := auth.MintRefreshToken(d.Cfg, id)
+	refresh, err := auth.MintRefreshToken(d.Cfg, int64(user.ID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "mint refresh token failed: "+err.Error())
 		return
@@ -235,8 +227,8 @@ func (d Deps) handleLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"access":   access,
 		"refresh":  refresh,
-		"user_id":  id,
-		"username": username,
+		"user_id":  user.ID,
+		"username": user.Username,
 	})
 }
 
@@ -244,46 +236,26 @@ func (d Deps) handleLogin(w http.ResponseWriter, r *http.Request) {
 //  /api/categories/*
 // --------------------------------------------------------------------------- //
 
-type categoryRow struct {
-	ID          int64   `json:"id"`
-	Name        string  `json:"name"`
-	Description *string `json:"description"`
-	CreatedAt   string  `json:"created_at"`
-	UpdatedAt   string  `json:"updated_at"`
-}
-
-type createCategoryPayload struct {
+type categoryPayload struct {
 	Name        string  `json:"name"`
 	Description *string `json:"description"`
 }
 
 func (d Deps) handleListCategories(w http.ResponseWriter, r *http.Request) {
-	rows, err := d.DB.QueryContext(r.Context(),
-		`SELECT id, name, description, created_at, updated_at
-		   FROM categories ORDER BY id`)
-	if err != nil {
+	var rows []models.Category
+	if err := d.DB.WithContext(r.Context()).
+		Order("id").Find(&rows).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, "list categories failed: "+err.Error())
 		return
 	}
-	defer rows.Close()
-	out := []categoryRow{}
-	for rows.Next() {
-		var c categoryRow
-		if err := rows.Scan(&c.ID, &c.Name, &c.Description, &c.CreatedAt, &c.UpdatedAt); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan category failed: "+err.Error())
-			return
-		}
-		out = append(out, c)
+	if rows == nil {
+		rows = []models.Category{}
 	}
-	if err := rows.Err(); err != nil {
-		writeError(w, http.StatusInternalServerError, "rows.Err: "+err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, rows)
 }
 
 func (d Deps) handleCreateCategory(w http.ResponseWriter, r *http.Request) {
-	var body createCategoryPayload
+	var body categoryPayload
 	if err := decodeJSON(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "malformed request body")
 		return
@@ -292,63 +264,47 @@ func (d Deps) handleCreateCategory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "category name cannot be empty")
 		return
 	}
-	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
-	res, err := d.DB.ExecContext(r.Context(),
-		`INSERT INTO categories (name, description, created_at, updated_at)
-		 VALUES (?, ?, ?, ?)`,
-		body.Name, body.Description, now, now,
-	)
-	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			writeError(w, http.StatusConflict, "category with name '"+body.Name+"' already exists")
+	cat := models.Category{Name: body.Name}
+	if body.Description != nil {
+		cat.Description = *body.Description
+	}
+	if err := d.DB.WithContext(r.Context()).Create(&cat).Error; err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusConflict,
+				"category with name '"+body.Name+"' already exists")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "insert category failed: "+err.Error())
 		return
 	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not read new category id")
-		return
-	}
-	writeJSON(w, http.StatusCreated, categoryRow{
-		ID:          id,
-		Name:        body.Name,
-		Description: body.Description,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	})
+	writeJSON(w, http.StatusCreated, cat)
 }
 
 func (d Deps) handleGetCategory(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r)
+	id, err := pathID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	var c categoryRow
-	err = d.DB.QueryRowContext(r.Context(),
-		`SELECT id, name, description, created_at, updated_at
-		   FROM categories WHERE id = ?`, id,
-	).Scan(&c.ID, &c.Name, &c.Description, &c.CreatedAt, &c.UpdatedAt)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	var cat models.Category
+	if err := d.DB.WithContext(r.Context()).First(&cat, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			writeError(w, http.StatusNotFound, "category not found")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "fetch category failed: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, c)
+	writeJSON(w, http.StatusOK, cat)
 }
 
 func (d Deps) handleUpdateCategory(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r)
+	id, err := pathID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	var body createCategoryPayload
+	var body categoryPayload
 	if err := decodeJSON(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "malformed request body")
 		return
@@ -357,53 +313,57 @@ func (d Deps) handleUpdateCategory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "category name cannot be empty")
 		return
 	}
-	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
-	res, err := d.DB.ExecContext(r.Context(),
-		`UPDATE categories SET name = ?, description = ?, updated_at = ?
-		   WHERE id = ?`,
-		body.Name, body.Description, now, id,
-	)
-	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			writeError(w, http.StatusConflict, "category with name '"+body.Name+"' already exists")
+	tx := d.DB.WithContext(r.Context())
+	var cat models.Category
+	if err := tx.First(&cat, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			writeError(w, http.StatusNotFound, "category not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "fetch category failed: "+err.Error())
+		return
+	}
+	cat.Name = body.Name
+	if body.Description != nil {
+		cat.Description = *body.Description
+	} else {
+		cat.Description = ""
+	}
+	if err := tx.Save(&cat).Error; err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusConflict,
+				"category with name '"+body.Name+"' already exists")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "update category failed: "+err.Error())
 		return
 	}
-	rows, _ := res.RowsAffected()
-	if rows == 0 {
-		writeError(w, http.StatusNotFound, "category not found")
-		return
-	}
-	var c categoryRow
-	err = d.DB.QueryRowContext(r.Context(),
-		`SELECT id, name, description, created_at, updated_at
-		   FROM categories WHERE id = ?`, id,
-	).Scan(&c.ID, &c.Name, &c.Description, &c.CreatedAt, &c.UpdatedAt)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "refetch category failed: "+err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, c)
+	writeJSON(w, http.StatusOK, cat)
 }
 
 func (d Deps) handleDeleteCategory(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r)
+	id, err := pathID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	res, err := d.DB.ExecContext(r.Context(),
-		`DELETE FROM categories WHERE id = ?`, id,
-	)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "delete category failed: "+err.Error())
+	// Load the row first so the `Category.BeforeDelete` hook (which
+	// nulls dependent items.category_id values) sees a fully-populated
+	// struct. Calling `tx.Delete(&Category{}, id)` runs the hook with
+	// only the FK as the WHERE clause and a zero-value receiver, so
+	// the hook's reference to `c.ID` would be wrong.
+	tx := d.DB.WithContext(r.Context())
+	var cat models.Category
+	if err := tx.First(&cat, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			writeError(w, http.StatusNotFound, "category not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "fetch category failed: "+err.Error())
 		return
 	}
-	rows, _ := res.RowsAffected()
-	if rows == 0 {
-		writeError(w, http.StatusNotFound, "category not found")
+	if err := tx.Delete(&cat).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "delete category failed: "+err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -413,52 +373,28 @@ func (d Deps) handleDeleteCategory(w http.ResponseWriter, r *http.Request) {
 //  /api/items/*
 // --------------------------------------------------------------------------- //
 
-type itemRow struct {
-	ID          int64   `json:"id"`
+type itemPayload struct {
 	Name        string  `json:"name"`
 	Description *string `json:"description"`
 	IsCompleted bool    `json:"is_completed"`
-	CategoryID  *int64  `json:"category_id"`
-	CreatedAt   string  `json:"created_at"`
-	UpdatedAt   string  `json:"updated_at"`
-}
-
-type createItemPayload struct {
-	Name        string  `json:"name"`
-	Description *string `json:"description"`
-	IsCompleted bool    `json:"is_completed"`
-	CategoryID  *int64  `json:"category_id"`
+	CategoryID  *uint   `json:"category_id"`
 }
 
 func (d Deps) handleListItems(w http.ResponseWriter, r *http.Request) {
-	rows, err := d.DB.QueryContext(r.Context(),
-		`SELECT id, name, description, is_completed, category_id, created_at, updated_at
-		   FROM items ORDER BY created_at DESC, id DESC`)
-	if err != nil {
+	var rows []models.Item
+	if err := d.DB.WithContext(r.Context()).
+		Order("created_at DESC, id DESC").Find(&rows).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, "list items failed: "+err.Error())
 		return
 	}
-	defer rows.Close()
-	out := []itemRow{}
-	for rows.Next() {
-		var it itemRow
-		var completed int
-		if err := rows.Scan(&it.ID, &it.Name, &it.Description, &completed, &it.CategoryID, &it.CreatedAt, &it.UpdatedAt); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan item failed: "+err.Error())
-			return
-		}
-		it.IsCompleted = completed != 0
-		out = append(out, it)
+	if rows == nil {
+		rows = []models.Item{}
 	}
-	if err := rows.Err(); err != nil {
-		writeError(w, http.StatusInternalServerError, "rows.Err: "+err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, rows)
 }
 
 func (d Deps) handleCreateItem(w http.ResponseWriter, r *http.Request) {
-	var body createItemPayload
+	var body itemPayload
 	if err := decodeJSON(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "malformed request body")
 		return
@@ -467,94 +403,61 @@ func (d Deps) handleCreateItem(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "item name cannot be empty")
 		return
 	}
-	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
-	completedInt := 0
-	if body.IsCompleted {
-		completedInt = 1
+	item := models.Item{
+		Name:        body.Name,
+		IsCompleted: body.IsCompleted,
+		CategoryID:  body.CategoryID,
 	}
-	res, err := d.DB.ExecContext(r.Context(),
-		`INSERT INTO items (name, description, is_completed, category_id, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		body.Name, body.Description, completedInt, body.CategoryID, now, now,
-	)
-	if err != nil {
+	if body.Description != nil {
+		item.Description = *body.Description
+	}
+	if err := d.DB.WithContext(r.Context()).Create(&item).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, "insert item failed: "+err.Error())
 		return
 	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not read new item id")
-		return
-	}
-	writeJSON(w, http.StatusCreated, itemRow{
-		ID:          id,
-		Name:        body.Name,
-		Description: body.Description,
-		IsCompleted: body.IsCompleted,
-		CategoryID:  body.CategoryID,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	})
+	writeJSON(w, http.StatusCreated, item)
 }
 
 func (d Deps) handleGetItem(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r)
+	id, err := pathID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	it, err := d.fetchItem(r, id)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	var item models.Item
+	if err := d.DB.WithContext(r.Context()).First(&item, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			writeError(w, http.StatusNotFound, "item not found")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "fetch item failed: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, it)
+	writeJSON(w, http.StatusOK, item)
 }
 
 func (d Deps) handleCompleteItem(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r)
+	id, err := pathID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
-	res, err := d.DB.ExecContext(r.Context(),
-		`UPDATE items SET is_completed = 1, updated_at = ? WHERE id = ?`,
-		now, id,
-	)
-	if err != nil {
+	tx := d.DB.WithContext(r.Context())
+	var item models.Item
+	if err := tx.First(&item, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			writeError(w, http.StatusNotFound, "item not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "fetch item failed: "+err.Error())
+		return
+	}
+	item.IsCompleted = true
+	if err := tx.Save(&item).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, "complete item failed: "+err.Error())
 		return
 	}
-	rows, _ := res.RowsAffected()
-	if rows == 0 {
-		writeError(w, http.StatusNotFound, "item not found")
-		return
-	}
-	it, err := d.fetchItem(r, id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "refetch item failed: "+err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, it)
-}
-
-func (d Deps) fetchItem(r *http.Request, id int64) (itemRow, error) {
-	var it itemRow
-	var completed int
-	err := d.DB.QueryRowContext(r.Context(),
-		`SELECT id, name, description, is_completed, category_id, created_at, updated_at
-		   FROM items WHERE id = ?`, id,
-	).Scan(&it.ID, &it.Name, &it.Description, &completed, &it.CategoryID, &it.CreatedAt, &it.UpdatedAt)
-	if err != nil {
-		return it, err
-	}
-	it.IsCompleted = completed != 0
-	return it, nil
+	writeJSON(w, http.StatusOK, item)
 }
 
 // --------------------------------------------------------------------------- //
@@ -567,27 +470,17 @@ type upsertStatePayload struct {
 
 func (d Deps) handleListState(w http.ResponseWriter, r *http.Request) {
 	user, _ := auth.UserFromContext(r.Context())
-	rows, err := d.DB.QueryContext(r.Context(),
-		`SELECT state_key, state_value FROM react_state WHERE user_id = ? ORDER BY state_key`,
-		user.ID,
-	)
-	if err != nil {
+	var rows []models.ReactState
+	if err := d.DB.WithContext(r.Context()).
+		Where("user_id = ?", user.ID).
+		Order("state_key").
+		Find(&rows).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, "list state failed: "+err.Error())
 		return
 	}
-	defer rows.Close()
-	out := map[string]string{}
-	for rows.Next() {
-		var k, v string
-		if err := rows.Scan(&k, &v); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan state failed: "+err.Error())
-			return
-		}
-		out[k] = v
-	}
-	if err := rows.Err(); err != nil {
-		writeError(w, http.StatusInternalServerError, "rows.Err: "+err.Error())
-		return
+	out := make(map[string]string, len(rows))
+	for _, row := range rows {
+		out[row.StateKey] = row.StateValue
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -604,30 +497,29 @@ func (d Deps) handleUpsertState(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "malformed request body")
 		return
 	}
-	// UPDATE first; if the row does not exist, INSERT. We avoid
-	// dialect-specific upsert syntax (`ON CONFLICT` for SQLite,
-	// `ON DUPLICATE KEY UPDATE` for MySQL, MERGE for SQL Server, ...)
-	// by branching on the row count.
-	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
-	res, err := d.DB.ExecContext(r.Context(),
-		`UPDATE react_state SET state_value = ?, updated_at = ?
-		   WHERE user_id = ? AND state_key = ?`,
-		body.Value, now, user.ID, key,
-	)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "upsert state failed: "+err.Error())
-		return
-	}
-	rows, _ := res.RowsAffected()
-	if rows == 0 {
-		if _, err := d.DB.ExecContext(r.Context(),
-			`INSERT INTO react_state (user_id, state_key, state_value, updated_at)
-			 VALUES (?, ?, ?, ?)`,
-			user.ID, key, body.Value, now,
-		); err != nil {
+	tx := d.DB.WithContext(r.Context())
+	var row models.ReactState
+	err := tx.Where("user_id = ? AND state_key = ?", user.ID, key).First(&row).Error
+	switch {
+	case err == nil:
+		row.StateValue = body.Value
+		if err := tx.Save(&row).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "upsert state failed: "+err.Error())
+			return
+		}
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		row = models.ReactState{
+			UserID:     uint(user.ID),
+			StateKey:   key,
+			StateValue: body.Value,
+		}
+		if err := tx.Create(&row).Error; err != nil {
 			writeError(w, http.StatusInternalServerError, "insert state failed: "+err.Error())
 			return
 		}
+	default:
+		writeError(w, http.StatusInternalServerError, "fetch state failed: "+err.Error())
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"key": key})
 }
@@ -639,10 +531,9 @@ func (d Deps) handleDeleteState(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "state key cannot be empty")
 		return
 	}
-	if _, err := d.DB.ExecContext(r.Context(),
-		`DELETE FROM react_state WHERE user_id = ? AND state_key = ?`,
-		user.ID, key,
-	); err != nil {
+	if err := d.DB.WithContext(r.Context()).
+		Where("user_id = ? AND state_key = ?", user.ID, key).
+		Delete(&models.ReactState{}).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, "delete state failed: "+err.Error())
 		return
 	}
@@ -653,13 +544,13 @@ func (d Deps) handleDeleteState(w http.ResponseWriter, r *http.Request) {
 //  Helpers
 // --------------------------------------------------------------------------- //
 
-func pathID(r *http.Request) (int64, error) {
-	raw := r.PathValue("id")
-	id, err := strconv.ParseInt(raw, 10, 64)
+func pathID(r *http.Request, name string) (uint, error) {
+	raw := r.PathValue(name)
+	id, err := strconv.ParseUint(raw, 10, 64)
 	if err != nil {
-		return 0, errors.New("path id must be an integer")
+		return 0, errors.New("path " + name + " must be an integer")
 	}
-	return id, nil
+	return uint(id), nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
@@ -679,11 +570,19 @@ func decodeJSON(r *http.Request, dst any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
-		// Allow callers to lenient-decode by retrying without
-		// DisallowUnknownFields if they want — for now we just
-		// surface the error; the React client never sends extra
-		// fields anyway.
 		return err
 	}
 	return nil
+}
+
+// isUniqueViolation matches the SQLite + Postgres unique-constraint
+// error strings without depending on driver-specific error types.
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "UNIQUE constraint failed") ||
+		strings.Contains(msg, "duplicate key value") ||
+		strings.Contains(msg, "violates unique constraint")
 }

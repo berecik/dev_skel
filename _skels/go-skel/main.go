@@ -28,7 +28,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("open database (%s): %v", cfg.DatabaseURL, err)
 	}
-	defer conn.Close()
+	// Close the underlying *sql.DB on exit. GORM holds the
+	// connection pool here; calling sqlDB.Close() on a nil result is
+	// a no-op so the deferred call is safe even if (somehow) the
+	// dialect didn't expose one.
+	if sqlDB, dbErr := conn.DB(); dbErr == nil {
+		defer sqlDB.Close()
+	}
 
 	if err := seed.SeedDefaultAccounts(context.Background(), conn); err != nil {
 		log.Fatalf("seed default accounts: %v", err)
