@@ -9,6 +9,7 @@
 mod auth;
 mod config;
 mod db;
+mod entities;
 mod error;
 mod handlers;
 mod seed;
@@ -80,24 +81,24 @@ async fn main() -> std::io::Result<()> {
 
     // Connect + bootstrap schema before binding the listener so a bad
     // DB URL fails fast instead of returning 500s on every request.
-    let pool = db::connect_and_init(&cfg.database_url).await.map_err(|e| {
+    let conn = db::connect_and_init(&cfg.database_url).await.map_err(|e| {
         tracing::error!(error = ?e, "failed to connect / init database");
         std::io::Error::other(format!("database init failed: {e}"))
     })?;
 
-    seed::seed_default_accounts(&pool).await.map_err(|e| {
+    seed::seed_default_accounts(&conn).await.map_err(|e| {
         tracing::error!(error = ?e, "failed to seed default accounts");
         std::io::Error::other(format!("seed failed: {e}"))
     })?;
 
     let cfg_data = web::Data::new(cfg.clone());
-    let pool_data = web::Data::new(pool);
+    let conn_data = web::Data::new(conn);
 
     HttpServer::new(move || {
         App::new()
             .wrap(TracingLogger::default())
             .app_data(cfg_data.clone())
-            .app_data(pool_data.clone())
+            .app_data(conn_data.clone())
             .service(index)
             .service(health)
             .configure(handlers::register)

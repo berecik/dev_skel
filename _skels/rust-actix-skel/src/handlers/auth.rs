@@ -8,12 +8,16 @@
 //! * login → 200 `{ access, refresh, user_id, username }`
 
 use actix_web::{post, web, HttpResponse};
+use chrono::Utc;
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sqlx::sqlite::SqlitePool;
 
 use crate::auth::{hash_password, mint_access_token, mint_refresh_token, verify_password};
 use crate::config::Config;
+use crate::entities::user;
 use crate::error::ApiError;
 
 #[derive(Debug, Deserialize)]
@@ -36,14 +40,14 @@ pub struct LoginPayload {
 
 #[derive(Debug, Serialize)]
 struct UserOut {
-    id: i64,
+    id: i32,
     username: String,
     email: String,
 }
 
 #[post("/register")]
 pub async fn register_handler(
-    pool: web::Data<SqlitePool>,
+    db: web::Data<DatabaseConnection>,
     cfg: web::Data<Config>,
     payload: web::Json<RegisterPayload>,
 ) -> Result<HttpResponse, ApiError> {
@@ -67,9 +71,9 @@ pub async fn register_handler(
     // Reject duplicate usernames with 409 (matches the contract every
     // other dev_skel backend honours; the React frontend surfaces 4xx
     // errors to the user verbatim via fetch + AuthError).
-    let existing: Option<(i64,)> = sqlx::query_as("SELECT id FROM users WHERE username = ?")
-        .bind(&p.username)
-        .fetch_optional(pool.get_ref())
+    let existing = user::Entity::find()
+        .filter(user::Column::Username.eq(&p.username))
+        .one(db.get_ref())
         .await?;
     if existing.is_some() {
         return Err(ApiError::Conflict(format!(
@@ -79,18 +83,18 @@ pub async fn register_handler(
     }
 
     let hash = hash_password(&p.password)?;
-    let row: (i64,) = sqlx::query_as(
-        "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
-    )
-    .bind(&p.username)
-    .bind(&p.email)
-    .bind(&hash)
-    .fetch_one(pool.get_ref())
-    .await?;
-    let new_id = row.0;
+    let new_user = user::ActiveModel {
+        username: Set(p.username.clone()),
+        email: Set(p.email.clone()),
+        password_hash: Set(hash),
+        created_at: Set(Utc::now()),
+        ..Default::default()
+    };
+    let inserted = new_user.insert(db.get_ref()).await?;
+    let new_id = inserted.id;
 
-    let access = mint_access_token(new_id, &cfg)?;
-    let refresh = mint_refresh_token(new_id, &cfg)?;
+    let access = mint_access_token(new_id as i64, &cfg)?;
+    let refresh = mint_refresh_token(new_id as i64, &cfg)?;
 
     Ok(HttpResponse::Created().json(json!({
         "user": UserOut { id: new_id, username: p.username.clone(), email: p.email.clone() },
@@ -101,38 +105,38 @@ pub async fn register_handler(
 
 #[post("/login")]
 pub async fn login_handler(
-    pool: web::Data<SqlitePool>,
+    db: web::Data<DatabaseConnection>,
     cfg: web::Data<Config>,
     payload: web::Json<LoginPayload>,
 ) -> Result<HttpResponse, ApiError> {
     let p = payload.into_inner();
-    let sql = if p.username.contains('@') {
-        "SELECT id, username, password_hash FROM users WHERE email = ?"
+    let column_filter = if p.username.contains('@') {
+        user::Column::Email
     } else {
-        "SELECT id, username, password_hash FROM users WHERE username = ?"
+        user::Column::Username
     };
-    let row: Option<(i64, String, String)> = sqlx::query_as(sql)
-        .bind(&p.username)
-        .fetch_optional(pool.get_ref())
+    let row = user::Entity::find()
+        .filter(column_filter.eq(&p.username))
+        .one(db.get_ref())
         .await?;
 
-    let (id, username, password_hash) = row.ok_or_else(|| {
+    let user_row = row.ok_or_else(|| {
         ApiError::Unauthorized("invalid username or password".to_string())
     })?;
 
-    if !verify_password(&p.password, &password_hash)? {
+    if !verify_password(&p.password, &user_row.password_hash)? {
         return Err(ApiError::Unauthorized(
             "invalid username or password".to_string(),
         ));
     }
 
-    let access = mint_access_token(id, &cfg)?;
-    let refresh = mint_refresh_token(id, &cfg)?;
+    let access = mint_access_token(user_row.id as i64, &cfg)?;
+    let refresh = mint_refresh_token(user_row.id as i64, &cfg)?;
 
     Ok(HttpResponse::Ok().json(json!({
         "access": access,
         "refresh": refresh,
-        "user_id": id,
-        "username": username,
+        "user_id": user_row.id,
+        "username": user_row.username,
     })))
 }

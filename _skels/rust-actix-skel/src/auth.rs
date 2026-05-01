@@ -21,10 +21,11 @@ use argon2::{
 use chrono::Utc;
 use futures_util::future::Future;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
 use serde::{Deserialize, Serialize};
-use sqlx::sqlite::SqlitePool;
 
 use crate::config::Config;
+use crate::entities::user;
 use crate::error::ApiError;
 
 /// JWT payload. We keep it small on purpose so a token issued by any
@@ -136,14 +137,16 @@ impl FromRequest for AuthUser {
             .and_then(|h| h.to_str().ok())
             .map(|s| s.to_string());
         let cfg = req.app_data::<Data<Config>>().cloned();
-        let pool = req.app_data::<Data<SqlitePool>>().cloned();
+        let db = req.app_data::<Data<DatabaseConnection>>().cloned();
 
         Box::pin(async move {
             let cfg = cfg.ok_or_else(|| {
                 ApiError::Internal("Config not registered in app_data".to_string())
             })?;
-            let pool = pool.ok_or_else(|| {
-                ApiError::Internal("SqlitePool not registered in app_data".to_string())
+            let db = db.ok_or_else(|| {
+                ApiError::Internal(
+                    "DatabaseConnection not registered in app_data".to_string(),
+                )
             })?;
 
             let header = header_value.ok_or_else(|| {
@@ -163,22 +166,28 @@ impl FromRequest for AuthUser {
                     "refresh token cannot authenticate this request".to_string(),
                 ));
             }
-            let user_id: i64 = claims
+            let user_id: i32 = claims
                 .sub
                 .parse()
                 .map_err(|_| ApiError::Unauthorized("malformed sub claim".to_string()))?;
 
-            let row = sqlx::query_as::<_, (i64, String)>(
-                "SELECT id, username FROM users WHERE id = ?",
-            )
-            .bind(user_id)
-            .fetch_optional(pool.get_ref())
-            .await
-            .map_err(ApiError::Database)?;
+            // Pull only id + username via projection (matches the
+            // legacy `SELECT id, username FROM users WHERE id = ?`).
+            let row = user::Entity::find_by_id(user_id)
+                .select_only()
+                .column(user::Column::Id)
+                .column(user::Column::Username)
+                .into_tuple::<(i32, String)>()
+                .one(db.get_ref())
+                .await
+                .map_err(ApiError::Database)?;
             let (id, username) = row.ok_or_else(|| {
                 ApiError::Unauthorized("user no longer exists".to_string())
             })?;
-            Ok(AuthUser { id, username })
+            Ok(AuthUser {
+                id: id as i64,
+                username,
+            })
         })
     }
 }

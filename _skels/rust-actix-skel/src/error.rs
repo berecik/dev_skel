@@ -32,7 +32,7 @@ pub enum ApiError {
     /// Database error — surfaced as 500 with the original message
     /// truncated so we never leak large stack traces over the wire.
     #[error("database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(#[from] sea_orm::DbErr),
 
     /// JWT mint / verify error.
     #[error("jwt: {0}")]

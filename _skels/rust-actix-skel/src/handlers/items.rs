@@ -10,22 +10,14 @@
 
 use actix_web::{get, post, web, HttpResponse};
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
-use sqlx::sqlite::SqlitePool;
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryOrder, Set,
+};
+use serde::Deserialize;
 
 use crate::auth::AuthUser;
+use crate::entities::item;
 use crate::error::ApiError;
-
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct ItemRow {
-    pub id: i64,
-    pub name: String,
-    pub description: Option<String>,
-    pub is_completed: bool,
-    pub category_id: Option<i64>,
-    pub created_at: String,
-    pub updated_at: String,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct CreateItemPayload {
@@ -35,73 +27,56 @@ pub struct CreateItemPayload {
     #[serde(default)]
     pub is_completed: bool,
     #[serde(default)]
-    pub category_id: Option<i64>,
+    pub category_id: Option<i32>,
 }
 
 #[get("")]
 pub async fn list_items(
-    pool: web::Data<SqlitePool>,
+    db: web::Data<DatabaseConnection>,
     _user: AuthUser,
 ) -> Result<HttpResponse, ApiError> {
-    let rows = sqlx::query_as::<_, ItemRow>(
-        "SELECT id, name, description, is_completed, category_id, created_at, updated_at \
-         FROM items ORDER BY created_at DESC, id DESC",
-    )
-    .fetch_all(pool.get_ref())
-    .await?;
+    let rows = item::Entity::find()
+        .order_by_desc(item::Column::CreatedAt)
+        .order_by_desc(item::Column::Id)
+        .all(db.get_ref())
+        .await?;
     Ok(HttpResponse::Ok().json(rows))
 }
 
 #[post("")]
 pub async fn create_item(
-    pool: web::Data<SqlitePool>,
+    db: web::Data<DatabaseConnection>,
     _user: AuthUser,
     payload: web::Json<CreateItemPayload>,
 ) -> Result<HttpResponse, ApiError> {
     let p = payload.into_inner();
     if p.name.trim().is_empty() {
-        return Err(ApiError::Validation("item name cannot be empty".to_string()));
+        return Err(ApiError::Validation(
+            "item name cannot be empty".to_string(),
+        ));
     }
-    let now = utc_iso8601();
-    let row: (i64,) = sqlx::query_as(
-        "INSERT INTO items (name, description, is_completed, category_id, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
-    )
-    .bind(&p.name)
-    .bind(&p.description)
-    .bind(p.is_completed)
-    .bind(p.category_id)
-    .bind(&now)
-    .bind(&now)
-    .fetch_one(pool.get_ref())
-    .await?;
-    let id = row.0;
-    let item = ItemRow {
-        id,
-        name: p.name,
-        description: p.description,
-        is_completed: p.is_completed,
-        category_id: p.category_id,
-        created_at: now.clone(),
-        updated_at: now,
+    let now = Utc::now();
+    let new_item = item::ActiveModel {
+        name: Set(p.name),
+        description: Set(p.description),
+        is_completed: Set(p.is_completed),
+        category_id: Set(p.category_id),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
     };
-    Ok(HttpResponse::Created().json(item))
+    let inserted = new_item.insert(db.get_ref()).await?;
+    Ok(HttpResponse::Created().json(inserted))
 }
 
 #[get("/{id}")]
 pub async fn get_item(
-    pool: web::Data<SqlitePool>,
+    db: web::Data<DatabaseConnection>,
     _user: AuthUser,
-    path: web::Path<i64>,
+    path: web::Path<i32>,
 ) -> Result<HttpResponse, ApiError> {
     let id = path.into_inner();
-    let row = sqlx::query_as::<_, ItemRow>(
-        "SELECT id, name, description, is_completed, category_id, created_at, updated_at \
-         FROM items WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_optional(pool.get_ref())
-    .await?;
+    let row = item::Entity::find_by_id(id).one(db.get_ref()).await?;
     let item = row.ok_or_else(|| ApiError::NotFound(format!("item {id} not found")))?;
     Ok(HttpResponse::Ok().json(item))
 }
@@ -111,30 +86,17 @@ pub async fn get_item(
 /// completed item is a no-op that still returns 200.
 #[post("/{id}/complete")]
 pub async fn complete_item(
-    pool: web::Data<SqlitePool>,
+    db: web::Data<DatabaseConnection>,
     _user: AuthUser,
-    path: web::Path<i64>,
+    path: web::Path<i32>,
 ) -> Result<HttpResponse, ApiError> {
     let id = path.into_inner();
-    let now = utc_iso8601();
-    let res = sqlx::query("UPDATE items SET is_completed = 1, updated_at = ? WHERE id = ?")
-        .bind(&now)
-        .bind(id)
-        .execute(pool.get_ref())
-        .await?;
-    if res.rows_affected() == 0 {
-        return Err(ApiError::NotFound(format!("item {id} not found")));
-    }
-    let row = sqlx::query_as::<_, ItemRow>(
-        "SELECT id, name, description, is_completed, category_id, created_at, updated_at \
-         FROM items WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_one(pool.get_ref())
-    .await?;
-    Ok(HttpResponse::Ok().json(row))
-}
+    let row = item::Entity::find_by_id(id).one(db.get_ref()).await?;
+    let existing = row.ok_or_else(|| ApiError::NotFound(format!("item {id} not found")))?;
 
-fn utc_iso8601() -> String {
-    Utc::now().format("%Y-%m-%dT%H:%M:%.3fZ").to_string()
+    let mut active: item::ActiveModel = existing.into();
+    active.is_completed = Set(true);
+    active.updated_at = Set(Utc::now());
+    let updated = active.update(db.get_ref()).await?;
+    Ok(HttpResponse::Ok().json(updated))
 }

@@ -27,14 +27,18 @@ dotenvy = "0.15"
 # `/api/categories`, `/api/items`, and `/api/state` calls Just Work
 # against this service out of the box. SQLite is the default backing
 # store (matches the wrapper-shared `_shared/db.sqlite3`); switch to
-# Postgres by changing DATABASE_URL — sqlx auto-detects the driver.
-sqlx = { version = "0.8", default-features = false, features = [
+# Postgres by changing DATABASE_URL — SeaORM auto-detects the driver.
+sea-orm = { version = "1", default-features = false, features = [
     "runtime-tokio-rustls",
-    "sqlite",
-    "postgres",
-    "any",
-    "chrono",
+    "sqlx-sqlite",
+    "sqlx-postgres",
     "macros",
+    "with-chrono",
+] }
+sea-orm-migration = { version = "1", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "sqlx-sqlite",
+    "sqlx-postgres",
 ] }
 jsonwebtoken = "9"
 argon2 = "0.5"

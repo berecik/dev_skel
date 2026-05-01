@@ -5,9 +5,13 @@
 //! process environment and inserts each account into the `users` table
 //! when one with that username does not already exist.
 
-use sqlx::sqlite::SqlitePool;
+use chrono::Utc;
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
+};
 
 use crate::auth::hash_password;
+use crate::entities::user;
 use crate::error::ApiError;
 
 /// Account descriptor read from env vars.
@@ -21,7 +25,7 @@ struct SeedAccount {
 ///
 /// Each account is only created when the username does not already exist,
 /// making the function safe to call on every startup.
-pub async fn seed_default_accounts(pool: &SqlitePool) -> Result<(), ApiError> {
+pub async fn seed_default_accounts(db: &DatabaseConnection) -> Result<(), ApiError> {
     let accounts = collect_accounts();
 
     for acct in &accounts {
@@ -29,11 +33,10 @@ pub async fn seed_default_accounts(pool: &SqlitePool) -> Result<(), ApiError> {
             continue;
         }
 
-        let existing: Option<(i64,)> =
-            sqlx::query_as("SELECT id FROM users WHERE username = ?")
-                .bind(&acct.username)
-                .fetch_optional(pool)
-                .await?;
+        let existing = user::Entity::find()
+            .filter(user::Column::Username.eq(&acct.username))
+            .one(db)
+            .await?;
 
         if existing.is_some() {
             tracing::info!(
@@ -45,14 +48,14 @@ pub async fn seed_default_accounts(pool: &SqlitePool) -> Result<(), ApiError> {
         }
 
         let hash = hash_password(&acct.password)?;
-        sqlx::query(
-            "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
-        )
-        .bind(&acct.username)
-        .bind(&acct.email)
-        .bind(&hash)
-        .execute(pool)
-        .await?;
+        let new_user = user::ActiveModel {
+            username: Set(acct.username.clone()),
+            email: Set(acct.email.clone()),
+            password_hash: Set(hash),
+            created_at: Set(Utc::now()),
+            ..Default::default()
+        };
+        new_user.insert(db).await?;
 
         tracing::info!(
             target: "rust_actix_skel",

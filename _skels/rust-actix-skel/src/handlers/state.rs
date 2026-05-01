@@ -15,10 +15,15 @@
 use std::collections::HashMap;
 
 use actix_web::{delete, get, http::header, put, web, HttpResponse};
+use chrono::Utc;
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, EntityTrait, QueryFilter,
+    QuerySelect, Set,
+};
 use serde::Deserialize;
-use sqlx::sqlite::SqlitePool;
 
 use crate::auth::AuthUser;
+use crate::entities::react_state;
 use crate::error::ApiError;
 
 #[derive(Debug, Deserialize)]
@@ -28,53 +33,76 @@ pub struct UpsertPayload {
 
 #[get("")]
 pub async fn list_state(
-    pool: web::Data<SqlitePool>,
+    db: web::Data<DatabaseConnection>,
     user: AuthUser,
 ) -> Result<HttpResponse, ApiError> {
-    let rows: Vec<(String, String)> =
-        sqlx::query_as("SELECT key, value FROM react_state WHERE user_id = ?")
-            .bind(user.id)
-            .fetch_all(pool.get_ref())
-            .await?;
+    let rows = react_state::Entity::find()
+        .filter(react_state::Column::UserId.eq(user.id as i32))
+        .select_only()
+        .column(react_state::Column::Key)
+        .column(react_state::Column::Value)
+        .into_tuple::<(String, String)>()
+        .all(db.get_ref())
+        .await?;
     let map: HashMap<String, String> = rows.into_iter().collect();
     Ok(HttpResponse::Ok().json(map))
 }
 
 #[put("/{key}")]
 pub async fn upsert_state(
-    pool: web::Data<SqlitePool>,
+    db: web::Data<DatabaseConnection>,
     user: AuthUser,
     path: web::Path<String>,
     payload: web::Json<UpsertPayload>,
 ) -> Result<HttpResponse, ApiError> {
     let key = path.into_inner();
     let body = payload.into_inner();
-    sqlx::query(
-        "INSERT INTO react_state (user_id, key, value, updated_at) \
-         VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) \
-         ON CONFLICT(user_id, key) DO UPDATE SET \
-             value = excluded.value, \
-             updated_at = excluded.updated_at",
-    )
-    .bind(user.id)
-    .bind(&key)
-    .bind(&body.value)
-    .execute(pool.get_ref())
-    .await?;
+
+    // SeaORM has no portable upsert helper across SQLite + Postgres
+    // for composite uniques, so we branch on existence by
+    // (user_id, key) and either UPDATE or INSERT. Matches the
+    // pattern the Go skel uses for the same table.
+    let existing = react_state::Entity::find()
+        .filter(
+            Condition::all()
+                .add(react_state::Column::UserId.eq(user.id as i32))
+                .add(react_state::Column::Key.eq(&key)),
+        )
+        .one(db.get_ref())
+        .await?;
+
+    if let Some(row) = existing {
+        let mut active: react_state::ActiveModel = row.into();
+        active.value = Set(body.value);
+        active.updated_at = Set(Utc::now());
+        active.update(db.get_ref()).await?;
+    } else {
+        let new_row = react_state::ActiveModel {
+            user_id: Set(user.id as i32),
+            key: Set(key.clone()),
+            value: Set(body.value),
+            updated_at: Set(Utc::now()),
+            ..Default::default()
+        };
+        new_row.insert(db.get_ref()).await?;
+    }
     Ok(HttpResponse::Ok().json(serde_json::json!({ "key": key })))
 }
 
 #[delete("/{key}")]
 pub async fn delete_state(
-    pool: web::Data<SqlitePool>,
+    db: web::Data<DatabaseConnection>,
     user: AuthUser,
     path: web::Path<String>,
 ) -> Result<HttpResponse, ApiError> {
     let key = path.into_inner();
-    sqlx::query("DELETE FROM react_state WHERE user_id = ? AND key = ?")
-        .bind(user.id)
-        .bind(&key)
-        .execute(pool.get_ref())
+    react_state::Entity::delete_many()
+        .filter(
+            Condition::all()
+                .add(react_state::Column::UserId.eq(user.id as i32))
+                .add(react_state::Column::Key.eq(&key)),
+        )
+        .exec(db.get_ref())
         .await?;
     Ok(HttpResponse::Ok()
         .insert_header((header::CONTENT_TYPE, "application/json"))
