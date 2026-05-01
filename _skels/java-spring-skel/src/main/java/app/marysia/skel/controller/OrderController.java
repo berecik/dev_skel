@@ -2,21 +2,24 @@ package app.marysia.skel.controller;
 
 import app.marysia.skel.controller.ItemController.ApiException;
 import app.marysia.skel.model.CatalogItem;
+import app.marysia.skel.model.OrderAddress;
+import app.marysia.skel.model.OrderLine;
 import app.marysia.skel.model.OrderRecord;
+import app.marysia.skel.repository.CatalogItemRepository;
+import app.marysia.skel.repository.OrderAddressRepository;
+import app.marysia.skel.repository.OrderLineRepository;
+import app.marysia.skel.repository.OrderRepository;
 import app.marysia.skel.security.AuthUser;
-import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
-import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
-import java.sql.PreparedStatement;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
 /**
  * Order-workflow endpoints covering catalogue browsing, order creation,
@@ -29,36 +32,20 @@ import java.util.Objects;
 @RestController
 public class OrderController {
 
-    private final JdbcTemplate jdbc;
-    private final JdbcClient client;
+    private final CatalogItemRepository catalog;
+    private final OrderRepository orders;
+    private final OrderLineRepository orderLines;
+    private final OrderAddressRepository orderAddresses;
 
-    public OrderController(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
-        this.client = JdbcClient.create(jdbc);
+    public OrderController(CatalogItemRepository catalog,
+                           OrderRepository orders,
+                           OrderLineRepository orderLines,
+                           OrderAddressRepository orderAddresses) {
+        this.catalog = catalog;
+        this.orders = orders;
+        this.orderLines = orderLines;
+        this.orderAddresses = orderAddresses;
     }
-
-    // ------------------------------------------------------------------
-    // Row mappers
-    // ------------------------------------------------------------------
-
-    private static final RowMapper<CatalogItem> CATALOG_MAPPER = (rs, _row) -> new CatalogItem(
-        rs.getLong("id"),
-        rs.getString("name"),
-        rs.getString("description"),
-        rs.getDouble("price"),
-        rs.getString("category"),
-        rs.getBoolean("available")
-    );
-
-    private static final RowMapper<OrderRecord> ORDER_MAPPER = (rs, _row) -> new OrderRecord(
-        rs.getLong("id"),
-        rs.getLong("user_id"),
-        rs.getString("status"),
-        rs.getString("created_at"),
-        rs.getString("submitted_at"),
-        rs.getObject("wait_minutes") != null ? rs.getInt("wait_minutes") : null,
-        rs.getString("feedback")
-    );
 
     // ------------------------------------------------------------------
     // Catalog endpoints
@@ -66,10 +53,7 @@ public class OrderController {
 
     @GetMapping("/api/catalog")
     public List<CatalogItem> listCatalog(@SuppressWarnings("unused") AuthUser user) {
-        return client
-            .sql("SELECT id, name, description, price, category, available FROM catalog_items ORDER BY id")
-            .query(CATALOG_MAPPER)
-            .list();
+        return catalog.findAllByOrderByIdAsc();
     }
 
     @PostMapping("/api/catalog")
@@ -81,40 +65,22 @@ public class OrderController {
         if (body.price() == null || body.price() < 0) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "price must be non-negative");
         }
-        var keyHolder = new org.springframework.jdbc.support.GeneratedKeyHolder();
-        jdbc.update(connection -> {
-            PreparedStatement ps = connection.prepareStatement(
-                "INSERT INTO catalog_items (name, description, price, category, available) VALUES (?, ?, ?, ?, ?)",
-                new String[]{"id"}
-            );
-            ps.setString(1, body.name());
-            ps.setString(2, body.description() != null ? body.description() : "");
-            ps.setDouble(3, body.price());
-            ps.setString(4, body.category() != null ? body.category() : "");
-            ps.setBoolean(5, body.available() == null || body.available());
-            return ps;
-        }, keyHolder);
-        long newId = Objects.requireNonNull(keyHolder.getKey()).longValue();
-        CatalogItem created = new CatalogItem(newId, body.name(),
+        CatalogItem ci = new CatalogItem(
+            body.name(),
             body.description() != null ? body.description() : "",
             body.price(),
             body.category() != null ? body.category() : "",
-            body.available() == null || body.available());
-        return ResponseEntity.status(HttpStatus.CREATED).body(created);
+            body.available() == null || body.available()
+        );
+        ci = catalog.save(ci);
+        return ResponseEntity.status(HttpStatus.CREATED).body(ci);
     }
 
     @GetMapping("/api/catalog/{id}")
     public CatalogItem getCatalogItem(@SuppressWarnings("unused") AuthUser user,
                                       @PathVariable long id) {
-        try {
-            return client
-                .sql("SELECT id, name, description, price, category, available FROM catalog_items WHERE id = ?")
-                .param(id)
-                .query(CATALOG_MAPPER)
-                .single();
-        } catch (EmptyResultDataAccessException e) {
-            throw new ApiException(HttpStatus.NOT_FOUND, "catalog item " + id + " not found");
-        }
+        return catalog.findById(id)
+            .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "catalog item " + id + " not found"));
     }
 
     // ------------------------------------------------------------------
@@ -123,77 +89,56 @@ public class OrderController {
 
     @PostMapping("/api/orders")
     public ResponseEntity<OrderRecord> createOrder(AuthUser user) {
-        var keyHolder = new org.springframework.jdbc.support.GeneratedKeyHolder();
-        jdbc.update(connection -> {
-            PreparedStatement ps = connection.prepareStatement(
-                "INSERT INTO orders (user_id) VALUES (?)",
-                new String[]{"id"}
-            );
-            ps.setLong(1, user.id());
-            return ps;
-        }, keyHolder);
-        long newId = Objects.requireNonNull(keyHolder.getKey()).longValue();
-        OrderRecord created = findOrderById(newId);
-        return ResponseEntity.status(HttpStatus.CREATED).body(created);
+        OrderRecord o = new OrderRecord(user.id());
+        o = orders.save(o);
+        return ResponseEntity.status(HttpStatus.CREATED).body(o);
     }
 
     @GetMapping("/api/orders")
     public List<OrderRecord> listOrders(AuthUser user) {
-        return client
-            .sql("SELECT id, user_id, status, created_at, submitted_at, wait_minutes, feedback "
-                + "FROM orders WHERE user_id = ? ORDER BY id DESC")
-            .param(user.id())
-            .query(ORDER_MAPPER)
-            .list();
+        return orders.findAllByUserIdOrderByIdDesc(user.id());
     }
 
     @GetMapping("/api/orders/{id}")
     public Map<String, Object> getOrder(AuthUser user, @PathVariable long id) {
-        OrderRecord order = findOrderByIdForUser(id, user.id());
-        List<Map<String, Object>> lines = client
-            .sql("SELECT ol.id, ol.catalog_item_id, ol.quantity, ol.unit_price, ci.name AS item_name "
-                + "FROM order_lines ol JOIN catalog_items ci ON ol.catalog_item_id = ci.id "
-                + "WHERE ol.order_id = ? ORDER BY ol.id")
-            .param(id)
-            .query((rs, _row) -> {
-                Map<String, Object> m = new LinkedHashMap<>();
-                m.put("id", rs.getLong("id"));
-                m.put("catalog_item_id", rs.getLong("catalog_item_id"));
-                m.put("quantity", rs.getInt("quantity"));
-                m.put("unit_price", rs.getDouble("unit_price"));
-                m.put("item_name", rs.getString("item_name"));
-                return m;
-            })
-            .list();
-        Map<String, Object> address = null;
-        try {
-            var addrRow = client
-                .sql("SELECT id, street, city, zip_code, phone, notes FROM order_addresses WHERE order_id = ?")
-                .param(id)
-                .query((rs, _row) -> {
-                    Map<String, Object> m = new LinkedHashMap<>();
-                    m.put("id", rs.getLong("id"));
-                    m.put("street", rs.getString("street"));
-                    m.put("city", rs.getString("city"));
-                    m.put("zip_code", rs.getString("zip_code"));
-                    m.put("phone", rs.getString("phone"));
-                    m.put("notes", rs.getString("notes"));
-                    return m;
-                })
-                .single();
-            address = addrRow;
-        } catch (EmptyResultDataAccessException ignored) {
+        OrderRecord order = findOrderForUser(id, user.id());
+
+        // Project lines + the catalog item's name into the response shape
+        // the React frontend expects.
+        List<Map<String, Object>> lineDtos = new java.util.ArrayList<>();
+        for (OrderLine line : orderLines.findAllByOrderIdOrderByIdAsc(id)) {
+            CatalogItem ci = catalog.findById(line.getCatalogItemId()).orElse(null);
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", line.getId());
+            m.put("catalog_item_id", line.getCatalogItemId());
+            m.put("quantity", line.getQuantity());
+            m.put("unit_price", line.getUnitPrice());
+            m.put("item_name", ci == null ? null : ci.getName());
+            lineDtos.add(m);
         }
 
+        Map<String, Object> address = orderAddresses.findByOrderId(id)
+            .map(a -> {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("id", a.getId());
+                m.put("street", a.getStreet());
+                m.put("city", a.getCity());
+                m.put("zip_code", a.getZipCode());
+                m.put("phone", a.getPhone());
+                m.put("notes", a.getNotes());
+                return m;
+            })
+            .orElse(null);
+
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("id", order.id());
-        result.put("user_id", order.userId());
-        result.put("status", order.status());
-        result.put("created_at", order.createdAt());
-        result.put("submitted_at", order.submittedAt());
-        result.put("wait_minutes", order.waitMinutes());
-        result.put("feedback", order.feedback());
-        result.put("lines", lines);
+        result.put("id", order.getId());
+        result.put("user_id", order.getUserId());
+        result.put("status", order.getStatus());
+        result.put("created_at", order.getCreatedAt());
+        result.put("submitted_at", order.getSubmittedAt());
+        result.put("wait_minutes", order.getWaitMinutes());
+        result.put("feedback", order.getFeedback());
+        result.put("lines", lineDtos);
         result.put("address", address);
         return result;
     }
@@ -206,60 +151,40 @@ public class OrderController {
     public ResponseEntity<Map<String, Object>> addLine(AuthUser user,
                                                        @PathVariable long id,
                                                        @RequestBody AddLineRequest body) {
-        OrderRecord order = findOrderByIdForUser(id, user.id());
-        if (!"draft".equals(order.status())) {
+        OrderRecord order = findOrderForUser(id, user.id());
+        if (!"draft".equals(order.getStatus())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "can only add lines to draft orders");
         }
         if (body == null || body.catalogItemId() == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "catalog_item_id is required");
         }
-        // Verify catalog item exists and get its price
-        CatalogItem catalogItem;
-        try {
-            catalogItem = client
-                .sql("SELECT id, name, description, price, category, available FROM catalog_items WHERE id = ?")
-                .param(body.catalogItemId())
-                .query(CATALOG_MAPPER)
-                .single();
-        } catch (EmptyResultDataAccessException e) {
-            throw new ApiException(HttpStatus.NOT_FOUND, "catalog item " + body.catalogItemId() + " not found");
-        }
+        CatalogItem ci = catalog.findById(body.catalogItemId())
+            .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND,
+                "catalog item " + body.catalogItemId() + " not found"));
 
         int qty = (body.quantity() != null && body.quantity() > 0) ? body.quantity() : 1;
-        double unitPrice = catalogItem.price();
+        OrderLine line = new OrderLine(id, ci.getId(), qty, ci.getPrice());
+        line = orderLines.save(line);
 
-        var keyHolder = new org.springframework.jdbc.support.GeneratedKeyHolder();
-        jdbc.update(connection -> {
-            PreparedStatement ps = connection.prepareStatement(
-                "INSERT INTO order_lines (order_id, catalog_item_id, quantity, unit_price) VALUES (?, ?, ?, ?)",
-                new String[]{"id"}
-            );
-            ps.setLong(1, id);
-            ps.setLong(2, body.catalogItemId());
-            ps.setInt(3, qty);
-            ps.setDouble(4, unitPrice);
-            return ps;
-        }, keyHolder);
-        long lineId = Objects.requireNonNull(keyHolder.getKey()).longValue();
-
-        Map<String, Object> line = new LinkedHashMap<>();
-        line.put("id", lineId);
-        line.put("order_id", id);
-        line.put("catalog_item_id", body.catalogItemId());
-        line.put("quantity", qty);
-        line.put("unit_price", unitPrice);
-        return ResponseEntity.status(HttpStatus.CREATED).body(line);
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("id", line.getId());
+        resp.put("order_id", line.getOrderId());
+        resp.put("catalog_item_id", line.getCatalogItemId());
+        resp.put("quantity", line.getQuantity());
+        resp.put("unit_price", line.getUnitPrice());
+        return ResponseEntity.status(HttpStatus.CREATED).body(resp);
     }
 
     @DeleteMapping("/api/orders/{id}/lines/{lineId}")
+    @Transactional
     public ResponseEntity<Void> deleteLine(AuthUser user,
                                            @PathVariable long id,
                                            @PathVariable long lineId) {
-        OrderRecord order = findOrderByIdForUser(id, user.id());
-        if (!"draft".equals(order.status())) {
+        OrderRecord order = findOrderForUser(id, user.id());
+        if (!"draft".equals(order.getStatus())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "can only remove lines from draft orders");
         }
-        int deleted = jdbc.update("DELETE FROM order_lines WHERE id = ? AND order_id = ?", lineId, id);
+        long deleted = orderLines.deleteByIdAndOrderId(lineId, id);
         if (deleted == 0) {
             throw new ApiException(HttpStatus.NOT_FOUND, "line " + lineId + " not found on order " + id);
         }
@@ -271,11 +196,12 @@ public class OrderController {
     // ------------------------------------------------------------------
 
     @PutMapping("/api/orders/{id}/address")
+    @Transactional
     public ResponseEntity<Map<String, Object>> setAddress(AuthUser user,
                                                           @PathVariable long id,
                                                           @RequestBody AddressRequest body) {
-        OrderRecord order = findOrderByIdForUser(id, user.id());
-        if (!"draft".equals(order.status())) {
+        OrderRecord order = findOrderForUser(id, user.id());
+        if (!"draft".equals(order.getStatus())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "can only set address on draft orders");
         }
         if (body == null || body.street() == null || body.street().isBlank()
@@ -283,20 +209,30 @@ public class OrderController {
             || body.zipCode() == null || body.zipCode().isBlank()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "street, city, and zip_code are required");
         }
-        // Upsert: delete existing then insert
-        jdbc.update("DELETE FROM order_addresses WHERE order_id = ?", id);
-        jdbc.update("INSERT INTO order_addresses (order_id, street, city, zip_code, phone, notes) VALUES (?, ?, ?, ?, ?, ?)",
-            id, body.street(), body.city(), body.zipCode(),
+        // Upsert: delete-then-insert keeps the @UniqueConstraint
+        // on order_id satisfied without driver-specific UPSERT syntax.
+        orderAddresses.deleteByOrderId(id);
+        // Make sure the DELETE is flushed before the INSERT, otherwise
+        // the unique constraint can fire when both statements reach
+        // the JDBC connection inside the same transaction.
+        orderAddresses.flush();
+        OrderAddress addr = new OrderAddress(
+            id,
+            body.street(),
+            body.city(),
+            body.zipCode(),
             body.phone() != null ? body.phone() : "",
-            body.notes() != null ? body.notes() : "");
+            body.notes() != null ? body.notes() : ""
+        );
+        addr = orderAddresses.save(addr);
 
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("order_id", id);
-        result.put("street", body.street());
-        result.put("city", body.city());
-        result.put("zip_code", body.zipCode());
-        result.put("phone", body.phone() != null ? body.phone() : "");
-        result.put("notes", body.notes() != null ? body.notes() : "");
+        result.put("order_id", addr.getOrderId());
+        result.put("street", addr.getStreet());
+        result.put("city", addr.getCity());
+        result.put("zip_code", addr.getZipCode());
+        result.put("phone", addr.getPhone());
+        result.put("notes", addr.getNotes());
         return ResponseEntity.ok(result);
     }
 
@@ -306,18 +242,16 @@ public class OrderController {
 
     @PostMapping("/api/orders/{id}/submit")
     public OrderRecord submitOrder(AuthUser user, @PathVariable long id) {
-        OrderRecord order = findOrderByIdForUser(id, user.id());
-        if (!"draft".equals(order.status())) {
+        OrderRecord order = findOrderForUser(id, user.id());
+        if (!"draft".equals(order.getStatus())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "only draft orders can be submitted");
         }
-        // Must have at least one line
-        Integer lineCount = jdbc.queryForObject(
-            "SELECT COUNT(*) FROM order_lines WHERE order_id = ?", Integer.class, id);
-        if (lineCount == null || lineCount == 0) {
+        if (orderLines.countByOrderId(id) == 0) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "order must have at least one line to submit");
         }
-        jdbc.update("UPDATE orders SET status = 'pending', submitted_at = CURRENT_TIMESTAMP WHERE id = ?", id);
-        return findOrderById(id);
+        order.setStatus("pending");
+        order.setSubmittedAt(LocalDateTime.now(ZoneOffset.UTC));
+        return orders.save(order);
     }
 
     public record ApproveRequest(Integer wait_minutes, String feedback) {}
@@ -325,49 +259,40 @@ public class OrderController {
     @PostMapping("/api/orders/{id}/approve")
     public OrderRecord approveOrder(AuthUser user, @PathVariable long id,
                                     @RequestBody ApproveRequest body) {
-        OrderRecord order = findOrderByIdForUser(id, user.id());
-        if (!"pending".equals(order.status())) {
+        OrderRecord order = findOrderForUser(id, user.id());
+        if (!"pending".equals(order.getStatus())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "only pending orders can be approved");
         }
         int wm = (body != null && body.wait_minutes() != null) ? body.wait_minutes() : 0;
         String fb = (body != null && body.feedback() != null) ? body.feedback() : "";
-        jdbc.update("UPDATE orders SET status = 'approved', wait_minutes = ?, feedback = ? WHERE id = ?", wm, fb, id);
-        return findOrderById(id);
+        order.setStatus("approved");
+        order.setWaitMinutes(wm);
+        order.setFeedback(fb);
+        return orders.save(order);
     }
 
     @PostMapping("/api/orders/{id}/reject")
     public OrderRecord rejectOrder(AuthUser user,
                                    @PathVariable long id,
                                    @RequestBody(required = false) RejectRequest body) {
-        OrderRecord order = findOrderByIdForUser(id, user.id());
-        if (!"pending".equals(order.status())) {
+        OrderRecord order = findOrderForUser(id, user.id());
+        if (!"pending".equals(order.getStatus())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "only submitted orders can be rejected");
         }
         String feedback = (body != null && body.feedback() != null) ? body.feedback() : "";
-        jdbc.update("UPDATE orders SET status = 'rejected', feedback = ? WHERE id = ?", feedback, id);
-        return findOrderById(id);
+        order.setStatus("rejected");
+        order.setFeedback(feedback);
+        return orders.save(order);
     }
 
     // ------------------------------------------------------------------
     // Helpers
     // ------------------------------------------------------------------
 
-    private OrderRecord findOrderById(long id) {
-        try {
-            return client
-                .sql("SELECT id, user_id, status, created_at, submitted_at, wait_minutes, feedback "
-                    + "FROM orders WHERE id = ?")
-                .param(id)
-                .query(ORDER_MAPPER)
-                .single();
-        } catch (EmptyResultDataAccessException e) {
-            throw new ApiException(HttpStatus.NOT_FOUND, "order " + id + " not found");
-        }
-    }
-
-    private OrderRecord findOrderByIdForUser(long id, long userId) {
-        OrderRecord order = findOrderById(id);
-        if (order.userId() != userId) {
+    private OrderRecord findOrderForUser(long id, long userId) {
+        OrderRecord order = orders.findById(id)
+            .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "order " + id + " not found"));
+        if (order.getUserId() != userId) {
             throw new ApiException(HttpStatus.NOT_FOUND, "order " + id + " not found");
         }
         return order;

@@ -28,14 +28,22 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
-        <!-- Plain JDBC + HikariCP. We avoid spring-boot-starter-data-jpa
-             so the schema can be bootstrapped against any JDBC driver
-             (sqlite, h2, postgres) without juggling Hibernate dialects
-             — the wrapper-shared `_shared/db.sqlite3` would otherwise
-             need community-dialects + a custom dialect bean. -->
+        <!-- Spring Data JPA + Hibernate. Pulls in HikariCP transitively.
+             Hibernate 6 ships built-in dialects for H2 and Postgres; for
+             SQLite we add the community-dialects artifact below and point
+             `spring.jpa.properties.hibernate.dialect.community` at
+             `org.hibernate.community.dialect.SQLiteDialect`. The
+             previous JDBC-only choice was reversed during the project-
+             wide ORM migration so the JVM service follows the same
+             pattern as go-skel/GORM, rust-*-skel/SeaORM, and
+             next-js-skel/Drizzle. -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-jdbc</artifactId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.hibernate.orm</groupId>
+            <artifactId>hibernate-community-dialects</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

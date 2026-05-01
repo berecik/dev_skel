@@ -33,8 +33,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * to prove that:
  *
  * <ul>
- *   <li>{@link app.marysia.skel.config.SchemaInitializer} created the
- *       wrapper-shared tables on startup.</li>
+ *   <li>Hibernate's {@code ddl-auto=update} created the wrapper-shared
+ *       tables on startup from the {@code @Entity} annotations.</li>
+ *   <li>{@link app.marysia.skel.config.DefaultUserSeeder} populated the
+ *       canonical {@code user}/{@code admin} default accounts.</li>
  *   <li>{@code /api/auth/*} handlers mint working JWTs.</li>
  *   <li>The JWT interceptor rejects anonymous requests with 401.</li>
  *   <li>The JWT interceptor accepts a freshly-minted access token.</li>
@@ -61,9 +63,9 @@ class ApplicationTests {
 
     @Test
     void contextLoads() {
-        // Spring context bootstrap is itself the assertion. If
-        // SchemaInitializer or DataSourceConfig fail, this test fails
-        // before any of the others run.
+        // Spring context bootstrap is itself the assertion. If JPA fails
+        // to bootstrap the schema or DataSourceConfig cannot resolve the
+        // SQLite URL, this test fails before any of the others run.
     }
 
     @Test

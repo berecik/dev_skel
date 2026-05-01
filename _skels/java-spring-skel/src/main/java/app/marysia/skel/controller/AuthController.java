@@ -1,21 +1,19 @@
 package app.marysia.skel.controller;
 
+import app.marysia.skel.model.User;
+import app.marysia.skel.repository.UserRepository;
 import app.marysia.skel.security.JwtService;
-import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.sql.PreparedStatement;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Wrapper-shared {@code /api/auth/*} endpoints. Response shapes match
@@ -34,16 +32,14 @@ import java.util.Objects;
 @RequestMapping("/api/auth")
 public class AuthController {
 
-    private final JdbcTemplate jdbc;
-    private final JdbcClient client;
+    private final UserRepository users;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwt;
 
-    public AuthController(JdbcTemplate jdbc,
+    public AuthController(UserRepository users,
                           PasswordEncoder passwordEncoder,
                           JwtService jwt) {
-        this.jdbc = jdbc;
-        this.client = JdbcClient.create(jdbc);
+        this.users = users;
         this.passwordEncoder = passwordEncoder;
         this.jwt = jwt;
     }
@@ -60,39 +56,27 @@ public class AuthController {
             return error(HttpStatus.BAD_REQUEST, "password and password_confirm do not match");
         }
 
-        Long existing = lookupId(body.username());
-        if (existing != null) {
+        if (users.findByUsername(body.username()).isPresent()) {
             return error(HttpStatus.CONFLICT, "user '" + body.username() + "' already exists");
         }
 
-        String hash = passwordEncoder.encode(body.password());
-        var keyHolder = new org.springframework.jdbc.support.GeneratedKeyHolder();
-        jdbc.update(connection -> {
-            // Pass `new String[]{"id"}` instead of
-            // `Statement.RETURN_GENERATED_KEYS` so H2 only returns the
-            // `id` column (otherwise it returns id + created_at and
-            // `KeyHolder.getKey()` raises about a multi-column result).
-            PreparedStatement ps = connection.prepareStatement(
-                "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
-                new String[]{"id"}
-            );
-            ps.setString(1, body.username());
-            ps.setString(2, body.email() == null ? "" : body.email());
-            ps.setString(3, hash);
-            return ps;
-        }, keyHolder);
-        long newId = Objects.requireNonNull(keyHolder.getKey(),
-            "INSERT did not return a generated key").longValue();
+        User u = new User(
+            body.username(),
+            body.email() == null ? "" : body.email(),
+            passwordEncoder.encode(body.password()),
+            false
+        );
+        u = users.save(u);
 
         Map<String, Object> userOut = new LinkedHashMap<>();
-        userOut.put("id", newId);
-        userOut.put("username", body.username());
-        userOut.put("email", body.email() == null ? "" : body.email());
+        userOut.put("id", u.getId());
+        userOut.put("username", u.getUsername());
+        userOut.put("email", u.getEmail());
 
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("user", userOut);
-        resp.put("access", jwt.mintAccessToken(newId));
-        resp.put("refresh", jwt.mintRefreshToken(newId));
+        resp.put("access", jwt.mintAccessToken(u.getId()));
+        resp.put("refresh", jwt.mintRefreshToken(u.getId()));
         return ResponseEntity.status(HttpStatus.CREATED).body(resp);
     }
 
@@ -101,45 +85,23 @@ public class AuthController {
         if (body == null || body.username() == null || body.password() == null) {
             return error(HttpStatus.UNAUTHORIZED, "invalid username or password");
         }
-        String sql = body.username().contains("@")
-            ? "SELECT id, username, password_hash FROM users WHERE email = ?"
-            : "SELECT id, username, password_hash FROM users WHERE username = ?";
-        Map<String, Object> row;
-        try {
-            row = client
-                .sql(sql)
-                .param(body.username())
-                .query()
-                .singleRow();
-        } catch (EmptyResultDataAccessException e) {
+        Optional<User> found = body.username().contains("@")
+            ? users.findByEmail(body.username())
+            : users.findByUsername(body.username());
+        if (found.isEmpty()) {
             return error(HttpStatus.UNAUTHORIZED, "invalid username or password");
         }
-
-        long id = ((Number) row.get("id")).longValue();
-        String username = (String) row.get("username");
-        String storedHash = (String) row.get("password_hash");
-        if (!passwordEncoder.matches(body.password(), storedHash)) {
+        User u = found.get();
+        if (!passwordEncoder.matches(body.password(), u.getPasswordHash())) {
             return error(HttpStatus.UNAUTHORIZED, "invalid username or password");
         }
 
         Map<String, Object> resp = new LinkedHashMap<>();
-        resp.put("access", jwt.mintAccessToken(id));
-        resp.put("refresh", jwt.mintRefreshToken(id));
-        resp.put("user_id", id);
-        resp.put("username", username);
+        resp.put("access", jwt.mintAccessToken(u.getId()));
+        resp.put("refresh", jwt.mintRefreshToken(u.getId()));
+        resp.put("user_id", u.getId());
+        resp.put("username", u.getUsername());
         return ResponseEntity.ok(resp);
-    }
-
-    private Long lookupId(String username) {
-        try {
-            return client
-                .sql("SELECT id FROM users WHERE username = ?")
-                .param(username)
-                .query(Long.class)
-                .single();
-        } catch (EmptyResultDataAccessException e) {
-            return null;
-        }
     }
 
     private ResponseEntity<Map<String, Object>> error(HttpStatus status, String detail) {

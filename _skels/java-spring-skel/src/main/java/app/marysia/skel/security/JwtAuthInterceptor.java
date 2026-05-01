@@ -1,16 +1,17 @@
 package app.marysia.skel.security;
 
+import app.marysia.skel.model.User;
+import app.marysia.skel.repository.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.dao.DataAccessException;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Lightweight JWT bearer-auth interceptor. Registered against the
@@ -33,12 +34,12 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
     public static final String AUTH_USER_ATTR = "app.marysia.skel.security.authUser";
 
     private final JwtService jwtService;
-    private final JdbcTemplate jdbc;
+    private final UserRepository users;
     private final ObjectMapper mapper;
 
-    public JwtAuthInterceptor(JwtService jwtService, JdbcTemplate jdbc, ObjectMapper mapper) {
+    public JwtAuthInterceptor(JwtService jwtService, UserRepository users, ObjectMapper mapper) {
         this.jwtService = jwtService;
-        this.jdbc = jdbc;
+        this.users = users;
         this.mapper = mapper;
     }
 
@@ -63,22 +64,17 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
         }
 
         // Check the user still exists; deletion mid-session must surface as 401.
-        List<Map<String, Object>> rows;
+        Optional<User> found;
         try {
-            rows = jdbc.queryForList(
-                "SELECT id, username FROM users WHERE id = ?",
-                verified.userId()
-            );
+            found = users.findById(verified.userId());
         } catch (DataAccessException e) {
             return reject(response, "user lookup failed");
         }
-        if (rows.isEmpty()) {
+        if (found.isEmpty()) {
             return reject(response, "user no longer exists");
         }
-        Map<String, Object> row = rows.get(0);
-        long id = ((Number) row.get("id")).longValue();
-        String username = (String) row.get("username");
-        request.setAttribute(AUTH_USER_ATTR, new AuthUser(id, username));
+        User u = found.get();
+        request.setAttribute(AUTH_USER_ATTR, new AuthUser(u.getId(), u.getUsername()));
         return true;
     }
 

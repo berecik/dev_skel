@@ -2,14 +2,15 @@ package app.marysia.skel.controller;
 
 import app.marysia.skel.controller.ItemController.ApiException;
 import app.marysia.skel.model.Category;
+import app.marysia.skel.repository.CategoryRepository;
 import app.marysia.skel.security.AuthUser;
-import app.marysia.skel.service.CategoryService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Wrapper-shared {@code /api/categories} CRUD that the React frontend
@@ -20,21 +21,22 @@ import java.util.Map;
  *
  * <p>Categories are shared (not per-user) but auth-protected — any
  * authenticated user can CRUD them. Items reference categories via an
- * optional {@code category_id} FK.
+ * optional {@code category_id} FK enforced at the entity level by
+ * {@link app.marysia.skel.model.Item}'s {@code @ManyToOne}.
  */
 @RestController
 @RequestMapping("/api/categories")
 public class CategoryController {
 
-    private final CategoryService categories;
+    private final CategoryRepository categories;
 
-    public CategoryController(CategoryService categories) {
+    public CategoryController(CategoryRepository categories) {
         this.categories = categories;
     }
 
     @GetMapping
     public List<Category> list(@SuppressWarnings("unused") AuthUser user) {
-        return categories.findAll();
+        return categories.findAllByOrderByIdAsc();
     }
 
     @PostMapping
@@ -44,7 +46,8 @@ public class CategoryController {
         if (body == null || body.name() == null || body.name().isBlank()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "category name cannot be empty");
         }
-        return categories.create(body.name(), body.description());
+        Category c = new Category(body.name(), body.description());
+        return categories.save(c);
     }
 
     @GetMapping("/{id}")
@@ -60,16 +63,23 @@ public class CategoryController {
         if (body == null || body.name() == null || body.name().isBlank()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "category name cannot be empty");
         }
-        return categories.update(id, body.name(), body.description())
-            .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "category " + id + " not found"));
+        Optional<Category> found = categories.findById(id);
+        if (found.isEmpty()) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "category " + id + " not found");
+        }
+        Category c = found.get();
+        c.setName(body.name());
+        c.setDescription(body.description());
+        return categories.save(c);
     }
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@SuppressWarnings("unused") AuthUser user, @PathVariable long id) {
-        if (!categories.delete(id)) {
+        if (!categories.existsById(id)) {
             throw new ApiException(HttpStatus.NOT_FOUND, "category " + id + " not found");
         }
+        categories.deleteById(id);
     }
 
     /**

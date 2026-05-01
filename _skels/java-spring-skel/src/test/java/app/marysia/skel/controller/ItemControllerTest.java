@@ -1,7 +1,7 @@
 package app.marysia.skel.controller;
 
 import app.marysia.skel.model.Item;
-import app.marysia.skel.service.ItemService;
+import app.marysia.skel.repository.ItemRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -14,13 +14,14 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.lang.reflect.Field;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -38,10 +39,26 @@ class ItemControllerTest {
     private MockMvc mockMvc;
 
     @MockBean
-    private ItemService itemService;
+    private ItemRepository itemRepository;
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    /** Construct an Item with a non-null id (records used to handle this for free). */
+    private static Item makeItem(long id, String name) {
+        Item item = new Item(name, "Description", false, null);
+        try {
+            Field idField = Item.class.getDeclaredField("id");
+            idField.setAccessible(true);
+            idField.set(item, id);
+            Field createdAt = Item.class.getDeclaredField("createdAt");
+            createdAt.setAccessible(true);
+            createdAt.set(item, LocalDateTime.parse("2026-01-01T00:00:00"));
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+        return item;
+    }
 
     /** Register + login, return the access token. */
     private String obtainAccessToken() throws Exception {
@@ -69,8 +86,8 @@ class ItemControllerTest {
 
     @Test
     void getAllItems_ReturnsItemsList() throws Exception {
-        Item item = new Item(1L, "Test Item", "Description", false, null, "2026-01-01T00:00:00", null);
-        when(itemService.findAll()).thenReturn(List.of(item));
+        Item item = makeItem(1L, "Test Item");
+        when(itemRepository.findAllByOrderByCreatedAtDescIdDesc()).thenReturn(List.of(item));
 
         String token = obtainAccessToken();
         mockMvc.perform(get("/api/items")
@@ -81,8 +98,8 @@ class ItemControllerTest {
 
     @Test
     void getItemById_WhenExists_ReturnsItem() throws Exception {
-        Item item = new Item(1L, "Test Item", "Description", false, null, "2026-01-01T00:00:00", null);
-        when(itemService.findById(1L)).thenReturn(Optional.of(item));
+        Item item = makeItem(1L, "Test Item");
+        when(itemRepository.findById(1L)).thenReturn(Optional.of(item));
 
         String token = obtainAccessToken();
         mockMvc.perform(get("/api/items/1")
@@ -93,7 +110,7 @@ class ItemControllerTest {
 
     @Test
     void getItemById_WhenNotExists_ReturnsNotFound() throws Exception {
-        when(itemService.findById(1L)).thenReturn(Optional.empty());
+        when(itemRepository.findById(anyLong())).thenReturn(Optional.empty());
 
         String token = obtainAccessToken();
         mockMvc.perform(get("/api/items/1")
@@ -103,8 +120,8 @@ class ItemControllerTest {
 
     @Test
     void createItem_ReturnsCreatedItem() throws Exception {
-        Item created = new Item(1L, "New Item", "Description", false, null, "2026-01-01T00:00:00", null);
-        when(itemService.create(anyString(), anyString(), anyBoolean(), any())).thenReturn(created);
+        Item created = makeItem(1L, "New Item");
+        when(itemRepository.save(any(Item.class))).thenReturn(created);
 
         String token = obtainAccessToken();
         mockMvc.perform(post("/api/items")

@@ -1,8 +1,10 @@
 package app.marysia.skel.controller;
 
+import app.marysia.skel.model.Category;
 import app.marysia.skel.model.Item;
+import app.marysia.skel.repository.CategoryRepository;
+import app.marysia.skel.repository.ItemRepository;
 import app.marysia.skel.security.AuthUser;
-import app.marysia.skel.service.ItemService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -26,15 +28,17 @@ import java.util.Map;
 @RequestMapping("/api/items")
 public class ItemController {
 
-    private final ItemService items;
+    private final ItemRepository items;
+    private final CategoryRepository categories;
 
-    public ItemController(ItemService items) {
+    public ItemController(ItemRepository items, CategoryRepository categories) {
         this.items = items;
+        this.categories = categories;
     }
 
     @GetMapping
     public List<Item> list(@SuppressWarnings("unused") AuthUser user) {
-        return items.findAll();
+        return items.findAllByOrderByCreatedAtDescIdDesc();
     }
 
     @PostMapping
@@ -45,7 +49,14 @@ public class ItemController {
             throw new ApiException(HttpStatus.BAD_REQUEST, "item name cannot be empty");
         }
         boolean isCompleted = body.isCompleted() != null && body.isCompleted();
-        return items.create(body.name(), body.description(), isCompleted, body.categoryId());
+        Category category = null;
+        if (body.categoryId() != null) {
+            category = categories.findById(body.categoryId())
+                .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST,
+                    "category " + body.categoryId() + " not found"));
+        }
+        Item item = new Item(body.name(), body.description(), isCompleted, category);
+        return items.save(item);
     }
 
     @GetMapping("/{id}")
@@ -62,7 +73,11 @@ public class ItemController {
      */
     @PostMapping("/{id}/complete")
     public Item complete(@SuppressWarnings("unused") AuthUser user, @PathVariable long id) {
-        return items.complete(id)
+        return items.findById(id)
+            .map(item -> {
+                item.setCompleted(true);
+                return items.save(item);
+            })
             .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "item " + id + " not found"));
     }
 
