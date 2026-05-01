@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { eq } from 'drizzle-orm';
 import { getDb } from '../../../../lib/db';
 import { verifyPassword, createToken } from '../../../../lib/auth';
+import { users } from '../../../../lib/schema';
 
 /**
  * POST /api/auth/login
@@ -20,10 +22,9 @@ export async function POST(request) {
     }
 
     const db = getDb();
-    // Allow login by email or username — the column name is a hardcoded
-    // string ('email' or 'username'), not user input, so this is safe.
-    const column = username.includes('@') ? 'email' : 'username';
-    const user = db.prepare(`SELECT * FROM users WHERE ${column} = ?`).get(username);
+    // Allow login by email or username -- decide which column to match on.
+    const lookupColumn = username.includes('@') ? users.email : users.username;
+    const user = db.select().from(users).where(eq(lookupColumn, username)).get();
 
     if (!user) {
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });

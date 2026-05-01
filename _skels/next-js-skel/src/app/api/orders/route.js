@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { eq, desc } from 'drizzle-orm';
 import { getDb } from '../../../lib/db';
 import { authenticateRequest } from '../../../lib/auth';
+import { orders } from '../../../lib/schema';
 
 /**
  * GET /api/orders
@@ -17,7 +19,12 @@ export async function GET(request) {
 
   const userId = user.sub ? Number(user.sub) : null;
   const db = getDb();
-  const rows = db.prepare('SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC').all(userId);
+  const rows = db
+    .select()
+    .from(orders)
+    .where(eq(orders.user_id, userId))
+    .orderBy(desc(orders.created_at))
+    .all();
   return NextResponse.json(rows);
 }
 
@@ -37,10 +44,11 @@ export async function POST(request) {
   const userId = user.sub ? Number(user.sub) : null;
   const db = getDb();
 
-  const stmt = db.prepare('INSERT INTO orders (user_id, status) VALUES (?, ?)');
-  const result = stmt.run(userId, 'draft');
-
-  const created = db.prepare('SELECT * FROM orders WHERE id = ?').get(result.lastInsertRowid);
+  const created = db
+    .insert(orders)
+    .values({ user_id: userId, status: 'draft' })
+    .returning()
+    .get();
 
   return NextResponse.json(created, { status: 201 });
 }

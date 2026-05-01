@@ -1,23 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '../../../lib/db';
 import { authenticateRequest } from '../../../lib/auth';
-
-/**
- * Convert an item row from SQLite (is_completed as 0/1)
- * to an API response object (is_completed as boolean).
- */
-function formatItem(row) {
-  return {
-    id: row.id,
-    name: row.name,
-    description: row.description,
-    is_completed: row.is_completed === 1,
-    category_id: row.category_id ?? null,
-    owner_id: row.owner_id,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  };
-}
+import { items } from '../../../lib/schema';
 
 /**
  * GET /api/items
@@ -31,8 +15,8 @@ export async function GET(request) {
   }
 
   const db = getDb();
-  const rows = db.prepare('SELECT * FROM items').all();
-  return NextResponse.json(rows.map(formatItem));
+  const rows = db.select().from(items).all();
+  return NextResponse.json(rows);
 }
 
 /**
@@ -57,17 +41,21 @@ export async function POST(request) {
     }
 
     const db = getDb();
-    const completed = is_completed ? 1 : 0;
     const ownerId = user.sub ? Number(user.sub) : null;
 
-    const stmt = db.prepare(
-      'INSERT INTO items (name, description, is_completed, category_id, owner_id) VALUES (?, ?, ?, ?, ?)'
-    );
-    const result = stmt.run(name, description || null, completed, category_id ?? null, ownerId);
+    const created = db
+      .insert(items)
+      .values({
+        name,
+        description: description || null,
+        is_completed: Boolean(is_completed),
+        category_id: category_id ?? null,
+        owner_id: ownerId,
+      })
+      .returning()
+      .get();
 
-    const created = db.prepare('SELECT * FROM items WHERE id = ?').get(result.lastInsertRowid);
-
-    return NextResponse.json(formatItem(created), { status: 201 });
+    return NextResponse.json(created, { status: 201 });
   } catch (err) {
     if (err instanceof SyntaxError) {
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });

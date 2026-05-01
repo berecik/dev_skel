@@ -1,22 +1,25 @@
 /**
  * Seed module — creates default user accounts from environment variables.
  *
- * Reads USER_* and SUPERUSER_* env vars (via config) and inserts the
- * corresponding rows into the `users` table if they do not already exist.
- * Passwords are hashed with bcrypt before storage.
+ * Reads USER_* and SUPERUSER_* env vars and inserts the corresponding rows
+ * into the `users` table if they do not already exist. Passwords are hashed
+ * with bcrypt before storage. All DB access goes through Drizzle's query
+ * builder -- no raw SQL.
  *
  * Called automatically by `getDb()` after schema initialisation so that
  * every first run of a fresh skeleton already has usable accounts.
  */
 
 const bcrypt = require('bcryptjs');
+const { eq } = require('drizzle-orm');
+const { users } = require('./schema');
 
 const SALT_ROUNDS = 12;
 
 /**
  * Synchronously hash a password with bcrypt.
  * We intentionally use the sync variant here because better-sqlite3 is
- * synchronous and the seed runs once at startup — there is no request
+ * synchronous and the seed runs once at startup -- there is no request
  * to block.
  */
 function hashPasswordSync(password) {
@@ -29,13 +32,21 @@ function hashPasswordSync(password) {
 function upsertUser(db, { username, email, password }) {
   if (!username || !password) return;
 
-  const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+  const existing = db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.username, username))
+    .get();
   if (existing) return;
 
   const hash = hashPasswordSync(password);
-  db.prepare(
-    'INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)'
-  ).run(username, email || null, hash);
+  db.insert(users)
+    .values({
+      username,
+      email: email || null,
+      password_hash: hash,
+    })
+    .run();
 }
 
 /**

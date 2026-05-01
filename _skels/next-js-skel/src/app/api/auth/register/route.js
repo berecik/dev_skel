@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '../../../../lib/db';
 import { hashPassword } from '../../../../lib/auth';
+import { users } from '../../../../lib/schema';
 
 /**
  * POST /api/auth/register
@@ -32,17 +33,22 @@ export async function POST(request) {
     const passwordHash = await hashPassword(password);
 
     try {
-      const stmt = db.prepare(
-        'INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)'
-      );
-      const result = stmt.run(username, email || null, passwordHash);
+      const created = db
+        .insert(users)
+        .values({
+          username,
+          email: email || null,
+          password_hash: passwordHash,
+        })
+        .returning()
+        .get();
 
       return NextResponse.json(
         {
           user: {
-            id: Number(result.lastInsertRowid),
-            username,
-            email: email || null,
+            id: created.id,
+            username: created.username,
+            email: created.email,
           },
         },
         { status: 201 }

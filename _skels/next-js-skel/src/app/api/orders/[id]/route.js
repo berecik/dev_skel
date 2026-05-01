@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { eq, and, asc } from 'drizzle-orm';
 import { getDb } from '../../../../lib/db';
 import { authenticateRequest } from '../../../../lib/auth';
+import { orders, orderLines, orderAddresses } from '../../../../lib/schema';
 
 /**
  * GET /api/orders/[id]
@@ -17,22 +19,33 @@ export async function GET(request, { params }) {
   }
 
   const { id } = await params;
+  const orderId = Number(id);
   const userId = user.sub ? Number(user.sub) : null;
   const db = getDb();
 
-  const order = db.prepare('SELECT * FROM orders WHERE id = ? AND user_id = ?').get(Number(id), userId);
+  const order = db
+    .select()
+    .from(orders)
+    .where(and(eq(orders.id, orderId), eq(orders.user_id, userId)))
+    .get();
   if (!order) {
     return NextResponse.json({ error: 'Order not found' }, { status: 404 });
   }
 
-  const lines = db.prepare(
-    `SELECT ol.id, ol.catalog_item_id, ol.quantity, ol.unit_price
-     FROM order_lines ol
-     WHERE ol.order_id = ?
-     ORDER BY ol.id`
-  ).all(Number(id));
+  const lines = db
+    .select({
+      id: orderLines.id,
+      catalog_item_id: orderLines.catalog_item_id,
+      quantity: orderLines.quantity,
+      unit_price: orderLines.unit_price,
+    })
+    .from(orderLines)
+    .where(eq(orderLines.order_id, orderId))
+    .orderBy(asc(orderLines.id))
+    .all();
 
-  const address = db.prepare('SELECT * FROM order_addresses WHERE order_id = ?').get(Number(id)) || null;
+  const address =
+    db.select().from(orderAddresses).where(eq(orderAddresses.order_id, orderId)).get() || null;
 
   return NextResponse.json({ ...order, lines, address });
 }

@@ -1,23 +1,8 @@
 import { NextResponse } from 'next/server';
+import { eq } from 'drizzle-orm';
 import { getDb } from '../../../../../lib/db';
 import { authenticateRequest } from '../../../../../lib/auth';
-
-/**
- * Convert an item row from SQLite (is_completed as 0/1)
- * to an API response object (is_completed as boolean).
- */
-function formatItem(row) {
-  return {
-    id: row.id,
-    name: row.name,
-    description: row.description,
-    is_completed: row.is_completed === 1,
-    category_id: row.category_id ?? null,
-    owner_id: row.owner_id,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  };
-}
+import { items } from '../../../../../lib/schema';
 
 /**
  * POST /api/items/[id]/complete
@@ -32,17 +17,20 @@ export async function POST(request, { params }) {
   }
 
   const { id } = await params;
+  const itemId = Number(id);
   const db = getDb();
 
-  const existing = db.prepare('SELECT * FROM items WHERE id = ?').get(Number(id));
+  const existing = db.select().from(items).where(eq(items.id, itemId)).get();
   if (!existing) {
     return NextResponse.json({ error: 'Item not found' }, { status: 404 });
   }
 
-  db.prepare('UPDATE items SET is_completed = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
-    Number(id)
-  );
+  const updated = db
+    .update(items)
+    .set({ is_completed: true, updated_at: new Date() })
+    .where(eq(items.id, itemId))
+    .returning()
+    .get();
 
-  const updated = db.prepare('SELECT * FROM items WHERE id = ?').get(Number(id));
-  return NextResponse.json(formatItem(updated));
+  return NextResponse.json(updated);
 }

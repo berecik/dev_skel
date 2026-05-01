@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { eq } from 'drizzle-orm';
 import { getDb } from '../../../../lib/db';
 import { authenticateRequest } from '../../../../lib/auth';
+import { categories } from '../../../../lib/schema';
 
 /**
  * GET /api/categories/[id]
@@ -15,7 +17,7 @@ export async function GET(request, { params }) {
 
   const { id } = await params;
   const db = getDb();
-  const row = db.prepare('SELECT * FROM categories WHERE id = ?').get(Number(id));
+  const row = db.select().from(categories).where(eq(categories.id, Number(id))).get();
 
   if (!row) {
     return NextResponse.json({ error: 'Category not found' }, { status: 404 });
@@ -37,9 +39,10 @@ export async function PUT(request, { params }) {
   }
 
   const { id } = await params;
+  const categoryId = Number(id);
   const db = getDb();
 
-  const existing = db.prepare('SELECT * FROM categories WHERE id = ?').get(Number(id));
+  const existing = db.select().from(categories).where(eq(categories.id, categoryId)).get();
   if (!existing) {
     return NextResponse.json({ error: 'Category not found' }, { status: 404 });
   }
@@ -48,14 +51,17 @@ export async function PUT(request, { params }) {
     const body = await request.json();
     const { name, description } = body;
 
-    const updatedName = name !== undefined ? name : existing.name;
-    const updatedDescription = description !== undefined ? description : existing.description;
+    const updated = db
+      .update(categories)
+      .set({
+        name: name !== undefined ? name : existing.name,
+        description: description !== undefined ? description : existing.description,
+        updated_at: new Date(),
+      })
+      .where(eq(categories.id, categoryId))
+      .returning()
+      .get();
 
-    db.prepare(
-      'UPDATE categories SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-    ).run(updatedName, updatedDescription, Number(id));
-
-    const updated = db.prepare('SELECT * FROM categories WHERE id = ?').get(Number(id));
     return NextResponse.json(updated);
   } catch (err) {
     if (err instanceof SyntaxError) {
@@ -81,13 +87,14 @@ export async function DELETE(request, { params }) {
   }
 
   const { id } = await params;
+  const categoryId = Number(id);
   const db = getDb();
 
-  const existing = db.prepare('SELECT * FROM categories WHERE id = ?').get(Number(id));
+  const existing = db.select().from(categories).where(eq(categories.id, categoryId)).get();
   if (!existing) {
     return NextResponse.json({ error: 'Category not found' }, { status: 404 });
   }
 
-  db.prepare('DELETE FROM categories WHERE id = ?').run(Number(id));
+  db.delete(categories).where(eq(categories.id, categoryId)).run();
   return new NextResponse(null, { status: 204 });
 }

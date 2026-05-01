@@ -1,154 +1,153 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
-const Database = require('better-sqlite3');
-const { initDb } = require('./db');
+const { eq } = require('drizzle-orm');
+const { createTestDb } = require('./db');
+const { users, items, categories } = require('./schema');
 
 describe('db module', () => {
-  it('initDb creates users and items tables', () => {
-    const db = new Database(':memory:');
-    initDb(db);
+  it('createTestDb creates users and items tables', () => {
+    const db = createTestDb();
+    const sqlite = db.$client;
 
-    const tables = db
+    const tables = sqlite
       .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
       .all()
       .map((r) => r.name);
 
     assert.ok(tables.includes('users'), 'users table should exist');
     assert.ok(tables.includes('items'), 'items table should exist');
-    db.close();
+    sqlite.close();
   });
 
-  it('can insert and query items', () => {
-    const db = new Database(':memory:');
-    initDb(db);
+  it('can insert and query items via Drizzle', () => {
+    const db = createTestDb();
 
-    const stmt = db.prepare(
-      'INSERT INTO items (name, description, is_completed) VALUES (?, ?, ?)'
-    );
-    const result = stmt.run('Test Item', 'A test item', 0);
-    assert.ok(result.lastInsertRowid > 0, 'should get an insert id');
+    const inserted = db
+      .insert(items)
+      .values({ name: 'Test Item', description: 'A test item', is_completed: false })
+      .returning()
+      .get();
+    assert.ok(inserted.id > 0, 'should get an insert id');
 
-    const row = db.prepare('SELECT * FROM items WHERE id = ?').get(result.lastInsertRowid);
+    const row = db.select().from(items).where(eq(items.id, inserted.id)).get();
     assert.strictEqual(row.name, 'Test Item');
     assert.strictEqual(row.description, 'A test item');
-    assert.strictEqual(row.is_completed, 0);
-    db.close();
+    assert.strictEqual(row.is_completed, false);
+    db.$client.close();
   });
 
-  it('can insert and query users', () => {
-    const db = new Database(':memory:');
-    initDb(db);
+  it('can insert and query users via Drizzle', () => {
+    const db = createTestDb();
 
-    const stmt = db.prepare(
-      'INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)'
-    );
-    const result = stmt.run('alice', 'alice@example.com', 'fakehash');
-    assert.ok(result.lastInsertRowid > 0, 'should get an insert id');
+    const inserted = db
+      .insert(users)
+      .values({ username: 'alice', email: 'alice@example.com', password_hash: 'fakehash' })
+      .returning()
+      .get();
+    assert.ok(inserted.id > 0, 'should get an insert id');
 
-    const row = db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid);
+    const row = db.select().from(users).where(eq(users.id, inserted.id)).get();
     assert.strictEqual(row.username, 'alice');
     assert.strictEqual(row.email, 'alice@example.com');
     assert.strictEqual(row.password_hash, 'fakehash');
-    db.close();
+    db.$client.close();
   });
 
   it('enforces unique username constraint', () => {
-    const db = new Database(':memory:');
-    initDb(db);
+    const db = createTestDb();
 
-    const stmt = db.prepare(
-      'INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)'
-    );
-    stmt.run('bob', 'bob@example.com', 'hash1');
+    db.insert(users)
+      .values({ username: 'bob', email: 'bob@example.com', password_hash: 'hash1' })
+      .run();
 
     assert.throws(
-      () => stmt.run('bob', 'bob2@example.com', 'hash2'),
-      /UNIQUE constraint failed/
+      () =>
+        db
+          .insert(users)
+          .values({ username: 'bob', email: 'bob2@example.com', password_hash: 'hash2' })
+          .run(),
+      /UNIQUE constraint failed/,
     );
-    db.close();
+    db.$client.close();
   });
 
-  it('items default is_completed to 0', () => {
-    const db = new Database(':memory:');
-    initDb(db);
+  it('items default is_completed to false', () => {
+    const db = createTestDb();
 
-    db.prepare('INSERT INTO items (name) VALUES (?)').run('Simple Item');
-    const row = db.prepare('SELECT * FROM items WHERE name = ?').get('Simple Item');
-    assert.strictEqual(row.is_completed, 0);
-    db.close();
+    db.insert(items).values({ name: 'Simple Item' }).run();
+    const row = db.select().from(items).where(eq(items.name, 'Simple Item')).get();
+    assert.strictEqual(row.is_completed, false);
+    db.$client.close();
   });
 
-  it('initDb creates categories table', () => {
-    const db = new Database(':memory:');
-    initDb(db);
+  it('createTestDb creates categories table', () => {
+    const db = createTestDb();
+    const sqlite = db.$client;
 
-    const tables = db
+    const tables = sqlite
       .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
       .all()
       .map((r) => r.name);
 
     assert.ok(tables.includes('categories'), 'categories table should exist');
-    db.close();
+    sqlite.close();
   });
 
   it('can insert and query categories', () => {
-    const db = new Database(':memory:');
-    initDb(db);
+    const db = createTestDb();
 
-    const stmt = db.prepare(
-      'INSERT INTO categories (name, description) VALUES (?, ?)'
-    );
-    const result = stmt.run('Books', 'Book-related items');
-    assert.ok(result.lastInsertRowid > 0, 'should get an insert id');
+    const inserted = db
+      .insert(categories)
+      .values({ name: 'Books', description: 'Book-related items' })
+      .returning()
+      .get();
+    assert.ok(inserted.id > 0, 'should get an insert id');
 
-    const row = db.prepare('SELECT * FROM categories WHERE id = ?').get(result.lastInsertRowid);
+    const row = db.select().from(categories).where(eq(categories.id, inserted.id)).get();
     assert.strictEqual(row.name, 'Books');
     assert.strictEqual(row.description, 'Book-related items');
-    db.close();
+    db.$client.close();
   });
 
   it('enforces unique category name constraint', () => {
-    const db = new Database(':memory:');
-    initDb(db);
+    const db = createTestDb();
 
-    const stmt = db.prepare(
-      'INSERT INTO categories (name, description) VALUES (?, ?)'
-    );
-    stmt.run('Books', 'First');
+    db.insert(categories).values({ name: 'Books', description: 'First' }).run();
 
     assert.throws(
-      () => stmt.run('Books', 'Second'),
-      /UNIQUE constraint failed/
+      () => db.insert(categories).values({ name: 'Books', description: 'Second' }).run(),
+      /UNIQUE constraint failed/,
     );
-    db.close();
+    db.$client.close();
   });
 
   it('items can reference a category', () => {
-    const db = new Database(':memory:');
-    db.pragma('foreign_keys = ON');
-    initDb(db);
+    const db = createTestDb();
 
-    const catResult = db.prepare(
-      'INSERT INTO categories (name, description) VALUES (?, ?)'
-    ).run('Tools', 'Tool items');
+    const cat = db
+      .insert(categories)
+      .values({ name: 'Tools', description: 'Tool items' })
+      .returning()
+      .get();
 
-    const itemResult = db.prepare(
-      'INSERT INTO items (name, category_id) VALUES (?, ?)'
-    ).run('Hammer', catResult.lastInsertRowid);
+    const item = db
+      .insert(items)
+      .values({ name: 'Hammer', category_id: cat.id })
+      .returning()
+      .get();
 
-    const row = db.prepare('SELECT * FROM items WHERE id = ?').get(itemResult.lastInsertRowid);
+    const row = db.select().from(items).where(eq(items.id, item.id)).get();
     assert.strictEqual(row.name, 'Hammer');
-    assert.strictEqual(row.category_id, Number(catResult.lastInsertRowid));
-    db.close();
+    assert.strictEqual(row.category_id, cat.id);
+    db.$client.close();
   });
 
   it('items category_id defaults to null', () => {
-    const db = new Database(':memory:');
-    initDb(db);
+    const db = createTestDb();
 
-    db.prepare('INSERT INTO items (name) VALUES (?)').run('No Category Item');
-    const row = db.prepare('SELECT * FROM items WHERE name = ?').get('No Category Item');
+    db.insert(items).values({ name: 'No Category Item' }).run();
+    const row = db.select().from(items).where(eq(items.name, 'No Category Item')).get();
     assert.strictEqual(row.category_id, null);
-    db.close();
+    db.$client.close();
   });
 });

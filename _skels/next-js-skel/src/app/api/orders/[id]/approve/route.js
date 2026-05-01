@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { eq } from 'drizzle-orm';
 import { getDb } from '../../../../../lib/db';
 import { authenticateRequest } from '../../../../../lib/auth';
+import { orders } from '../../../../../lib/schema';
 
 /**
  * POST /api/orders/[id]/approve
@@ -16,9 +18,10 @@ export async function POST(request, { params }) {
   }
 
   const { id } = await params;
+  const orderId = Number(id);
   const db = getDb();
 
-  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(Number(id));
+  const order = db.select().from(orders).where(eq(orders.id, orderId)).get();
   if (!order) {
     return NextResponse.json({ error: 'Order not found' }, { status: 404 });
   }
@@ -31,11 +34,18 @@ export async function POST(request, { params }) {
     const body = await request.json();
     const { wait_minutes, feedback } = body;
 
-    db.prepare(
-      'UPDATE orders SET status = ?, wait_minutes = ?, feedback = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-    ).run('approved', wait_minutes ?? null, feedback || null, Number(id));
+    const updated = db
+      .update(orders)
+      .set({
+        status: 'approved',
+        wait_minutes: wait_minutes ?? null,
+        feedback: feedback || null,
+        updated_at: new Date(),
+      })
+      .where(eq(orders.id, orderId))
+      .returning()
+      .get();
 
-    const updated = db.prepare('SELECT * FROM orders WHERE id = ?').get(Number(id));
     return NextResponse.json(updated);
   } catch (err) {
     if (err instanceof SyntaxError) {

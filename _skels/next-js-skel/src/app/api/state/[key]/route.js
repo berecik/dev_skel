@@ -6,8 +6,10 @@
  */
 
 import { NextResponse } from 'next/server';
+import { eq, and } from 'drizzle-orm';
 import { getDb } from '../../../../lib/db';
 import { authenticateRequest } from '../../../../lib/auth';
+import { reactState } from '../../../../lib/schema';
 
 export async function PUT(request, { params }) {
   let user;
@@ -20,15 +22,17 @@ export async function PUT(request, { params }) {
   const { key } = await params;
   const body = await request.json();
   const value = body.value ?? '';
+  const userId = Number(user.sub);
+  const now = new Date();
 
   const db = getDb();
-  const now = new Date().toISOString().replace('T', ' ').split('.')[0];
-
-  db.prepare(`
-    INSERT INTO react_state (user_id, key, value, updated_at)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-  `).run(user.sub, key, value, now);
+  db.insert(reactState)
+    .values({ user_id: userId, key, value, updated_at: now })
+    .onConflictDoUpdate({
+      target: [reactState.user_id, reactState.key],
+      set: { value, updated_at: now },
+    })
+    .run();
 
   return NextResponse.json({ key, value, updated_at: now });
 }
@@ -42,9 +46,12 @@ export async function DELETE(request, { params }) {
   }
 
   const { key } = await params;
+  const userId = Number(user.sub);
 
   const db = getDb();
-  db.prepare('DELETE FROM react_state WHERE user_id = ? AND key = ?').run(user.sub, key);
+  db.delete(reactState)
+    .where(and(eq(reactState.user_id, userId), eq(reactState.key, key)))
+    .run();
 
   return NextResponse.json({ deleted: key });
 }

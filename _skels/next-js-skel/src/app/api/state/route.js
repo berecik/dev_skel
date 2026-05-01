@@ -6,8 +6,10 @@
  */
 
 import { NextResponse } from 'next/server';
+import { eq } from 'drizzle-orm';
 import { getDb } from '../../../lib/db';
 import { authenticateRequest } from '../../../lib/auth';
+import { reactState } from '../../../lib/schema';
 
 export async function GET(request) {
   let user;
@@ -18,7 +20,11 @@ export async function GET(request) {
   }
 
   const db = getDb();
-  const rows = db.prepare('SELECT key, value FROM react_state WHERE user_id = ?').all(user.sub);
+  const rows = db
+    .select({ key: reactState.key, value: reactState.value })
+    .from(reactState)
+    .where(eq(reactState.user_id, Number(user.sub)))
+    .all();
 
   const result = {};
   for (const row of rows) {

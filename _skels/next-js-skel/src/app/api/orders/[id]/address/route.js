@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { eq, and } from 'drizzle-orm';
 import { getDb } from '../../../../../lib/db';
 import { authenticateRequest } from '../../../../../lib/auth';
+import { orders, orderAddresses } from '../../../../../lib/schema';
 
 /**
  * PUT /api/orders/[id]/address
@@ -16,10 +18,15 @@ export async function PUT(request, { params }) {
   }
 
   const { id } = await params;
+  const orderId = Number(id);
   const userId = user.sub ? Number(user.sub) : null;
   const db = getDb();
 
-  const order = db.prepare('SELECT * FROM orders WHERE id = ? AND user_id = ?').get(Number(id), userId);
+  const order = db
+    .select()
+    .from(orders)
+    .where(and(eq(orders.id, orderId), eq(orders.user_id, userId)))
+    .get();
   if (!order) {
     return NextResponse.json({ error: 'Order not found' }, { status: 404 });
   }
@@ -32,22 +39,40 @@ export async function PUT(request, { params }) {
     const { street, city, zip_code, phone, notes } = body;
 
     if (!street || !city || !zip_code) {
-      return NextResponse.json({ error: 'street, city, and zip_code are required' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'street, city, and zip_code are required' },
+        { status: 400 },
+      );
     }
 
-    const existing = db.prepare('SELECT * FROM order_addresses WHERE order_id = ?').get(Number(id));
+    const existing = db
+      .select()
+      .from(orderAddresses)
+      .where(eq(orderAddresses.order_id, orderId))
+      .get();
 
     if (existing) {
-      db.prepare(
-        `UPDATE order_addresses
-         SET street = ?, city = ?, zip_code = ?, phone = ?, notes = ?
-         WHERE order_id = ?`
-      ).run(street, city, zip_code, phone || '', notes || '', Number(id));
+      db.update(orderAddresses)
+        .set({
+          street,
+          city,
+          zip_code,
+          phone: phone || '',
+          notes: notes || '',
+        })
+        .where(eq(orderAddresses.order_id, orderId))
+        .run();
     } else {
-      db.prepare(
-        `INSERT INTO order_addresses (order_id, street, city, zip_code, phone, notes)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      ).run(Number(id), street, city, zip_code, phone || '', notes || '');
+      db.insert(orderAddresses)
+        .values({
+          order_id: orderId,
+          street,
+          city,
+          zip_code,
+          phone: phone || '',
+          notes: notes || '',
+        })
+        .run();
     }
 
     return NextResponse.json({ ok: true });

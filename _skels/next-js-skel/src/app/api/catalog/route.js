@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { asc } from 'drizzle-orm';
 import { getDb } from '../../../lib/db';
 import { authenticateRequest } from '../../../lib/auth';
+import { catalogItems } from '../../../lib/schema';
 
 /**
  * GET /api/catalog
@@ -8,7 +10,7 @@ import { authenticateRequest } from '../../../lib/auth';
  */
 export async function GET() {
   const db = getDb();
-  const rows = db.prepare('SELECT * FROM catalog_items ORDER BY name').all();
+  const rows = db.select().from(catalogItems).orderBy(asc(catalogItems.name)).all();
   return NextResponse.json(rows);
 }
 
@@ -33,18 +35,18 @@ export async function POST(request) {
     }
 
     const db = getDb();
-    const stmt = db.prepare(
-      'INSERT INTO catalog_items (name, description, price, category, available) VALUES (?, ?, ?, ?, ?)'
-    );
-    const result = stmt.run(
-      name,
-      description || '',
-      price || 0.0,
-      category || '',
-      available !== false ? 1 : 0,
-    );
+    const created = db
+      .insert(catalogItems)
+      .values({
+        name,
+        description: description || '',
+        price: price || 0.0,
+        category: category || '',
+        available: available !== false,
+      })
+      .returning()
+      .get();
 
-    const created = db.prepare('SELECT * FROM catalog_items WHERE id = ?').get(result.lastInsertRowid);
     return NextResponse.json(created, { status: 201 });
   } catch (err) {
     if (err instanceof SyntaxError) {

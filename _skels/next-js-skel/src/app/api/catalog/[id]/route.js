@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { eq } from 'drizzle-orm';
 import { getDb } from '../../../../lib/db';
 import { authenticateRequest } from '../../../../lib/auth';
+import { catalogItems } from '../../../../lib/schema';
 
 /**
  * GET /api/catalog/[id]
@@ -15,7 +17,7 @@ export async function GET(request, { params }) {
 
   const { id } = await params;
   const db = getDb();
-  const row = db.prepare('SELECT * FROM catalog_items WHERE id = ?').get(Number(id));
+  const row = db.select().from(catalogItems).where(eq(catalogItems.id, Number(id))).get();
 
   if (!row) {
     return NextResponse.json({ error: 'Catalog item not found' }, { status: 404 });

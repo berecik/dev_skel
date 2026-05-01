@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { asc } from 'drizzle-orm';
 import { getDb } from '../../../lib/db';
 import { authenticateRequest } from '../../../lib/auth';
+import { categories } from '../../../lib/schema';
 
 /**
  * GET /api/categories
@@ -14,7 +16,7 @@ export async function GET(request) {
   }
 
   const db = getDb();
-  const rows = db.prepare('SELECT * FROM categories ORDER BY name').all();
+  const rows = db.select().from(categories).orderBy(asc(categories.name)).all();
   return NextResponse.json(rows);
 }
 
@@ -39,13 +41,11 @@ export async function POST(request) {
     }
 
     const db = getDb();
-
-    const stmt = db.prepare(
-      'INSERT INTO categories (name, description) VALUES (?, ?)'
-    );
-    const result = stmt.run(name, description || null);
-
-    const created = db.prepare('SELECT * FROM categories WHERE id = ?').get(result.lastInsertRowid);
+    const created = db
+      .insert(categories)
+      .values({ name, description: description || null })
+      .returning()
+      .get();
 
     return NextResponse.json(created, { status: 201 });
   } catch (err) {

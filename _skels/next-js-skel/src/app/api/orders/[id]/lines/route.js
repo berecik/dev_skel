@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { eq, and } from 'drizzle-orm';
 import { getDb } from '../../../../../lib/db';
 import { authenticateRequest } from '../../../../../lib/auth';
+import { orders, orderLines, catalogItems } from '../../../../../lib/schema';
 
 /**
  * POST /api/orders/[id]/lines
@@ -16,10 +18,15 @@ export async function POST(request, { params }) {
   }
 
   const { id } = await params;
+  const orderId = Number(id);
   const userId = user.sub ? Number(user.sub) : null;
   const db = getDb();
 
-  const order = db.prepare('SELECT * FROM orders WHERE id = ? AND user_id = ?').get(Number(id), userId);
+  const order = db
+    .select()
+    .from(orders)
+    .where(and(eq(orders.id, orderId), eq(orders.user_id, userId)))
+    .get();
   if (!order) {
     return NextResponse.json({ error: 'Order not found' }, { status: 404 });
   }
@@ -35,7 +42,11 @@ export async function POST(request, { params }) {
       return NextResponse.json({ error: 'catalog_item_id is required' }, { status: 400 });
     }
 
-    const catalogItem = db.prepare('SELECT * FROM catalog_items WHERE id = ?').get(Number(catalog_item_id));
+    const catalogItem = db
+      .select()
+      .from(catalogItems)
+      .where(eq(catalogItems.id, Number(catalog_item_id)))
+      .get();
     if (!catalogItem) {
       return NextResponse.json({ error: 'Catalog item not found' }, { status: 404 });
     }
@@ -43,12 +54,17 @@ export async function POST(request, { params }) {
     const unitPrice = catalogItem.price || 0.0;
     const lineQuantity = quantity || 1;
 
-    const stmt = db.prepare(
-      'INSERT INTO order_lines (order_id, catalog_item_id, quantity, unit_price) VALUES (?, ?, ?, ?)'
-    );
-    const result = stmt.run(Number(id), Number(catalog_item_id), lineQuantity, unitPrice);
+    const created = db
+      .insert(orderLines)
+      .values({
+        order_id: orderId,
+        catalog_item_id: Number(catalog_item_id),
+        quantity: lineQuantity,
+        unit_price: unitPrice,
+      })
+      .returning()
+      .get();
 
-    const created = db.prepare('SELECT * FROM order_lines WHERE id = ?').get(result.lastInsertRowid);
     return NextResponse.json(created, { status: 201 });
   } catch (err) {
     if (err instanceof SyntaxError) {

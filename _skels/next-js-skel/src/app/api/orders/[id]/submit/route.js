@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { eq, and } from 'drizzle-orm';
 import { getDb } from '../../../../../lib/db';
 import { authenticateRequest } from '../../../../../lib/auth';
+import { orders } from '../../../../../lib/schema';
 
 /**
  * POST /api/orders/[id]/submit
@@ -16,10 +18,15 @@ export async function POST(request, { params }) {
   }
 
   const { id } = await params;
+  const orderId = Number(id);
   const userId = user.sub ? Number(user.sub) : null;
   const db = getDb();
 
-  const order = db.prepare('SELECT * FROM orders WHERE id = ? AND user_id = ?').get(Number(id), userId);
+  const order = db
+    .select()
+    .from(orders)
+    .where(and(eq(orders.id, orderId), eq(orders.user_id, userId)))
+    .get();
   if (!order) {
     return NextResponse.json({ error: 'Order not found' }, { status: 404 });
   }
@@ -28,8 +35,12 @@ export async function POST(request, { params }) {
     return NextResponse.json({ error: 'Only draft orders can be submitted' }, { status: 400 });
   }
 
-  db.prepare('UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('pending', Number(id));
+  const updated = db
+    .update(orders)
+    .set({ status: 'pending', updated_at: new Date() })
+    .where(eq(orders.id, orderId))
+    .returning()
+    .get();
 
-  const updated = db.prepare('SELECT * FROM orders WHERE id = ?').get(Number(id));
   return NextResponse.json(updated);
 }
