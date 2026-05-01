@@ -96,58 +96,19 @@ def _heartbeat_env(label: str):
 # --------------------------------------------------------------------------- #
 
 
+# Re-export the canonical OllamaConfig + per-phase model defaults from
+# the single source of truth (`_bin/skel_rag/config.py`). This keeps the
+# old top-level import paths (``from skel_ai_lib import OllamaConfig``)
+# working without duplicating the dataclass definition or its phase-
+# specific helper methods (`for_fix`, `for_create_test`, `for_check_test`,
+# `for_docs`).
 from skel_rag.config import (  # noqa: E402 — stdlib-only, safe at top level
     DEFAULT_OLLAMA_BASE_URL,
+    DEFAULT_OLLAMA_GEN_MODEL as DEFAULT_OLLAMA_MODEL,
+    DEFAULT_TIMEOUT,
+    OllamaConfig,
     _resolve_base_url,
 )
-
-DEFAULT_OLLAMA_MODEL = "qwen3-coder:30b"
-# seconds — local Ollama can be slow on big models. The default is sized
-# for ~30B-class instruction models like qwen3-coder:30b (a single completion
-# can include a 30-40 s cold-load on the first call plus several minutes
-# of generation on long files). Override with OLLAMA_TIMEOUT in the
-# environment when running on faster hardware or against a smaller model.
-DEFAULT_TIMEOUT = 1800
-
-
-@dataclass
-class OllamaConfig:
-    """Connection details for an Ollama server (OpenAI-compatible API)."""
-
-    model: str = DEFAULT_OLLAMA_MODEL
-    base_url: str = DEFAULT_OLLAMA_BASE_URL
-    timeout: int = DEFAULT_TIMEOUT
-    temperature: float = 0.2
-
-    @classmethod
-    def from_env(cls) -> "OllamaConfig":
-        """Build a config from ``OLLAMA_*`` environment variables.
-
-        Resolution: ``OLLAMA_BASE_URL`` (explicit) → ``OLLAMA_HOST``
-        (``host:port``) → default ``localhost:11434``. A trailing
-        ``/v1`` is normalised away because the rest of this module
-        appends the route segments itself.
-        """
-
-        base = _resolve_base_url()
-        if base.endswith("/v1"):
-            base = base[: -len("/v1")]
-        if base.endswith("/"):
-            base = base.rstrip("/")
-        try:
-            timeout = int(os.environ.get("OLLAMA_TIMEOUT", str(DEFAULT_TIMEOUT)))
-        except ValueError:
-            timeout = DEFAULT_TIMEOUT
-        try:
-            temperature = float(os.environ.get("OLLAMA_TEMPERATURE", "0.2"))
-        except ValueError:
-            temperature = 0.2
-        return cls(
-            model=os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL),
-            base_url=base,
-            timeout=timeout,
-            temperature=temperature,
-        )
 
 
 @dataclass
@@ -2225,6 +2186,138 @@ def _generate_test_file(
         )
 
 
+def _check_test_file(
+    *,
+    check_client: OllamaClient,
+    test_client: OllamaClient,
+    ctx: GenerationContext,
+    test_path: Path,
+    test_type: str,
+    instruction: str,
+    progress: Any = None,
+    max_iterations: int = 1,
+) -> None:
+    """Have the CHECK_TEST model review a generated test file.
+
+    Sends the test contents and the implementation source it exercises
+    to ``check_client`` (default ``qwq:32b`` per ``OllamaConfig``) with
+    a prompt asking for any inconsistency, hallucinated symbol, broken
+    import, or mismatched assertion. If the model reports a problem, we
+    regenerate the test via ``test_client`` with the critique annotated
+    onto the original instruction. Best-effort — silently no-ops if the
+    check model is unreachable, since the test will still be exercised
+    by the existing 6c/6d run-and-fix loop.
+    """
+    if not test_path.is_file():
+        return
+
+    service_dir = ctx.project_dir
+    test_text = test_path.read_text(encoding="utf-8", errors="replace")
+
+    # Pull a small slice of the implementation source the test will
+    # exercise. Same patterns as `_generate_test_file` but tighter
+    # caps so the review prompt fits comfortably under the model's
+    # context window.
+    source_summary = ""
+    for pattern in (
+        "app/**/*.py", "src/**/*.ts", "lib/**/*.dart",
+        "src/main/**/*.java",
+    ):
+        for sf in sorted(service_dir.glob(pattern)):
+            if any(skip in str(sf) for skip in (
+                "__pycache__", "node_modules", ".venv", "site-packages",
+            )):
+                continue
+            try:
+                content = sf.read_text(encoding="utf-8")[:2000]
+                source_summary += (
+                    f"\n--- {sf.relative_to(service_dir)} ---\n{content}\n"
+                )
+            except (OSError, UnicodeDecodeError):
+                pass
+            if len(source_summary) > 8000:
+                break
+
+    review_system = (
+        "You are a meticulous Python test reviewer. Your job is to spot "
+        "REAL issues — imports that won't resolve, references to symbols "
+        "the implementation doesn't define, assertions that contradict the "
+        "implementation's actual response shape, hardcoded values that the "
+        "implementation generates dynamically. Do NOT nitpick style.\n\n"
+        "Reply with EXACTLY one line:\n"
+        "  OK\n"
+        "if the test is consistent with the implementation; otherwise\n"
+        "  FAIL: <one-line reason>\n"
+        "where <one-line reason> names the specific symbol / import / "
+        "assertion that is wrong, with no surrounding prose."
+    )
+    review_user = (
+        f"GENERATED TEST FILE ({test_path.name}):\n```\n{test_text}\n```\n\n"
+        f"IMPLEMENTATION SOURCE:\n{source_summary[:8000]}\n\n"
+        f"Review the test against the implementation. Reply OK or "
+        f"FAIL: <reason>."
+    )
+
+    for attempt in range(1, max_iterations + 1):
+        try:
+            verdict = check_client.chat(review_system, review_user).strip()
+        except Exception as exc:  # noqa: BLE001
+            if progress:
+                progress.write(
+                    f"    check ({test_path.name}): skipped "
+                    f"({type(exc).__name__})\n"
+                )
+            return
+
+        # Reasoning models like qwq emit a `<think>...</think>` block
+        # before the actual verdict. Strip it so we only inspect the
+        # final answer.
+        if "</think>" in verdict:
+            verdict = verdict.split("</think>", 1)[1].strip()
+        # Take only the first non-empty line of the post-thinking output.
+        first = next(
+            (ln.strip() for ln in verdict.splitlines() if ln.strip()),
+            "",
+        )
+        first_upper = first.upper()
+        if first_upper.startswith("OK") or first_upper == "OK":
+            if progress:
+                progress.write(
+                    f"    check ({test_path.name}): OK\n"
+                )
+            return
+        # Treat anything else as a critique reason.
+        reason = first.removeprefix("FAIL:").removeprefix("FAIL").strip(": ")
+        if not reason:
+            reason = first
+        if progress:
+            progress.write(
+                f"    check ({test_path.name}): {reason} — regenerating "
+                f"({attempt}/{max_iterations})\n"
+            )
+
+        annotation = (
+            "\n\nA reviewer found this issue with the previous attempt:\n"
+            f"  {reason}\n"
+            "Fix it in the new version. Output ONLY the corrected file "
+            "contents."
+        )
+        try:
+            _generate_test_file(
+                client=test_client, ctx=ctx,
+                test_type=test_type,
+                instruction=instruction,
+                annotation=annotation,
+                progress=progress,
+            )
+        except Exception as exc:  # noqa: BLE001
+            if progress:
+                progress.write(
+                    f"    check regenerate failed: {type(exc).__name__}\n"
+                )
+            return
+
+
 def _fix_failing_files(
     *,
     client: OllamaClient,
@@ -2449,22 +2542,14 @@ def run_test_generation_phase(
     def time_left():
         return True  # no timeout — bounded by MAX_ITERATIONS instead
 
-    # Use the fix model from config (OLLAMA_FIX_MODEL env var).
-    # Default: qwen2.5-coder:32b (best open-source for code repair).
-    fix_model = (
-        getattr(client.config, "fix_model", None)
-        or os.environ.get("OLLAMA_FIX_MODEL")
-        or "qwen2.5-coder:32b"
-    )
-    if fix_model and fix_model != client.config.model:
+    # All model defaults live in `_bin/skel_rag/config.py` — the single
+    # source of truth. We swap clients via `OllamaConfig.for_*()` so any
+    # env-var override (`OLLAMA_FIX_MODEL`, `OLLAMA_CREATE_TEST_MODEL`,
+    # …) is picked up automatically without touching this code.
+    fix_cfg = client.config.for_fix()
+    fix_model = fix_cfg.model
+    if fix_model != client.config.model:
         try:
-            fix_cfg = OllamaConfig.from_env()
-            fix_cfg = OllamaConfig(
-                model=fix_model,
-                base_url=fix_cfg.base_url,
-                timeout=fix_cfg.timeout,
-                temperature=0.1,
-            )
             fix_client = OllamaClient(fix_cfg)
             fix_client.verify()
             if progress:
@@ -2476,17 +2561,10 @@ def run_test_generation_phase(
     else:
         fix_client = client
 
-    # Test generation model (qwen2.5-coder:32b — best code quality for tests).
-    test_model = getattr(client.config, "test_model", None) or os.environ.get("OLLAMA_TEST_MODEL") or "qwen2.5-coder:32b"
-    if test_model and test_model != client.config.model:
+    test_cfg = client.config.for_create_test()
+    test_model = test_cfg.model
+    if test_model != client.config.model:
         try:
-            test_cfg = OllamaConfig.from_env()
-            test_cfg = OllamaConfig(
-                model=test_model,
-                base_url=test_cfg.base_url,
-                timeout=test_cfg.timeout,
-                temperature=0.2,
-            )
             test_client = OllamaClient(test_cfg)
             test_client.verify()
             if progress:
@@ -2496,22 +2574,41 @@ def run_test_generation_phase(
     else:
         test_client = client
 
-    # Fast fix model (devstral — 10s responses, used for 1st fix attempt).
-    fast_fix_model = "devstral:latest"
+    # Fast fix attempt: same model as the main fix slot but with a tight
+    # timeout. Defined as a config method so the slot is overridable.
+    fast_fix_cfg = client.config.for_fix()
     try:
-        fast_cfg = OllamaConfig.from_env()
-        fast_cfg = OllamaConfig(
-            model=fast_fix_model,
-            base_url=fast_cfg.base_url,
-            timeout=min(fast_cfg.timeout, 300),
-            temperature=0.1,
-        )
-        fast_fix_client = OllamaClient(fast_cfg)
+        fast_fix_client = OllamaClient(fast_fix_cfg)
         fast_fix_client.verify()
         if progress:
-            progress.write(f"  Fast fix model: {fast_fix_model}\n")
+            progress.write(f"  Fast fix model: {fast_fix_cfg.model}\n")
     except Exception:
         fast_fix_client = fix_client  # fallback to heavy fix model
+
+    # CHECK_TEST slot: a reasoning-strong model (default qwq:32b) that
+    # reviews each generated test file against the implementation and
+    # asks the test_client to regenerate when it spots a hallucinated
+    # symbol, broken import, or contradicted assertion. Best-effort —
+    # if the model is unreachable we silently skip and let the existing
+    # 6c/6d run-and-fix loop catch the issue at runtime.
+    check_test_cfg = client.config.for_check_test()
+    if check_test_cfg.model != client.config.model:
+        try:
+            check_test_client = OllamaClient(check_test_cfg)
+            check_test_client.verify()
+            if progress:
+                progress.write(
+                    f"  Check-test model: {check_test_cfg.model}\n"
+                )
+        except Exception:
+            check_test_client = None
+            if progress:
+                progress.write(
+                    f"  Check-test model: unavailable "
+                    f"({check_test_cfg.model}) — skipping pre-flight review\n"
+                )
+    else:
+        check_test_client = None
 
     if progress:
         progress.write("\n  ===== Phase 6: Test generation + fix loop =====\n")
@@ -2605,6 +2702,12 @@ def run_test_generation_phase(
         "Testing scenario: {testing_scenario}"
     )
 
+    def _resolve_test_path(test_type: str) -> Path:
+        return (
+            _find_test_dir(service_dir, ctx.skeleton_name)
+            / _test_filename(test_type, ctx.skeleton_name)
+        )
+
     # 6a
     if progress:
         progress.write("  [6a] Generating cross-stack integration tests...\n")
@@ -2614,6 +2717,16 @@ def run_test_generation_phase(
         instruction=_INSTRUCTION_6A,
         progress=progress,
     )
+    if check_test_client is not None:
+        _check_test_file(
+            check_client=check_test_client,
+            test_client=test_client,
+            ctx=ctx,
+            test_path=_resolve_test_path("cross_stack_integration"),
+            test_type="cross_stack_integration",
+            instruction=_INSTRUCTION_6A,
+            progress=progress,
+        )
 
     # 6b
     if progress:
@@ -2624,6 +2737,16 @@ def run_test_generation_phase(
         instruction=_INSTRUCTION_6B,
         progress=progress,
     )
+    if check_test_client is not None:
+        _check_test_file(
+            check_client=check_test_client,
+            test_client=test_client,
+            ctx=ctx,
+            test_path=_resolve_test_path("e2e"),
+            test_type="e2e",
+            instruction=_INSTRUCTION_6B,
+            progress=progress,
+        )
 
     # 6c-6d loop with same-error detection (bounded by MAX_ITERATIONS)
     iteration = 0

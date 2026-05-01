@@ -256,6 +256,24 @@ class RagAgent:
             raw = self.chat(system=system, user=user_prompt)
             cleaned = clean_response(raw, target.language)
 
+            # Optional CHECK_TEST review: ask the reasoning-strong
+            # model whether the just-generated file is consistent with
+            # the target's prompt + sibling files written earlier in
+            # this manifest. Regenerates once on FAIL. Opt-out via
+            # ``OLLAMA_CHECK_DISABLE=1``. Best-effort: any error in
+            # the review path falls through to the original output.
+            cleaned = self._maybe_check_target(
+                cleaned=cleaned,
+                target=target,
+                expanded=expanded,
+                user_prompt=user_prompt,
+                system=system,
+                ctx=ctx,
+                prior_outputs=prior_outputs,
+                progress=progress,
+                clean_response=clean_response,
+            )
+
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(cleaned, encoding="utf-8")
 
@@ -278,6 +296,142 @@ class RagAgent:
             )
 
         return results
+
+    # ---- post-generation review -------------------------------------------
+
+    def _maybe_check_target(
+        self,
+        *,
+        cleaned: str,
+        target: Any,
+        expanded: Any,
+        user_prompt: str,
+        system: str,
+        ctx: Any,
+        prior_outputs: List[str],
+        progress: Any,
+        clean_response: Any,
+    ) -> str:
+        """Run a CHECK_TEST critique on the just-generated file.
+
+        Returns the corrected file contents if the reviewer flagged a
+        real issue and the regenerated file is non-empty, otherwise
+        the original ``cleaned`` text. Honours
+        ``OLLAMA_CHECK_DISABLE=1`` and silently degrades whenever the
+        check model is unreachable or returns an unparseable verdict
+        — the existing run-and-fix loop downstream still catches real
+        problems at runtime.
+        """
+        import os
+        if os.environ.get("OLLAMA_CHECK_DISABLE", "").strip().lower() in (
+            "1", "true", "yes",
+        ):
+            return cleaned
+
+        check_cfg = self.ollama_cfg.for_check_test()
+        if check_cfg.model == self.ollama_cfg.model:
+            # CHECK_TEST not configured separately — skip the review
+            # to avoid a no-op round-trip.
+            return cleaned
+
+        # Build the review source slice: the just-written file + every
+        # earlier sibling output (prior_outputs already capped to 2000
+        # chars per file) + the wrapper-shared OpenAPI contract when
+        # present. The contract is the canonical surface that prompts
+        # like "endpoint X is undefined" should be checked against.
+        siblings = "\n\n".join(prior_outputs[-6:])  # cap to last 6
+        contract = ""
+        try:
+            spec_path = (
+                ctx.project_dir.parent / "contracts" / "openapi" /
+                "wrapper-api.yaml"
+            )
+            if spec_path.is_file():
+                contract = (
+                    "\n\n--- WRAPPER OPENAPI CONTRACT (canonical "
+                    "surface — every backend in the wrapper exposes "
+                    "these routes) ---\n"
+                    + spec_path.read_text(encoding="utf-8")[:6000]
+                )
+        except Exception:  # noqa: BLE001
+            pass
+
+        review_system = (
+            "You are a meticulous code reviewer. Your job is to spot "
+            "REAL issues — references to symbols that no sibling file "
+            "defines, imports that won't resolve, methods called on a "
+            "class that doesn't declare them, or assertions that "
+            "contradict the contract. Do NOT nitpick style.\n\n"
+            "If the file references the wrapper-shared OpenAPI routes, "
+            "trust those routes — they are real even if no sibling "
+            "file shows them.\n\n"
+            "Reply with EXACTLY one line:\n"
+            "  OK\n"
+            "if the file is consistent; otherwise\n"
+            "  FAIL: <one-line reason>\n"
+            "naming the specific symbol/import/call that is wrong, no "
+            "surrounding prose."
+        )
+        review_user = (
+            f"GENERATED FILE ({expanded.path}):\n```\n{cleaned[:8000]}\n```"
+            f"\n\nSIBLING FILES IN THIS RUN:\n{siblings[:6000]}"
+            f"{contract}\n\nReview. Reply OK or FAIL: <reason>."
+        )
+
+        try:
+            verdict = llm_chat(check_cfg, review_system, review_user).strip()
+        except Exception as exc:  # noqa: BLE001
+            if progress is not None:
+                progress.write(
+                    f"      check ({expanded.path}): skipped "
+                    f"({type(exc).__name__})\n"
+                )
+            return cleaned
+
+        # Strip <think>...</think> reasoning blocks (qwq, deepseek-r1).
+        if "</think>" in verdict:
+            verdict = verdict.split("</think>", 1)[1].strip()
+        first = next(
+            (ln.strip() for ln in verdict.splitlines() if ln.strip()),
+            "",
+        )
+        first_upper = first.upper()
+        if first_upper.startswith("OK") or first_upper == "OK":
+            if progress is not None:
+                progress.write(
+                    f"      check ({expanded.path}): OK\n"
+                )
+            return cleaned
+
+        reason = first.removeprefix("FAIL:").removeprefix("FAIL").strip(": ")
+        if not reason:
+            reason = first
+        if progress is not None:
+            progress.write(
+                f"      check ({expanded.path}): {reason} — regenerating\n"
+            )
+
+        # Re-render the user prompt with the critique appended and
+        # ask the same generator model to fix it. Stays within one
+        # extra round-trip per offending target.
+        regen_user = (
+            user_prompt
+            + "\n\nA reviewer found this issue with the previous "
+            f"version:\n  {reason}\nFix it in the new version. Output "
+            "ONLY the corrected file contents."
+        )
+        try:
+            regen_raw = self.chat(system=system, user=regen_user)
+            regen_cleaned = clean_response(regen_raw, target.language)
+            if regen_cleaned and regen_cleaned.strip():
+                return regen_cleaned
+        except Exception as exc:  # noqa: BLE001
+            if progress is not None:
+                progress.write(
+                    f"      check regenerate failed: "
+                    f"{type(exc).__name__}\n"
+                )
+        return cleaned
 
     # ---- integration phase ------------------------------------------------
 

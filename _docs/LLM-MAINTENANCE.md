@@ -1025,10 +1025,18 @@ the `username` field (detected via `@`).
 #### Legacy entry points (preserved by the shim)
 
 - `OllamaConfig.from_env()` — reads `OLLAMA_HOST` (primary),
-  `OLLAMA_BASE_URL` (optional override), `OLLAMA_MODEL`,
-  `OLLAMA_TIMEOUT`, `OLLAMA_TEMPERATURE`. The `/v1` suffix on the
-  resolved base URL is normalised away because the rest of the package
-  appends the route segment itself.
+  `OLLAMA_BASE_URL` (optional override), and the **per-phase** model
+  env vars `OLLAMA_GEN_MODEL` / `OLLAMA_CREATE_TEST_MODEL` /
+  `OLLAMA_CHECK_TEST_MODEL` / `OLLAMA_FIX_MODEL` / `OLLAMA_DOCS_MODEL`
+  (legacy `OLLAMA_MODEL` and `OLLAMA_TEST_MODEL` still resolve to GEN
+  and CREATE_TEST). Plus `OLLAMA_TIMEOUT` and `OLLAMA_TEMPERATURE`.
+  Bare hostnames in `OLLAMA_HOST` (e.g. `paul`) default to port
+  `11434`; the `/v1` suffix on the resolved base URL is normalised
+  away. Full table + rationale: [`_docs/MODELS.md`](MODELS.md).
+  `_bin/skel_ai_lib.py` no longer carries a duplicate stub — it
+  re-exports `OllamaConfig` from `skel_rag.config` so the per-phase
+  helpers (`for_fix`, `for_create_test`, `for_check_test`, `for_docs`,
+  legacy `for_test`) work everywhere a client config is in scope.
 - `OllamaClient.verify()` — proxies to `skel_rag.llm.verify`, which
   pings `/api/tags` and confirms the configured model is loaded
   locally; raises a friendly `OllamaError` otherwise.

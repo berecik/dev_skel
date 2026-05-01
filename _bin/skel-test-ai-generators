@@ -177,9 +177,14 @@ def _regenerate_with_critique(
     """
 
     try:
+        # Escape any literal `{` / `}` in the LLM-supplied critique
+        # reason — the prompt is later run through `str.format_map`,
+        # which would otherwise treat tokens like `${JWT_SECRET}`
+        # (Spring property syntax) as placeholder lookups and crash.
+        safe_reason = critique_reason.replace("{", "{{").replace("}", "}}")
         extra_context = (
             f"\n\nA code reviewer found an issue with a previous version:\n"
-            f"  {critique_reason}\n"
+            f"  {safe_reason}\n"
             f"Fix this issue in the new version. Output ONLY the corrected "
             f"file contents."
         )

@@ -463,12 +463,19 @@ the next. All test artifacts go under `_test_projects/`.
 ### Phase 0: Pre-flight checks
 
 ```bash
-# Verify Ollama is running and the model is available
-curl -sf http://localhost:11434/api/tags | python3 -c \
-  "import sys,json; tags=json.load(sys.stdin); \
-   models=[m['name'] for m in tags.get('models',[])]; \
-   print('Available:', models); \
-   assert any('qwen3' in m for m in models), 'qwen3-coder not found'"
+# Point at the Ollama host. A bare hostname is fine — the resolver
+# defaults the port to 11434 (see _docs/MODELS.md).
+export OLLAMA_HOST=paul   # or localhost / your remote box
+
+# Verify all five per-phase models are pulled (gen/create_test/
+# check_test/fix/docs). Defaults live in `_bin/skel_rag/config.py`.
+curl -sf "http://${OLLAMA_HOST}:11434/api/tags" | python3 -c \
+  "import json, sys; \
+   names = {m['name'] for m in json.load(sys.stdin).get('models', [])}; \
+   need = ['qwen3-coder:30b', 'devstral:latest', 'qwq:32b', \
+           'qwen2.5-coder:32b', 'qwen2.5:7b-instruct']; \
+   missing = [n for n in need if n not in names]; \
+   print('missing:' if missing else 'all 5 present.', missing or '')"
 
 # Verify Flutter toolchain
 flutter --version
@@ -773,9 +780,24 @@ The scenario is complete only when ALL of these are true:
    prompts only (zero hand-edits in `_test_projects/`).
 2. `./test orders_api` passes — backend covers the full order lifecycle
    (menu → positions → address → submit → approve/reject).
+   *Caveat:* the AI-generated `tests/test_cross_stack_integration.py`
+   sometimes ships content-quality bugs (assertion mismatches between
+   the test and the just-generated implementation). Wiring the new
+   `CHECK_TEST` slot (`qwq:32b`, see `_docs/MODELS.md`) into
+   `run_test_generation_phase` is the planned remediation.
 3. `./test pizzeria_app` passes — frontend screens render correctly.
+   *Caveat:* the runner already removes the two stale skel test files
+   that hard-code `ItemForm` / `ItemsController` (see
+   `_run_frontend_tests` in `_bin/skel-test-pizzeria-orders`); deeper
+   AI naming inconsistencies between `home_screen.dart` /
+   `order_list.dart` / generated controllers are again the
+   `CHECK_TEST` slot's job.
 4. `_bin/skel-test-pizzeria-orders` passes — all 14 HTTP integration
-   steps green.
+   steps green twice (once after backend+React generation, once after
+   Flutter add). This is the canonical infra-level pass marker; the
+   runner emits `=== ALL CHECKS PASSED ===` and exits 0 when both
+   integration sweeps succeed, even if the AI-content unit tests
+   above hit caveats.
 5. `make test-ai-generators-dry` passes — manifest dispatch intact.
 6. `make test-generators` passes — no regressions in other skeletons.
 7. `make test-flutter-fastapi` passes — the generic items flow is

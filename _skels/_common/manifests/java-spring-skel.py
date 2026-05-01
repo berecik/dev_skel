@@ -14,7 +14,7 @@ the dev_skel `{skeleton_name}` skeleton.
 
 Project layout:
 - The Maven project lives at the root of the service directory
-  (`{service_subdir}/`) with a `com.example.skel` base package.
+  (`{service_subdir}/`) with a `app.marysia.skel` base package.
 - The on-disk service directory inside the wrapper `{project_name}/` is
   `{service_subdir}/`.
 - The reference entity is `Item` (table `items`). The user is replacing
@@ -31,7 +31,7 @@ relies on the same env vars from `<wrapper>/.env`):
   application.properties from these prompts.
 - `${{JWT_SECRET}}` / `${{JWT_ALGORITHM}}` / `${{JWT_ISSUER}}` /
   `${{JWT_ACCESS_TTL}}` / `${{JWT_REFRESH_TTL}}` — exposed via the
-  `com.example.skel.config.JwtProperties` `@ConfigurationProperties`
+  `app.marysia.skel.config.JwtProperties` `@ConfigurationProperties`
   bean (registered via `@ConfigurationPropertiesScan` on
   `Application`). Inject the bean wherever you need the secret —
   NEVER hardcode it.
@@ -76,8 +76,8 @@ MANIFEST = {
     ),
     "targets": [
         {
-            "path": "src/main/java/com/example/skel/model/{item_class}.java",
-            "template": "src/main/java/com/example/skel/model/Item.java",
+            "path": "src/main/java/app/marysia/skel/model/{item_class}.java",
+            "template": "src/main/java/app/marysia/skel/model/Item.java",
             "language": "java",
             "description": "model/{item_class}.java — plain Java record (table `{items_plural}`)",
             "prompt": """\
@@ -103,13 +103,13 @@ Required transformations:
   schema used by the shared-DB integration test.
 - The record has NO annotations and NO additional methods beyond the
   implicit record accessors.
-- Package: `com.example.skel.model`.
+- Package: `app.marysia.skel.model`.
 
 Here is the EXACT pattern you MUST follow (replacing Item with
 {item_class}):
 
 ```java
-package com.example.skel.model;
+package app.marysia.skel.model;
 
 /**
  * Wrapper-shared {{@code {items_plural}}} resource.
@@ -140,8 +140,8 @@ REFERENCE (`model/Item.java`):
 """,
         },
         {
-            "path": "src/main/java/com/example/skel/repository/{item_class}Repository.java",
-            "template": "src/main/java/com/example/skel/repository/ItemRepository.java",
+            "path": "src/main/java/app/marysia/skel/repository/{item_class}Repository.java",
+            "template": "src/main/java/app/marysia/skel/repository/ItemRepository.java",
             "language": "java",
             "description": "repository/{item_class}Repository.java — plain JDBC repository (NOT JPA)",
             "prompt": """\
@@ -168,9 +168,9 @@ Here is the EXACT pattern you MUST follow (replacing Item/{item_class}
 and items/{items_plural}):
 
 ```java
-package com.example.skel.repository;
+package app.marysia.skel.repository;
 
-import com.example.skel.model.{item_class};
+import app.marysia.skel.model.{item_class};
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -289,8 +289,8 @@ REFERENCE (`repository/ItemRepository.java`):
 """,
         },
         {
-            "path": "src/main/java/com/example/skel/service/{item_class}Service.java",
-            "template": "src/main/java/com/example/skel/service/ItemService.java",
+            "path": "src/main/java/app/marysia/skel/service/{item_class}Service.java",
+            "template": "src/main/java/app/marysia/skel/service/ItemService.java",
             "language": "java",
             "description": "service/{item_class}Service.java — service layer delegating to JDBC repository",
             "prompt": """\
@@ -314,10 +314,10 @@ Required transformations:
 Here is the EXACT pattern you MUST follow (replacing Item/{item_class}):
 
 ```java
-package com.example.skel.service;
+package app.marysia.skel.service;
 
-import com.example.skel.model.{item_class};
-import com.example.skel.repository.{item_class}Repository;
+import app.marysia.skel.model.{item_class};
+import app.marysia.skel.repository.{item_class}Repository;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -360,8 +360,8 @@ REFERENCE (`service/ItemService.java`):
 """,
         },
         {
-            "path": "src/main/java/com/example/skel/controller/{item_class}Controller.java",
-            "template": "src/main/java/com/example/skel/controller/ItemController.java",
+            "path": "src/main/java/app/marysia/skel/controller/{item_class}Controller.java",
+            "template": "src/main/java/app/marysia/skel/controller/ItemController.java",
             "language": "java",
             "description": "controller/{item_class}Controller.java — REST controller using JDBC-backed service",
             "prompt": """\
@@ -393,11 +393,11 @@ Here is the EXACT pattern you MUST follow (replacing Item/{item_class}
 and items/{items_plural}):
 
 ```java
-package com.example.skel.controller;
+package app.marysia.skel.controller;
 
-import com.example.skel.model.{item_class};
-import com.example.skel.security.AuthUser;
-import com.example.skel.service.{item_class}Service;
+import app.marysia.skel.model.{item_class};
+import app.marysia.skel.security.AuthUser;
+import app.marysia.skel.service.{item_class}Service;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -484,8 +484,8 @@ REFERENCE (`controller/ItemController.java`):
 """,
         },
         {
-            "path": "src/test/java/com/example/skel/controller/{item_class}ControllerTest.java",
-            "template": "src/test/java/com/example/skel/ApplicationTests.java",
+            "path": "src/test/java/app/marysia/skel/controller/{item_class}ControllerTest.java",
+            "template": "src/test/java/app/marysia/skel/ApplicationTests.java",
             "language": "java",
             "description": "test/controller/{item_class}ControllerTest.java — MockMvc integration tests",
             "prompt": """\
@@ -511,7 +511,7 @@ Here is the EXACT pattern you MUST follow (modelled after the existing
 ApplicationTests.java):
 
 ```java
-package com.example.skel.controller;
+package app.marysia.skel.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -687,11 +687,11 @@ INTEGRATION_MANIFEST = {
     "fix_timeout_m": 120,
     "targets": [
         {
-            "path": "src/main/java/com/example/skel/integration/SiblingClients.java",
+            "path": "src/main/java/app/marysia/skel/integration/SiblingClients.java",
             "language": "java",
             "description": "integration/SiblingClients.java — typed HTTP clients for sibling backends",
             "prompt": """\
-Write `src/main/java/com/example/skel/integration/SiblingClients.java`.
+Write `src/main/java/app/marysia/skel/integration/SiblingClients.java`.
 The class exposes one typed inner client class per sibling backend in the
 wrapper.
 
@@ -702,7 +702,7 @@ Wrapper snapshot (sibling services discovered, {sibling_count} total):
 
 Required structure:
 
-- Package: `com.example.skel.integration`.
+- Package: `app.marysia.skel.integration`.
 - Use `java.net.HttpURLConnection` or `org.springframework.web.client.RestTemplate`
   for HTTP calls. Do NOT add external HTTP client dependencies.
 - Each sibling backend gets a static inner class named
@@ -730,11 +730,11 @@ Output the full file contents only.
 """,
         },
         {
-            "path": "src/test/java/com/example/skel/integration/IntegrationTest.java",
+            "path": "src/test/java/app/marysia/skel/integration/IntegrationTest.java",
             "language": "java",
             "description": "test/integration/IntegrationTest.java — cross-service JUnit 5 cases",
             "prompt": """\
-Write `src/test/java/com/example/skel/integration/IntegrationTest.java`.
+Write `src/test/java/app/marysia/skel/integration/IntegrationTest.java`.
 JUnit 5 integration tests that exercise the new `{service_label}` service
 end-to-end and (when sibling backends are present) verify the cross-service
 flow against them.
@@ -793,8 +793,8 @@ Imports:
 - `org.springframework.boot.test.context.SpringBootTest`
 - `org.springframework.beans.factory.annotation.Autowired`
 - `org.springframework.jdbc.core.JdbcTemplate`
-- `com.example.skel.config.JwtProperties`
-- (when {sibling_count} > 0) `com.example.skel.integration.SiblingClients`
+- `app.marysia.skel.config.JwtProperties`
+- (when {sibling_count} > 0) `app.marysia.skel.integration.SiblingClients`
 
 Use 4-space indentation. Output the full file contents only.
 """,

@@ -26,3 +26,5 @@ __pycache__/
 **/.skel_rag_index/
 /.ai/*
 /_test_projects/*
+/.claude/*
+*.lock

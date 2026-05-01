@@ -344,13 +344,30 @@ repository:
 
 When the user asks Claude to "use Ollama" / "AI-generate a service" / etc:
 
-1. Verify Ollama is running (`curl -sf http://localhost:11434/api/tags`)
-   and the requested model is pulled (`ollama list`). The default model
-   is `qwen3-coder:30b` and the default `OLLAMA_TIMEOUT` is `1800`
-   seconds (30 min — covers the 30-40 s cold-load + multi-minute
-   completions a 31B-class model can take on a long file). Drop to a
-   smaller model (e.g. `qwen2.5-coder:7b`) on slower hardware via
-   `OLLAMA_MODEL=...`.
+1. Verify Ollama is running (`curl -sf http://${OLLAMA_HOST:-localhost}:11434/api/tags`)
+   and the requested model is pulled. All five per-phase model
+   defaults (GEN / CREATE_TEST / CHECK_TEST / FIX / DOCS) plus
+   connection settings live in **one file**:
+   `_bin/skel_rag/config.py`. The full table + override env vars
+   (`OLLAMA_GEN_MODEL`, `OLLAMA_CREATE_TEST_MODEL`,
+   `OLLAMA_CHECK_TEST_MODEL`, `OLLAMA_FIX_MODEL`, `OLLAMA_DOCS_MODEL`)
+   is documented in [`_docs/MODELS.md`](_docs/MODELS.md). The legacy
+   `OLLAMA_MODEL` / `OLLAMA_TEST_MODEL` env vars still work and map
+   to GEN / CREATE_TEST. The default `OLLAMA_TIMEOUT` is `600`
+   seconds.
+
+   Resolver behaviour: a bare hostname in `OLLAMA_HOST` (e.g.
+   `OLLAMA_HOST=paul`) defaults to port 11434, so an SSH-style host
+   alias works without manually appending `:11434`. Both
+   `_bin/skel_rag/config.py::_resolve_base_url` and the
+   pizzeria/test-runner copies share this logic.
+
+   `OllamaConfig` is now defined once in `_bin/skel_rag/config.py`
+   and re-exported by `_bin/skel_ai_lib.py` — there is no longer a
+   duplicate stub. Any caller that needs a phase-specific client
+   should call `client.config.for_<phase>()` (e.g. `for_fix()`,
+   `for_create_test()`) which returns a sibling config with the
+   right model and temperature.
 2. Prefer running `_bin/skel-gen-ai --dry-run --no-input` first to confirm
    the manifest target list, then run the real generation. Real generation
    against a 30B-class instruction model can take **2–10 minutes per
@@ -448,7 +465,16 @@ Exits with code 2 when Ollama is unreachable (safe for CI). When
 Flutter SDK is missing, automatically falls back to backend-only
 mode (passes `--no-frontend` to `skel-gen-ai`). The 14-step HTTP
 exercise hits the backend directly, so the core test works without
-Flutter.
+Flutter. Phase 5 auto-removes two stale skel test files
+(`item_form_test.dart`, `items_controller_test.dart`) before
+`flutter test` runs — they import widgets/controllers the AI
+rewrites for the user's `{item_class}`. AI-content quality issues
+in remaining unit tests (e.g. `test_create_order` assertion
+mismatches, `OrderDetail` references in `home_screen.dart`) are
+the natural target for the new `CHECK_TEST` slot (`qwq:32b`,
+[`_docs/MODELS.md`](_docs/MODELS.md)) — see Definition of Done in
+[`_docs/PIZZERIA-TEST-PLAYBOOK.md`](_docs/PIZZERIA-TEST-PLAYBOOK.md)
+for caveats.
 
 ---
 
