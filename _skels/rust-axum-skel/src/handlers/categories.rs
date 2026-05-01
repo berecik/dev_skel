@@ -16,20 +16,16 @@ use axum::{
     Json,
 };
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
+use sea_orm::sea_query::OnConflict;
+use sea_orm::{
+    ActiveModelTrait, DbErr, EntityTrait, ModelTrait, QueryOrder, RuntimeErr, Set,
+};
+use serde::Deserialize;
 
 use crate::auth::AuthUser;
+use crate::entities::category;
 use crate::error::ApiError;
 use crate::AppState;
-
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct CategoryRow {
-    pub id: i64,
-    pub name: String,
-    pub description: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct CreateCategoryPayload {
@@ -41,13 +37,11 @@ pub struct CreateCategoryPayload {
 pub async fn list_categories(
     State(state): State<Arc<AppState>>,
     _user: AuthUser,
-) -> Result<Json<Vec<CategoryRow>>, ApiError> {
-    let rows = sqlx::query_as::<_, CategoryRow>(
-        "SELECT id, name, description, created_at, updated_at \
-         FROM categories ORDER BY name ASC",
-    )
-    .fetch_all(&state.pool)
-    .await?;
+) -> Result<impl IntoResponse, ApiError> {
+    let rows = category::Entity::find()
+        .order_by_asc(category::Column::Name)
+        .all(&state.db)
+        .await?;
     Ok(Json(rows))
 }
 
@@ -57,110 +51,93 @@ pub async fn create_category(
     Json(payload): Json<CreateCategoryPayload>,
 ) -> Result<impl IntoResponse, ApiError> {
     if payload.name.trim().is_empty() {
-        return Err(ApiError::Validation("category name cannot be empty".to_string()));
+        return Err(ApiError::Validation(
+            "category name cannot be empty".to_string(),
+        ));
     }
-    let now = utc_iso8601();
-    let row: (i64,) = sqlx::query_as(
-        "INSERT INTO categories (name, description, created_at, updated_at) \
-         VALUES (?, ?, ?, ?) RETURNING id",
-    )
-    .bind(&payload.name)
-    .bind(&payload.description)
-    .bind(&now)
-    .bind(&now)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|e| {
-        // Map UNIQUE constraint violation to a 409 Conflict.
-        if let sqlx::Error::Database(ref db_err) = e {
-            if db_err.message().contains("UNIQUE") {
-                return ApiError::Conflict(format!("category '{}' already exists", payload.name));
-            }
-        }
-        ApiError::Database(e)
-    })?;
-    let id = row.0;
-    let category = CategoryRow {
-        id,
-        name: payload.name,
-        description: payload.description,
-        created_at: now.clone(),
-        updated_at: now,
+    let now = Utc::now();
+    let new_cat = category::ActiveModel {
+        name: Set(payload.name.clone()),
+        description: Set(payload.description),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
     };
-    Ok((StatusCode::CREATED, Json(category)))
+    let inserted = new_cat.insert(&state.db).await.map_err(|e| {
+        if is_unique_violation(&e) {
+            ApiError::Conflict(format!("category '{}' already exists", payload.name))
+        } else {
+            ApiError::Database(e)
+        }
+    })?;
+    Ok((StatusCode::CREATED, Json(inserted)))
 }
 
 pub async fn get_category(
     State(state): State<Arc<AppState>>,
     _user: AuthUser,
-    Path(id): Path<i64>,
-) -> Result<Json<CategoryRow>, ApiError> {
-    let row = sqlx::query_as::<_, CategoryRow>(
-        "SELECT id, name, description, created_at, updated_at \
-         FROM categories WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_optional(&state.pool)
-    .await?;
-    let category = row.ok_or_else(|| ApiError::NotFound(format!("category {id} not found")))?;
-    Ok(Json(category))
+    Path(id): Path<i32>,
+) -> Result<impl IntoResponse, ApiError> {
+    let row = category::Entity::find_by_id(id).one(&state.db).await?;
+    let cat = row.ok_or_else(|| ApiError::NotFound(format!("category {id} not found")))?;
+    Ok(Json(cat))
 }
 
 pub async fn update_category(
     State(state): State<Arc<AppState>>,
     _user: AuthUser,
-    Path(id): Path<i64>,
+    Path(id): Path<i32>,
     Json(payload): Json<CreateCategoryPayload>,
-) -> Result<Json<CategoryRow>, ApiError> {
+) -> Result<impl IntoResponse, ApiError> {
     if payload.name.trim().is_empty() {
-        return Err(ApiError::Validation("category name cannot be empty".to_string()));
+        return Err(ApiError::Validation(
+            "category name cannot be empty".to_string(),
+        ));
     }
-    let now = utc_iso8601();
-    let res = sqlx::query(
-        "UPDATE categories SET name = ?, description = ?, updated_at = ? WHERE id = ?",
-    )
-    .bind(&payload.name)
-    .bind(&payload.description)
-    .bind(&now)
-    .bind(id)
-    .execute(&state.pool)
-    .await
-    .map_err(|e| {
-        if let sqlx::Error::Database(ref db_err) = e {
-            if db_err.message().contains("UNIQUE") {
-                return ApiError::Conflict(format!("category '{}' already exists", payload.name));
-            }
+    let row = category::Entity::find_by_id(id).one(&state.db).await?;
+    let existing = row.ok_or_else(|| ApiError::NotFound(format!("category {id} not found")))?;
+
+    let mut active: category::ActiveModel = existing.into();
+    active.name = Set(payload.name.clone());
+    active.description = Set(payload.description);
+    active.updated_at = Set(Utc::now());
+    let updated = active.update(&state.db).await.map_err(|e| {
+        if is_unique_violation(&e) {
+            ApiError::Conflict(format!("category '{}' already exists", payload.name))
+        } else {
+            ApiError::Database(e)
         }
-        ApiError::Database(e)
     })?;
-    if res.rows_affected() == 0 {
-        return Err(ApiError::NotFound(format!("category {id} not found")));
-    }
-    let row = sqlx::query_as::<_, CategoryRow>(
-        "SELECT id, name, description, created_at, updated_at \
-         FROM categories WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_one(&state.pool)
-    .await?;
-    Ok(Json(row))
+    Ok(Json(updated))
 }
 
 pub async fn delete_category(
     State(state): State<Arc<AppState>>,
     _user: AuthUser,
-    Path(id): Path<i64>,
+    Path(id): Path<i32>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let res = sqlx::query("DELETE FROM categories WHERE id = ?")
-        .bind(id)
-        .execute(&state.pool)
-        .await?;
-    if res.rows_affected() == 0 {
-        return Err(ApiError::NotFound(format!("category {id} not found")));
-    }
+    let row = category::Entity::find_by_id(id).one(&state.db).await?;
+    let existing = row.ok_or_else(|| ApiError::NotFound(format!("category {id} not found")))?;
+    existing.delete(&state.db).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn utc_iso8601() -> String {
-    Utc::now().format("%Y-%m-%dT%H:%M:%.3fZ").to_string()
+/// Detect a UNIQUE-constraint violation across SQLite and Postgres
+/// without depending on driver-specific error types.
+fn is_unique_violation(err: &DbErr) -> bool {
+    let msg = match err {
+        DbErr::Query(RuntimeErr::SqlxError(sqlx_err)) => sqlx_err.to_string(),
+        DbErr::Exec(RuntimeErr::SqlxError(sqlx_err)) => sqlx_err.to_string(),
+        other => other.to_string(),
+    };
+    msg.contains("UNIQUE constraint failed")
+        || msg.contains("duplicate key value")
+        || msg.contains("violates unique constraint")
+}
+
+// Tag the (currently-unused) `OnConflict` import so future SeaORM
+// upserts can reach for it without a fresh `use` line.
+#[allow(dead_code)]
+fn _on_conflict_handle() -> OnConflict {
+    OnConflict::new()
 }

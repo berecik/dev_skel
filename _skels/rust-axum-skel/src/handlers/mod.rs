@@ -54,16 +54,22 @@ pub fn wrapper_router() -> Router<Arc<AppState>> {
             "/api/orders",
             get(orders::list_orders).post(orders::create_order),
         )
-        .route("/api/orders/:id", get(orders::get_order))
+        .route(
+            "/api/orders/:id",
+            get(orders::get_order).delete(orders::delete_order),
+        )
         .route(
             "/api/orders/:order_id/lines",
-            post(orders::add_line),
+            post(orders::add_order_line),
         )
         .route(
             "/api/orders/:order_id/lines/:line_id",
-            delete(orders::remove_line),
+            delete(orders::remove_order_line),
         )
-        .route("/api/orders/:order_id/address", put(orders::set_address))
+        .route(
+            "/api/orders/:order_id/address",
+            put(orders::set_order_address),
+        )
         .route("/api/orders/:order_id/submit", post(orders::submit_order))
         .route("/api/orders/:order_id/approve", post(orders::approve_order))
         .route("/api/orders/:order_id/reject", post(orders::reject_order))

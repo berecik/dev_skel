@@ -17,22 +17,13 @@ use axum::{
     Json,
 };
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
+use sea_orm::{ActiveModelTrait, EntityTrait, QueryOrder, Set};
+use serde::Deserialize;
 
 use crate::auth::AuthUser;
+use crate::entities::item;
 use crate::error::ApiError;
 use crate::AppState;
-
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct ItemRow {
-    pub id: i64,
-    pub name: String,
-    pub description: Option<String>,
-    pub is_completed: bool,
-    pub category_id: Option<i64>,
-    pub created_at: String,
-    pub updated_at: String,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct CreateItemPayload {
@@ -42,19 +33,18 @@ pub struct CreateItemPayload {
     #[serde(default)]
     pub is_completed: bool,
     #[serde(default)]
-    pub category_id: Option<i64>,
+    pub category_id: Option<i32>,
 }
 
 pub async fn list_items(
     State(state): State<Arc<AppState>>,
     _user: AuthUser,
-) -> Result<Json<Vec<ItemRow>>, ApiError> {
-    let rows = sqlx::query_as::<_, ItemRow>(
-        "SELECT id, name, description, is_completed, category_id, created_at, updated_at \
-         FROM items ORDER BY created_at DESC, id DESC",
-    )
-    .fetch_all(&state.pool)
-    .await?;
+) -> Result<impl IntoResponse, ApiError> {
+    let rows = item::Entity::find()
+        .order_by_desc(item::Column::CreatedAt)
+        .order_by_desc(item::Column::Id)
+        .all(&state.db)
+        .await?;
     Ok(Json(rows))
 }
 
@@ -64,46 +54,30 @@ pub async fn create_item(
     Json(payload): Json<CreateItemPayload>,
 ) -> Result<impl IntoResponse, ApiError> {
     if payload.name.trim().is_empty() {
-        return Err(ApiError::Validation("item name cannot be empty".to_string()));
+        return Err(ApiError::Validation(
+            "item name cannot be empty".to_string(),
+        ));
     }
-    let now = utc_iso8601();
-    let row: (i64,) = sqlx::query_as(
-        "INSERT INTO items (name, description, is_completed, category_id, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
-    )
-    .bind(&payload.name)
-    .bind(&payload.description)
-    .bind(payload.is_completed)
-    .bind(payload.category_id)
-    .bind(&now)
-    .bind(&now)
-    .fetch_one(&state.pool)
-    .await?;
-    let id = row.0;
-    let item = ItemRow {
-        id,
-        name: payload.name,
-        description: payload.description,
-        is_completed: payload.is_completed,
-        category_id: payload.category_id,
-        created_at: now.clone(),
-        updated_at: now,
+    let now = Utc::now();
+    let new_item = item::ActiveModel {
+        name: Set(payload.name),
+        description: Set(payload.description),
+        is_completed: Set(payload.is_completed),
+        category_id: Set(payload.category_id),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
     };
-    Ok((StatusCode::CREATED, Json(item)))
+    let inserted = new_item.insert(&state.db).await?;
+    Ok((StatusCode::CREATED, Json(inserted)))
 }
 
 pub async fn get_item(
     State(state): State<Arc<AppState>>,
     _user: AuthUser,
-    Path(id): Path<i64>,
-) -> Result<Json<ItemRow>, ApiError> {
-    let row = sqlx::query_as::<_, ItemRow>(
-        "SELECT id, name, description, is_completed, category_id, created_at, updated_at \
-         FROM items WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_optional(&state.pool)
-    .await?;
+    Path(id): Path<i32>,
+) -> Result<impl IntoResponse, ApiError> {
+    let row = item::Entity::find_by_id(id).one(&state.db).await?;
     let item = row.ok_or_else(|| ApiError::NotFound(format!("item {id} not found")))?;
     Ok(Json(item))
 }
@@ -114,27 +88,14 @@ pub async fn get_item(
 pub async fn complete_item(
     State(state): State<Arc<AppState>>,
     _user: AuthUser,
-    Path(id): Path<i64>,
-) -> Result<Json<ItemRow>, ApiError> {
-    let now = utc_iso8601();
-    let res = sqlx::query("UPDATE items SET is_completed = 1, updated_at = ? WHERE id = ?")
-        .bind(&now)
-        .bind(id)
-        .execute(&state.pool)
-        .await?;
-    if res.rows_affected() == 0 {
-        return Err(ApiError::NotFound(format!("item {id} not found")));
-    }
-    let row = sqlx::query_as::<_, ItemRow>(
-        "SELECT id, name, description, is_completed, category_id, created_at, updated_at \
-         FROM items WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_one(&state.pool)
-    .await?;
-    Ok(Json(row))
-}
+    Path(id): Path<i32>,
+) -> Result<impl IntoResponse, ApiError> {
+    let row = item::Entity::find_by_id(id).one(&state.db).await?;
+    let existing = row.ok_or_else(|| ApiError::NotFound(format!("item {id} not found")))?;
 
-fn utc_iso8601() -> String {
-    Utc::now().format("%Y-%m-%dT%H:%M:%.3fZ").to_string()
+    let mut active: item::ActiveModel = existing.into();
+    active.is_completed = Set(true);
+    active.updated_at = Set(Utc::now());
+    let updated = active.update(&state.db).await?;
+    Ok(Json(updated))
 }

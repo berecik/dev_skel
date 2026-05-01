@@ -1,67 +1,84 @@
 //! Seed default user accounts from environment variables at startup.
 //!
-//! Reads two sets of env vars:
-//!
-//! * `USER_LOGIN`, `USER_EMAIL`, `USER_PASSWORD` — regular user
-//! * `SUPERUSER_LOGIN`, `SUPERUSER_EMAIL`, `SUPERUSER_PASSWORD` — admin
-//!
-//! If all three vars of a set are present **and** no row with that
-//! username already exists, the account is inserted with an argon2-hashed
-//! password. Existing accounts are silently skipped so the function is
-//! idempotent and safe to call on every startup.
+//! Reads `USER_LOGIN`, `USER_EMAIL`, `USER_PASSWORD` and
+//! `SUPERUSER_LOGIN`, `SUPERUSER_EMAIL`, `SUPERUSER_PASSWORD` from the
+//! process environment and inserts each account into the `users` table
+//! when one with that username does not already exist.
 
-use sqlx::SqlitePool;
-use std::env;
+use chrono::Utc;
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
+};
 
 use crate::auth::hash_password;
+use crate::entities::user;
+use crate::error::ApiError;
 
-/// Seed default accounts from env vars. Call once after schema bootstrap.
-pub async fn seed_default_accounts(pool: &SqlitePool) {
-    seed_account(pool, "USER_LOGIN", "USER_EMAIL", "USER_PASSWORD").await;
-    seed_account(pool, "SUPERUSER_LOGIN", "SUPERUSER_EMAIL", "SUPERUSER_PASSWORD").await;
+/// Account descriptor read from env vars.
+struct SeedAccount {
+    username: String,
+    email: String,
+    password: String,
 }
 
-async fn seed_account(pool: &SqlitePool, login_var: &str, email_var: &str, password_var: &str) {
-    let login = match env::var(login_var) {
-        Ok(v) if !v.is_empty() => v,
-        _ => return,
-    };
-    let email = match env::var(email_var) {
-        Ok(v) if !v.is_empty() => v,
-        _ => return,
-    };
-    let password = match env::var(password_var) {
-        Ok(v) if !v.is_empty() => v,
-        _ => return,
-    };
+/// Seed default accounts (regular user + superuser) into the database.
+///
+/// Each account is only created when the username does not already exist,
+/// making the function safe to call on every startup.
+pub async fn seed_default_accounts(db: &DatabaseConnection) -> Result<(), ApiError> {
+    let accounts = collect_accounts();
 
-    // Skip if user already exists.
-    let existing: Option<(i64,)> = sqlx::query_as("SELECT id FROM users WHERE username = ?")
-        .bind(&login)
-        .fetch_optional(pool)
-        .await
-        .unwrap_or(None);
-    if existing.is_some() {
-        tracing::info!(username = %login, "seed: account already exists, skipping");
-        return;
-    }
-
-    let password_hash = match hash_password(&password) {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::error!(error = ?e, username = %login, "seed: failed to hash password");
-            return;
+    for acct in &accounts {
+        if acct.username.is_empty() || acct.password.is_empty() {
+            continue;
         }
-    };
 
-    match sqlx::query("INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)")
-        .bind(&login)
-        .bind(&email)
-        .bind(&password_hash)
-        .execute(pool)
-        .await
-    {
-        Ok(_) => tracing::info!(username = %login, email = %email, "seed: created default account"),
-        Err(e) => tracing::error!(error = ?e, username = %login, "seed: failed to insert account"),
+        let existing = user::Entity::find()
+            .filter(user::Column::Username.eq(&acct.username))
+            .one(db)
+            .await?;
+
+        if existing.is_some() {
+            tracing::info!(
+                target: "rust_axum_skel",
+                "[seed] User '{}' already exists — skipping",
+                acct.username,
+            );
+            continue;
+        }
+
+        let hash = hash_password(&acct.password)?;
+        let new_user = user::ActiveModel {
+            username: Set(acct.username.clone()),
+            email: Set(acct.email.clone()),
+            password_hash: Set(hash),
+            created_at: Set(Utc::now()),
+            ..Default::default()
+        };
+        new_user.insert(db).await?;
+
+        tracing::info!(
+            target: "rust_axum_skel",
+            "[seed] Created default user '{}'",
+            acct.username,
+        );
     }
+
+    Ok(())
+}
+
+/// Collect seed accounts from environment variables.
+fn collect_accounts() -> Vec<SeedAccount> {
+    vec![
+        SeedAccount {
+            username: std::env::var("USER_LOGIN").unwrap_or_default(),
+            email: std::env::var("USER_EMAIL").unwrap_or_default(),
+            password: std::env::var("USER_PASSWORD").unwrap_or_default(),
+        },
+        SeedAccount {
+            username: std::env::var("SUPERUSER_LOGIN").unwrap_or_default(),
+            email: std::env::var("SUPERUSER_EMAIL").unwrap_or_default(),
+            password: std::env::var("SUPERUSER_PASSWORD").unwrap_or_default(),
+        },
+    ]
 }

@@ -10,10 +10,13 @@
 use std::sync::Arc;
 
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use chrono::Utc;
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::auth::{hash_password, mint_access_token, mint_refresh_token, verify_password};
+use crate::entities::user;
 use crate::error::ApiError;
 use crate::AppState;
 
@@ -37,7 +40,7 @@ pub struct LoginPayload {
 
 #[derive(Debug, Serialize)]
 struct UserOut {
-    id: i64,
+    id: i32,
     username: String,
     email: String,
 }
@@ -62,9 +65,12 @@ pub async fn register_handler(
         }
     }
 
-    let existing: Option<(i64,)> = sqlx::query_as("SELECT id FROM users WHERE username = ?")
-        .bind(&payload.username)
-        .fetch_optional(&state.pool)
+    // Reject duplicate usernames with 409 (matches the contract every
+    // other dev_skel backend honours; the React frontend surfaces 4xx
+    // errors to the user verbatim via fetch + AuthError).
+    let existing = user::Entity::find()
+        .filter(user::Column::Username.eq(&payload.username))
+        .one(&state.db)
         .await?;
     if existing.is_some() {
         return Err(ApiError::Conflict(format!(
@@ -74,18 +80,18 @@ pub async fn register_handler(
     }
 
     let hash = hash_password(&payload.password)?;
-    let row: (i64,) = sqlx::query_as(
-        "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
-    )
-    .bind(&payload.username)
-    .bind(&payload.email)
-    .bind(&hash)
-    .fetch_one(&state.pool)
-    .await?;
-    let new_id = row.0;
+    let new_user = user::ActiveModel {
+        username: Set(payload.username.clone()),
+        email: Set(payload.email.clone()),
+        password_hash: Set(hash),
+        created_at: Set(Utc::now()),
+        ..Default::default()
+    };
+    let inserted = new_user.insert(&state.db).await?;
+    let new_id = inserted.id;
 
-    let access = mint_access_token(new_id, &state.config)?;
-    let refresh = mint_refresh_token(new_id, &state.config)?;
+    let access = mint_access_token(new_id as i64, &state.config)?;
+    let refresh = mint_refresh_token(new_id as i64, &state.config)?;
 
     let body = Json(json!({
         "user": UserOut { id: new_id, username: payload.username.clone(), email: payload.email.clone() },
@@ -99,34 +105,34 @@ pub async fn login_handler(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<LoginPayload>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let sql = if payload.username.contains('@') {
-        "SELECT id, username, password_hash FROM users WHERE email = ?"
+    let column_filter = if payload.username.contains('@') {
+        user::Column::Email
     } else {
-        "SELECT id, username, password_hash FROM users WHERE username = ?"
+        user::Column::Username
     };
-    let row: Option<(i64, String, String)> = sqlx::query_as(sql)
-    .bind(&payload.username)
-    .fetch_optional(&state.pool)
-    .await?;
+    let row = user::Entity::find()
+        .filter(column_filter.eq(&payload.username))
+        .one(&state.db)
+        .await?;
 
-    let (id, username, password_hash) = row.ok_or_else(|| {
+    let user_row = row.ok_or_else(|| {
         ApiError::Unauthorized("invalid username or password".to_string())
     })?;
 
-    if !verify_password(&payload.password, &password_hash)? {
+    if !verify_password(&payload.password, &user_row.password_hash)? {
         return Err(ApiError::Unauthorized(
             "invalid username or password".to_string(),
         ));
     }
 
-    let access = mint_access_token(id, &state.config)?;
-    let refresh = mint_refresh_token(id, &state.config)?;
+    let access = mint_access_token(user_row.id as i64, &state.config)?;
+    let refresh = mint_refresh_token(user_row.id as i64, &state.config)?;
 
     let body = Json(json!({
         "access": access,
         "refresh": refresh,
-        "user_id": id,
-        "username": username,
+        "user_id": user_row.id,
+        "username": user_row.username,
     }));
     Ok((StatusCode::OK, body))
 }

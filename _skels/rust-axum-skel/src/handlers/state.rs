@@ -19,9 +19,14 @@ use axum::{
     extract::{Path, State},
     Json,
 };
+use chrono::Utc;
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, QueryFilter, QuerySelect, Set,
+};
 use serde::Deserialize;
 
 use crate::auth::AuthUser;
+use crate::entities::react_state;
 use crate::error::ApiError;
 use crate::AppState;
 
@@ -34,11 +39,14 @@ pub async fn list_state(
     State(state): State<Arc<AppState>>,
     user: AuthUser,
 ) -> Result<Json<HashMap<String, String>>, ApiError> {
-    let rows: Vec<(String, String)> =
-        sqlx::query_as("SELECT key, value FROM react_state WHERE user_id = ?")
-            .bind(user.id)
-            .fetch_all(&state.pool)
-            .await?;
+    let rows = react_state::Entity::find()
+        .filter(react_state::Column::UserId.eq(user.id))
+        .select_only()
+        .column(react_state::Column::Key)
+        .column(react_state::Column::Value)
+        .into_tuple::<(String, String)>()
+        .all(&state.db)
+        .await?;
     let map: HashMap<String, String> = rows.into_iter().collect();
     Ok(Json(map))
 }
@@ -49,18 +57,34 @@ pub async fn upsert_state(
     Path(key): Path<String>,
     Json(body): Json<UpsertPayload>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    sqlx::query(
-        "INSERT INTO react_state (user_id, key, value, updated_at) \
-         VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) \
-         ON CONFLICT(user_id, key) DO UPDATE SET \
-             value = excluded.value, \
-             updated_at = excluded.updated_at",
-    )
-    .bind(user.id)
-    .bind(&key)
-    .bind(&body.value)
-    .execute(&state.pool)
-    .await?;
+    // SeaORM has no portable upsert helper across SQLite + Postgres
+    // for composite uniques, so we branch on existence by
+    // (user_id, key) and either UPDATE or INSERT. Matches the
+    // pattern the actix skel uses for the same table.
+    let existing = react_state::Entity::find()
+        .filter(
+            Condition::all()
+                .add(react_state::Column::UserId.eq(user.id))
+                .add(react_state::Column::Key.eq(&key)),
+        )
+        .one(&state.db)
+        .await?;
+
+    if let Some(row) = existing {
+        let mut active: react_state::ActiveModel = row.into();
+        active.value = Set(body.value);
+        active.updated_at = Set(Utc::now());
+        active.update(&state.db).await?;
+    } else {
+        let new_row = react_state::ActiveModel {
+            user_id: Set(user.id),
+            key: Set(key.clone()),
+            value: Set(body.value),
+            updated_at: Set(Utc::now()),
+            ..Default::default()
+        };
+        new_row.insert(&state.db).await?;
+    }
     Ok(Json(serde_json::json!({ "key": key })))
 }
 
@@ -69,10 +93,13 @@ pub async fn delete_state(
     user: AuthUser,
     Path(key): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    sqlx::query("DELETE FROM react_state WHERE user_id = ? AND key = ?")
-        .bind(user.id)
-        .bind(&key)
-        .execute(&state.pool)
+    react_state::Entity::delete_many()
+        .filter(
+            Condition::all()
+                .add(react_state::Column::UserId.eq(user.id))
+                .add(react_state::Column::Key.eq(&key)),
+        )
+        .exec(&state.db)
         .await?;
     Ok(Json(serde_json::json!({})))
 }

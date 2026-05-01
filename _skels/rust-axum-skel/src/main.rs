@@ -9,6 +9,7 @@
 mod auth;
 mod config;
 mod db;
+mod entities;
 mod error;
 mod handlers;
 mod seed;
@@ -18,8 +19,8 @@ use axum::{
     routing::get,
     Json, Router,
 };
+use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
-use sqlx::sqlite::SqlitePool;
 use std::{net::SocketAddr, sync::Arc};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -28,13 +29,13 @@ use crate::config::{load_dotenv, Config};
 
 /// Shared application state. Handlers pull this out of the router
 /// state via `State(Arc<AppState>)` so they never have to re-read
-/// `std::env` or re-open the database pool.
+/// `std::env` or re-open the database connection.
 #[derive(Clone)]
 pub struct AppState {
     pub project_name: String,
     pub version: String,
     pub config: Config,
-    pub pool: SqlitePool,
+    pub db: DatabaseConnection,
 }
 
 /// Project info response — served at `/`.
@@ -99,8 +100,8 @@ async fn main() {
 
     // Connect + bootstrap schema before binding the listener so a bad
     // DB URL fails fast instead of returning 500s on every request.
-    let pool = match db::connect_and_init(&config.database_url).await {
-        Ok(p) => p,
+    let db = match db::connect_and_init(&config.database_url).await {
+        Ok(c) => c,
         Err(e) => {
             tracing::error!(error = ?e, "failed to connect / init database");
             std::process::exit(1);
@@ -108,13 +109,15 @@ async fn main() {
     };
 
     // Seed default user accounts from env vars (idempotent).
-    seed::seed_default_accounts(&pool).await;
+    if let Err(e) = seed::seed_default_accounts(&db).await {
+        tracing::error!(error = ?e, "failed to seed default accounts");
+    }
 
     let state = Arc::new(AppState {
         project_name: "rust-axum-skel".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         config,
-        pool,
+        db,
     });
 
     let app = Router::new()
@@ -140,18 +143,16 @@ mod tests {
 
     async fn project_info_app() -> Router {
         let config = Config::from_env();
-        // In-memory SQLite pool so the project-info tests do not
+        // In-memory SQLite connection so the project-info tests do not
         // depend on a wrapper `.env`.
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
+        let db = sea_orm::Database::connect("sqlite::memory:")
             .await
             .expect("in-memory sqlite");
         let state = Arc::new(AppState {
             project_name: "rust-axum-skel".to_string(),
             version: "1.0.0".to_string(),
             config,
-            pool,
+            db,
         });
         Router::new()
             .route("/", get(index))

@@ -39,7 +39,7 @@ pub enum ApiError {
 
     /// Database error — surfaced as 500.
     #[error("database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(#[from] sea_orm::DbErr),
 
     /// JWT mint / verify error.
     #[error("jwt: {0}")]

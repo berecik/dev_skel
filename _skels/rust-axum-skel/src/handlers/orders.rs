@@ -1,12 +1,13 @@
-//! `/api/catalog` + `/api/orders` -- multi-entity order workflow.
+//! `/api/catalog` and `/api/orders` — order workflow endpoints.
 //!
-//! Demonstrates a domain with multiple related entities, status
-//! transitions, nested detail responses, and cross-entity operations.
-//! Mirrors the FastAPI skel's `orders.py` endpoint contract so every
-//! dev_skel backend exposes the same order workflow API.
+//! The catalog is a public browse surface (no auth required for GET).
+//! Orders are per-user and follow a status lifecycle:
+//! `draft` -> `pending` -> `approved` / `rejected`.
 //!
-//! Tables: `catalog_items`, `orders`, `order_lines`, `order_addresses`.
-//! All order endpoints are user-scoped (JWT required via `AuthUser`).
+//! Every `/api/orders` endpoint requires a Bearer JWT — anonymous
+//! requests get 401 from the `AuthUser` extractor. SeaORM Active
+//! Record drives every database access; there is no raw SQL in this
+//! file.
 
 use std::sync::Arc;
 
@@ -17,92 +18,46 @@ use axum::{
     Json,
 };
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, EntityTrait, ModelTrait,
+    PaginatorTrait, QueryFilter, QueryOrder, Set,
+};
+use serde::Deserialize;
+use serde_json::json;
 
 use crate::auth::AuthUser;
+use crate::entities::{catalog_item, order, order_address, order_line};
 use crate::error::ApiError;
 use crate::AppState;
 
-// --------------------------------------------------------------------------- //
-//  Row / response structs
-// --------------------------------------------------------------------------- //
-
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct CatalogItemRow {
-    pub id: i64,
-    pub name: String,
-    pub description: String,
-    pub price: f64,
-    pub category: String,
-    pub available: bool,
-}
-
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct OrderRow {
-    pub id: i64,
-    pub user_id: i64,
-    pub status: String,
-    pub created_at: String,
-    pub submitted_at: Option<String>,
-    pub wait_minutes: Option<i64>,
-    pub feedback: Option<String>,
-}
-
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct OrderLineRow {
-    pub id: i64,
-    pub catalog_item_id: i64,
-    pub quantity: i64,
-    pub unit_price: f64,
-}
-
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct AddressRow {
-    pub id: i64,
-    pub street: String,
-    pub city: String,
-    pub zip_code: String,
-    pub phone: String,
-    pub notes: String,
-}
-
-/// Nested detail response for `GET /api/orders/:id`.
-#[derive(Debug, Serialize)]
-pub struct OrderDetail {
-    #[serde(flatten)]
-    pub order: OrderRow,
-    pub lines: Vec<OrderLineRow>,
-    pub address: Option<AddressRow>,
-}
-
-// --------------------------------------------------------------------------- //
-//  Request payloads
-// --------------------------------------------------------------------------- //
+// ---------------------------------------------------------------------------
+// Serde structs — request payloads
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
-pub struct CreateCatalogItemPayload {
+pub struct CatalogItemPayload {
     pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
     pub price: f64,
     #[serde(default)]
-    pub category: String,
-    #[serde(default)]
-    pub description: String,
-    #[serde(default = "default_true")]
+    pub category: Option<String>,
+    #[serde(default = "default_available")]
     pub available: bool,
 }
 
-fn default_true() -> bool {
+fn default_available() -> bool {
     true
 }
 
 #[derive(Debug, Deserialize)]
 pub struct AddLinePayload {
-    pub catalog_item_id: i64,
-    #[serde(default = "default_one")]
-    pub quantity: i64,
+    pub catalog_item_id: i32,
+    #[serde(default = "default_quantity")]
+    pub quantity: i32,
 }
 
-fn default_one() -> i64 {
+fn default_quantity() -> i32 {
     1
 }
 
@@ -112,378 +67,389 @@ pub struct AddressPayload {
     pub city: String,
     pub zip_code: String,
     #[serde(default)]
-    pub phone: String,
+    pub phone: Option<String>,
     #[serde(default)]
-    pub notes: String,
+    pub notes: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ApprovePayload {
-    pub wait_minutes: i64,
-    pub feedback: String,
+    #[serde(default)]
+    pub wait_minutes: Option<i32>,
+    #[serde(default)]
+    pub feedback: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct RejectPayload {
-    pub feedback: String,
+    #[serde(default)]
+    pub feedback: Option<String>,
 }
 
-// --------------------------------------------------------------------------- //
-//  Catalog endpoints
-// --------------------------------------------------------------------------- //
+// ---------------------------------------------------------------------------
+// Catalog endpoints (GET is public, POST requires auth)
+// ---------------------------------------------------------------------------
 
-/// `GET /api/catalog` -- list all catalog items.
+/// `GET /api/catalog` — list all catalog items, ordered by name.
 pub async fn list_catalog(
     State(state): State<Arc<AppState>>,
-    _user: AuthUser,
-) -> Result<Json<Vec<CatalogItemRow>>, ApiError> {
-    let rows = sqlx::query_as::<_, CatalogItemRow>(
-        "SELECT id, name, description, price, category, available \
-         FROM catalog_items ORDER BY id ASC",
-    )
-    .fetch_all(&state.pool)
-    .await?;
+) -> Result<impl IntoResponse, ApiError> {
+    let rows = catalog_item::Entity::find()
+        .order_by_asc(catalog_item::Column::Name)
+        .all(&state.db)
+        .await?;
     Ok(Json(rows))
 }
 
-/// `GET /api/catalog/:id` -- single catalog item.
-pub async fn get_catalog_item(
-    State(state): State<Arc<AppState>>,
-    _user: AuthUser,
-    Path(item_id): Path<i64>,
-) -> Result<Json<CatalogItemRow>, ApiError> {
-    let row = sqlx::query_as::<_, CatalogItemRow>(
-        "SELECT id, name, description, price, category, available \
-         FROM catalog_items WHERE id = ?",
-    )
-    .bind(item_id)
-    .fetch_optional(&state.pool)
-    .await?;
-    let item = row.ok_or_else(|| ApiError::NotFound("Catalog item not found".to_string()))?;
-    Ok(Json(item))
-}
-
-/// `POST /api/catalog` -- create a new catalog item (auth required).
+/// `POST /api/catalog` — create a catalog item (auth required).
 pub async fn create_catalog_item(
     State(state): State<Arc<AppState>>,
     _user: AuthUser,
-    Json(payload): Json<CreateCatalogItemPayload>,
+    Json(payload): Json<CatalogItemPayload>,
 ) -> Result<impl IntoResponse, ApiError> {
     if payload.name.trim().is_empty() {
         return Err(ApiError::Validation(
             "catalog item name cannot be empty".to_string(),
         ));
     }
-    let row: (i64,) = sqlx::query_as(
-        "INSERT INTO catalog_items (name, description, price, category, available) \
-         VALUES (?, ?, ?, ?, ?) RETURNING id",
-    )
-    .bind(&payload.name)
-    .bind(&payload.description)
-    .bind(payload.price)
-    .bind(&payload.category)
-    .bind(payload.available)
-    .fetch_one(&state.pool)
-    .await?;
-    let item = CatalogItemRow {
-        id: row.0,
-        name: payload.name,
-        description: payload.description,
-        price: payload.price,
-        category: payload.category,
-        available: payload.available,
+    if payload.price < 0.0 {
+        return Err(ApiError::Validation("price cannot be negative".to_string()));
+    }
+    let new_item = catalog_item::ActiveModel {
+        name: Set(payload.name),
+        description: Set(payload.description.unwrap_or_default()),
+        price: Set(payload.price),
+        category: Set(payload.category.unwrap_or_default()),
+        available: Set(payload.available),
+        ..Default::default()
     };
-    Ok((StatusCode::CREATED, Json(item)))
+    let inserted = new_item.insert(&state.db).await?;
+    Ok((StatusCode::CREATED, Json(inserted)))
 }
 
-// --------------------------------------------------------------------------- //
-//  Order CRUD
-// --------------------------------------------------------------------------- //
+/// `GET /api/catalog/:id` — get a single catalog item.
+pub async fn get_catalog_item(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i32>,
+) -> Result<impl IntoResponse, ApiError> {
+    let row = catalog_item::Entity::find_by_id(id).one(&state.db).await?;
+    let item = row.ok_or_else(|| ApiError::NotFound(format!("catalog item {id} not found")))?;
+    Ok(Json(item))
+}
 
-/// `POST /api/orders` -- create a new draft order for the authenticated user.
+// ---------------------------------------------------------------------------
+// Order endpoints (all require auth)
+// ---------------------------------------------------------------------------
+
+/// `POST /api/orders` — create a new draft order for the authenticated
+/// user.
 pub async fn create_order(
     State(state): State<Arc<AppState>>,
     user: AuthUser,
 ) -> Result<impl IntoResponse, ApiError> {
-    let now = utc_iso8601();
-    let row: (i64,) = sqlx::query_as(
-        "INSERT INTO orders (user_id, status, created_at) VALUES (?, 'draft', ?) RETURNING id",
-    )
-    .bind(user.id)
-    .bind(&now)
-    .fetch_one(&state.pool)
-    .await?;
-    let order = OrderRow {
-        id: row.0,
-        user_id: user.id,
-        status: "draft".to_string(),
-        created_at: now,
-        submitted_at: None,
-        wait_minutes: None,
-        feedback: None,
+    let now = Utc::now();
+    let new_order = order::ActiveModel {
+        user_id: Set(user.id),
+        status: Set("draft".to_string()),
+        created_at: Set(now),
+        submitted_at: Set(None),
+        wait_minutes: Set(None),
+        feedback: Set(None),
+        ..Default::default()
     };
-    Ok((StatusCode::CREATED, Json(order)))
+    let inserted = new_order.insert(&state.db).await?;
+    Ok((StatusCode::CREATED, Json(inserted)))
 }
 
-/// `GET /api/orders` -- list the authenticated user's orders.
+/// `GET /api/orders` — list the authenticated user's orders.
 pub async fn list_orders(
     State(state): State<Arc<AppState>>,
     user: AuthUser,
-) -> Result<Json<Vec<OrderRow>>, ApiError> {
-    let rows = sqlx::query_as::<_, OrderRow>(
-        "SELECT id, user_id, status, created_at, submitted_at, wait_minutes, feedback \
-         FROM orders WHERE user_id = ? ORDER BY created_at DESC, id DESC",
-    )
-    .bind(user.id)
-    .fetch_all(&state.pool)
-    .await?;
+) -> Result<impl IntoResponse, ApiError> {
+    let rows = order::Entity::find()
+        .filter(order::Column::UserId.eq(user.id))
+        .order_by_desc(order::Column::CreatedAt)
+        .order_by_desc(order::Column::Id)
+        .all(&state.db)
+        .await?;
     Ok(Json(rows))
 }
 
-/// `GET /api/orders/:id` -- order detail with nested lines + address.
+/// `GET /api/orders/:id` — get order detail with lines + address
+/// embedded under `lines` and `address` keys.
 pub async fn get_order(
     State(state): State<Arc<AppState>>,
     user: AuthUser,
-    Path(order_id): Path<i64>,
-) -> Result<Json<OrderDetail>, ApiError> {
-    let order = fetch_order(&state, order_id).await?;
-    if order.user_id != user.id {
-        return Err(ApiError::Forbidden("Not your order".to_string()));
-    }
-    let lines = sqlx::query_as::<_, OrderLineRow>(
-        "SELECT id, catalog_item_id, quantity, unit_price \
-         FROM order_lines WHERE order_id = ?",
-    )
-    .bind(order_id)
-    .fetch_all(&state.pool)
-    .await?;
-    let address = sqlx::query_as::<_, AddressRow>(
-        "SELECT id, street, city, zip_code, phone, notes \
-         FROM order_addresses WHERE order_id = ?",
-    )
-    .bind(order_id)
-    .fetch_optional(&state.pool)
-    .await?;
-    Ok(Json(OrderDetail {
-        order,
-        lines,
-        address,
-    }))
+    Path(id): Path<i32>,
+) -> Result<impl IntoResponse, ApiError> {
+    let order = fetch_order_owned(&state.db, id, user.id).await?;
+    let lines = order_line::Entity::find()
+        .filter(order_line::Column::OrderId.eq(id))
+        .order_by_asc(order_line::Column::Id)
+        .all(&state.db)
+        .await?;
+    let address = order_address::Entity::find()
+        .filter(order_address::Column::OrderId.eq(id))
+        .one(&state.db)
+        .await?;
+    Ok(Json(json!({
+        "id": order.id,
+        "user_id": order.user_id,
+        "status": order.status,
+        "created_at": order.created_at,
+        "submitted_at": order.submitted_at,
+        "wait_minutes": order.wait_minutes,
+        "feedback": order.feedback,
+        "lines": lines,
+        "address": address,
+    })))
 }
 
-// --------------------------------------------------------------------------- //
-//  Order lines
-// --------------------------------------------------------------------------- //
-
-/// `POST /api/orders/:order_id/lines` -- add a line to a draft order.
-pub async fn add_line(
+/// `POST /api/orders/:id/lines` — add a line item to a draft order.
+/// The catalog item's current price is snapshotted onto the line as
+/// `unit_price` so future catalog edits do not mutate historical
+/// orders.
+pub async fn add_order_line(
     State(state): State<Arc<AppState>>,
     user: AuthUser,
-    Path(order_id): Path<i64>,
+    Path(order_id): Path<i32>,
     Json(payload): Json<AddLinePayload>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let _order = get_draft(&state, order_id, &user).await?;
-    let cat = sqlx::query_as::<_, (f64,)>(
-        "SELECT price FROM catalog_items WHERE id = ?",
-    )
-    .bind(payload.catalog_item_id)
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| ApiError::NotFound("Catalog item not found".to_string()))?;
-    let unit_price = cat.0;
-    let row: (i64,) = sqlx::query_as(
-        "INSERT INTO order_lines (order_id, catalog_item_id, quantity, unit_price) \
-         VALUES (?, ?, ?, ?) RETURNING id",
-    )
-    .bind(order_id)
-    .bind(payload.catalog_item_id)
-    .bind(payload.quantity)
-    .bind(unit_price)
-    .fetch_one(&state.pool)
-    .await?;
-    let line = OrderLineRow {
-        id: row.0,
-        catalog_item_id: payload.catalog_item_id,
-        quantity: payload.quantity,
-        unit_price,
+    let order = fetch_order_owned(&state.db, order_id, user.id).await?;
+    if order.status != "draft" {
+        return Err(ApiError::Validation(
+            "can only add lines to a draft order".to_string(),
+        ));
+    }
+    if payload.quantity < 1 {
+        return Err(ApiError::Validation(
+            "quantity must be at least 1".to_string(),
+        ));
+    }
+    let catalog = catalog_item::Entity::find_by_id(payload.catalog_item_id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "catalog item {} not found",
+                payload.catalog_item_id
+            ))
+        })?;
+    let new_line = order_line::ActiveModel {
+        order_id: Set(order_id),
+        catalog_item_id: Set(payload.catalog_item_id),
+        quantity: Set(payload.quantity),
+        unit_price: Set(catalog.price),
+        ..Default::default()
     };
-    Ok((StatusCode::CREATED, Json(line)))
+    let inserted = new_line.insert(&state.db).await?;
+    Ok((StatusCode::CREATED, Json(inserted)))
 }
 
-/// `DELETE /api/orders/:order_id/lines/:line_id` -- remove a line from
-/// a draft order.
-pub async fn remove_line(
+/// `DELETE /api/orders/:id/lines/:line_id` — remove a line from a
+/// draft order.
+pub async fn remove_order_line(
     State(state): State<Arc<AppState>>,
     user: AuthUser,
-    Path((order_id, line_id)): Path<(i64, i64)>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let _order = get_draft(&state, order_id, &user).await?;
-    let res = sqlx::query(
-        "DELETE FROM order_lines WHERE id = ? AND order_id = ?",
-    )
-    .bind(line_id)
-    .bind(order_id)
-    .execute(&state.pool)
-    .await?;
-    if res.rows_affected() == 0 {
-        return Err(ApiError::NotFound("Line not found".to_string()));
+    Path((order_id, line_id)): Path<(i32, i32)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let order = fetch_order_owned(&state.db, order_id, user.id).await?;
+    if order.status != "draft" {
+        return Err(ApiError::Validation(
+            "can only remove lines from a draft order".to_string(),
+        ));
     }
-    Ok(Json(serde_json::json!({ "ok": true })))
+    let line = order_line::Entity::find()
+        .filter(
+            Condition::all()
+                .add(order_line::Column::Id.eq(line_id))
+                .add(order_line::Column::OrderId.eq(order_id)),
+        )
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("order line {line_id} not found")))?;
+    line.delete(&state.db).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
-// --------------------------------------------------------------------------- //
-//  Order address
-// --------------------------------------------------------------------------- //
-
-/// `PUT /api/orders/:order_id/address` -- set or update the delivery
-/// address on a draft order (upsert).
-pub async fn set_address(
+/// `PUT /api/orders/:id/address` — set or update the delivery address
+/// for a draft order. Implemented as a find-then-insert-or-update
+/// flow (the underlying table has a UNIQUE constraint on `order_id`).
+pub async fn set_order_address(
     State(state): State<Arc<AppState>>,
     user: AuthUser,
-    Path(order_id): Path<i64>,
+    Path(order_id): Path<i32>,
     Json(payload): Json<AddressPayload>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let _order = get_draft(&state, order_id, &user).await?;
-    let existing: Option<(i64,)> = sqlx::query_as(
-        "SELECT id FROM order_addresses WHERE order_id = ?",
-    )
-    .bind(order_id)
-    .fetch_optional(&state.pool)
-    .await?;
-    if let Some((addr_id,)) = existing {
-        sqlx::query(
-            "UPDATE order_addresses SET street = ?, city = ?, zip_code = ?, phone = ?, notes = ? \
-             WHERE id = ?",
-        )
-        .bind(&payload.street)
-        .bind(&payload.city)
-        .bind(&payload.zip_code)
-        .bind(&payload.phone)
-        .bind(&payload.notes)
-        .bind(addr_id)
-        .execute(&state.pool)
-        .await?;
-    } else {
-        sqlx::query(
-            "INSERT INTO order_addresses (order_id, street, city, zip_code, phone, notes) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(order_id)
-        .bind(&payload.street)
-        .bind(&payload.city)
-        .bind(&payload.zip_code)
-        .bind(&payload.phone)
-        .bind(&payload.notes)
-        .execute(&state.pool)
-        .await?;
+) -> Result<impl IntoResponse, ApiError> {
+    let order = fetch_order_owned(&state.db, order_id, user.id).await?;
+    if order.status != "draft" {
+        return Err(ApiError::Validation(
+            "can only set address on a draft order".to_string(),
+        ));
     }
-    Ok(Json(serde_json::json!({ "ok": true })))
+    if payload.street.trim().is_empty()
+        || payload.city.trim().is_empty()
+        || payload.zip_code.trim().is_empty()
+    {
+        return Err(ApiError::Validation(
+            "street, city, and zip_code are required".to_string(),
+        ));
+    }
+    let phone = payload.phone.unwrap_or_default();
+    let notes = payload.notes.unwrap_or_default();
+
+    let existing = order_address::Entity::find()
+        .filter(order_address::Column::OrderId.eq(order_id))
+        .one(&state.db)
+        .await?;
+    let saved = match existing {
+        Some(found) => {
+            let mut active: order_address::ActiveModel = found.into();
+            active.street = Set(payload.street);
+            active.city = Set(payload.city);
+            active.zip_code = Set(payload.zip_code);
+            active.phone = Set(phone);
+            active.notes = Set(notes);
+            active.update(&state.db).await?
+        }
+        None => {
+            let new_addr = order_address::ActiveModel {
+                order_id: Set(order_id),
+                street: Set(payload.street),
+                city: Set(payload.city),
+                zip_code: Set(payload.zip_code),
+                phone: Set(phone),
+                notes: Set(notes),
+                ..Default::default()
+            };
+            new_addr.insert(&state.db).await?
+        }
+    };
+    Ok(Json(saved))
 }
 
-// --------------------------------------------------------------------------- //
-//  Status transitions
-// --------------------------------------------------------------------------- //
-
-/// `POST /api/orders/:order_id/submit` -- move a draft order to
-/// pending.
+/// `POST /api/orders/:id/submit` — submit a draft order. Requires at
+/// least one line; sets `status='pending'` and stamps `submitted_at`.
 pub async fn submit_order(
     State(state): State<Arc<AppState>>,
     user: AuthUser,
-    Path(order_id): Path<i64>,
-) -> Result<Json<OrderRow>, ApiError> {
-    let _order = get_draft(&state, order_id, &user).await?;
-    let now = utc_iso8601();
-    sqlx::query("UPDATE orders SET status = 'pending', submitted_at = ? WHERE id = ?")
-        .bind(&now)
-        .bind(order_id)
-        .execute(&state.pool)
+    Path(order_id): Path<i32>,
+) -> Result<impl IntoResponse, ApiError> {
+    let order = fetch_order_owned(&state.db, order_id, user.id).await?;
+    if order.status != "draft" {
+        return Err(ApiError::Validation(
+            "only draft orders can be submitted".to_string(),
+        ));
+    }
+    let line_count = order_line::Entity::find()
+        .filter(order_line::Column::OrderId.eq(order_id))
+        .count(&state.db)
         .await?;
-    let order = fetch_order(&state, order_id).await?;
-    Ok(Json(order))
+    if line_count == 0 {
+        return Err(ApiError::Validation(
+            "cannot submit an order with no lines".to_string(),
+        ));
+    }
+    let mut active: order::ActiveModel = order.into();
+    active.status = Set("pending".to_string());
+    active.submitted_at = Set(Some(Utc::now()));
+    let updated = active.update(&state.db).await?;
+    Ok(Json(updated))
 }
 
-/// `POST /api/orders/:order_id/approve` -- approve a pending order.
+/// `POST /api/orders/:id/approve` — approve a pending order. Operator
+/// endpoint: any authenticated user can approve any pending order
+/// (the wrapper-shared backends agree on this contract; tighten via
+/// role checks in production).
 pub async fn approve_order(
     State(state): State<Arc<AppState>>,
     _user: AuthUser,
-    Path(order_id): Path<i64>,
+    Path(order_id): Path<i32>,
     Json(payload): Json<ApprovePayload>,
-) -> Result<Json<OrderRow>, ApiError> {
-    let _order = get_pending(&state, order_id).await?;
-    sqlx::query(
-        "UPDATE orders SET status = 'approved', wait_minutes = ?, feedback = ? WHERE id = ?",
-    )
-    .bind(payload.wait_minutes)
-    .bind(&payload.feedback)
-    .bind(order_id)
-    .execute(&state.pool)
-    .await?;
-    let order = fetch_order(&state, order_id).await?;
-    Ok(Json(order))
+) -> Result<impl IntoResponse, ApiError> {
+    let order = order::Entity::find_by_id(order_id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("order {order_id} not found")))?;
+    if order.status != "pending" {
+        return Err(ApiError::Validation(
+            "only submitted orders can be approved".to_string(),
+        ));
+    }
+    let mut active: order::ActiveModel = order.into();
+    active.status = Set("approved".to_string());
+    active.wait_minutes = Set(payload.wait_minutes);
+    active.feedback = Set(payload.feedback);
+    let updated = active.update(&state.db).await?;
+    Ok(Json(updated))
 }
 
-/// `POST /api/orders/:order_id/reject` -- reject a pending order.
+/// `POST /api/orders/:id/reject` — reject a pending order.
 pub async fn reject_order(
     State(state): State<Arc<AppState>>,
     _user: AuthUser,
-    Path(order_id): Path<i64>,
+    Path(order_id): Path<i32>,
     Json(payload): Json<RejectPayload>,
-) -> Result<Json<OrderRow>, ApiError> {
-    let _order = get_pending(&state, order_id).await?;
-    sqlx::query("UPDATE orders SET status = 'rejected', feedback = ? WHERE id = ?")
-        .bind(&payload.feedback)
-        .bind(order_id)
-        .execute(&state.pool)
-        .await?;
-    let order = fetch_order(&state, order_id).await?;
-    Ok(Json(order))
-}
-
-// --------------------------------------------------------------------------- //
-//  Helpers
-// --------------------------------------------------------------------------- //
-
-async fn fetch_order(state: &Arc<AppState>, order_id: i64) -> Result<OrderRow, ApiError> {
-    sqlx::query_as::<_, OrderRow>(
-        "SELECT id, user_id, status, created_at, submitted_at, wait_minutes, feedback \
-         FROM orders WHERE id = ?",
-    )
-    .bind(order_id)
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| ApiError::NotFound("Order not found".to_string()))
-}
-
-/// Fetch the order and verify it belongs to `user` and is in `draft`
-/// status.
-async fn get_draft(
-    state: &Arc<AppState>,
-    order_id: i64,
-    user: &AuthUser,
-) -> Result<OrderRow, ApiError> {
-    let order = fetch_order(state, order_id).await?;
-    if order.user_id != user.id {
-        return Err(ApiError::Forbidden("Not your order".to_string()));
-    }
-    if order.status != "draft" {
-        return Err(ApiError::Validation(
-            "Order must be in draft status".to_string(),
-        ));
-    }
-    Ok(order)
-}
-
-/// Fetch the order and verify it is in `pending` status.
-async fn get_pending(state: &Arc<AppState>, order_id: i64) -> Result<OrderRow, ApiError> {
-    let order = fetch_order(state, order_id).await?;
+) -> Result<impl IntoResponse, ApiError> {
+    let order = order::Entity::find_by_id(order_id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("order {order_id} not found")))?;
     if order.status != "pending" {
         return Err(ApiError::Validation(
-            "Order must be in pending status".to_string(),
+            "only submitted orders can be rejected".to_string(),
         ));
     }
-    Ok(order)
+    let mut active: order::ActiveModel = order.into();
+    active.status = Set("rejected".to_string());
+    active.feedback = Set(payload.feedback);
+    let updated = active.update(&state.db).await?;
+    Ok(Json(updated))
 }
 
-fn utc_iso8601() -> String {
-    Utc::now().format("%Y-%m-%dT%H:%M:%.3fZ").to_string()
+/// `DELETE /api/orders/:id` — delete a draft order. The
+/// `order_lines` and `order_addresses` rows are removed up-front so
+/// the operation works whether or not SQLite FK cascade is enabled.
+pub async fn delete_order(
+    State(state): State<Arc<AppState>>,
+    user: AuthUser,
+    Path(order_id): Path<i32>,
+) -> Result<impl IntoResponse, ApiError> {
+    let order = fetch_order_owned(&state.db, order_id, user.id).await?;
+    if order.status != "draft" {
+        return Err(ApiError::Validation(
+            "only draft orders can be deleted".to_string(),
+        ));
+    }
+    let _ = order_line::Entity::delete_many()
+        .filter(order_line::Column::OrderId.eq(order_id))
+        .exec(&state.db)
+        .await?;
+    let _ = order_address::Entity::delete_many()
+        .filter(order_address::Column::OrderId.eq(order_id))
+        .exec(&state.db)
+        .await?;
+    order.delete(&state.db).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Fetch a single order by id, ensuring it belongs to `user_id`.
+/// Returns 404 (not 403) when the order does not exist OR belongs to
+/// another user — the wrapper-shared contract is to never leak the
+/// existence of another user's resource.
+async fn fetch_order_owned(
+    db: &DatabaseConnection,
+    id: i32,
+    user_id: i32,
+) -> Result<order::Model, ApiError> {
+    let row = order::Entity::find_by_id(id).one(db).await?;
+    let order = row.ok_or_else(|| ApiError::NotFound(format!("order {id} not found")))?;
+    if order.user_id != user_id {
+        return Err(ApiError::NotFound(format!("order {id} not found")));
+    }
+    Ok(order)
 }

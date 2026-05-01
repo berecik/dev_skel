@@ -20,9 +20,11 @@ use axum::{
 };
 use chrono::Utc;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use sea_orm::{EntityTrait, QuerySelect};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
+use crate::entities::user;
 use crate::error::ApiError;
 use crate::AppState;
 
@@ -120,7 +122,7 @@ pub fn verify_password(password: &str, stored_hash: &str) -> Result<bool, ApiErr
 /// missing or the token is invalid, which becomes a 401 response.
 #[derive(Debug, Clone)]
 pub struct AuthUser {
-    pub id: i64,
+    pub id: i32,
     pub username: String,
 }
 
@@ -149,18 +151,19 @@ impl FromRequestParts<Arc<AppState>> for AuthUser {
                 "refresh token cannot authenticate this request".to_string(),
             ));
         }
-        let user_id: i64 = claims
+        let user_id: i32 = claims
             .sub
             .parse()
             .map_err(|_| ApiError::Unauthorized("malformed sub claim".to_string()))?;
 
-        let row = sqlx::query_as::<_, (i64, String)>(
-            "SELECT id, username FROM users WHERE id = ?",
-        )
-        .bind(user_id)
-        .fetch_optional(&state.pool)
-        .await
-        .map_err(ApiError::Database)?;
+        let row = user::Entity::find_by_id(user_id)
+            .select_only()
+            .column(user::Column::Id)
+            .column(user::Column::Username)
+            .into_tuple::<(i32, String)>()
+            .one(&state.db)
+            .await
+            .map_err(ApiError::Database)?;
         let (id, username) =
             row.ok_or_else(|| ApiError::Unauthorized("user no longer exists".to_string()))?;
         Ok(AuthUser { id, username })
