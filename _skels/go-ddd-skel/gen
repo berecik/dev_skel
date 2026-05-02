@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Generator for go-skel. Creates a service directory under the
+# wrapper, copies the skeleton's `main.go` + `internal/` tree into
+# it, runs `go mod tidy` so go.sum is populated, then drops the
+# wrapper-shared dispatch scripts via common-wrapper.sh.
+
+SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+COMMON_DIR="$SKEL_DIR/../_common"
+# shellcheck disable=SC1091
+. "$COMMON_DIR/slug.sh"
+
+MAIN_DIR="${1:-}"
+SERVICE_NAME_RAW="${2:-}"
+
+if [[ -z "$MAIN_DIR" ]]; then
+  echo "Usage: $(basename "$0") <main-dir> [service-name]" >&2
+  exit 1
+fi
+
+PROJECT_SUBDIR_OVERRIDE=""
+if [[ -n "$SERVICE_NAME_RAW" ]]; then
+  PROJECT_SUBDIR_OVERRIDE="$(slugify_service_name "$SERVICE_NAME_RAW")"
+fi
+
+PROJECT_SUBDIR="${PROJECT_SUBDIR_OVERRIDE:-service}"
+PROJECT_DIR="$MAIN_DIR/$PROJECT_SUBDIR"
+
+echo "[go] Generating into: $MAIN_DIR (project dir: $PROJECT_SUBDIR)"
+mkdir -p "$PROJECT_DIR"
+
+# Merge skeleton overlays into inner project directory.
+bash "$SKEL_DIR/merge" "$SKEL_DIR" "$PROJECT_DIR"
+
+(
+  cd "$PROJECT_DIR"
+  # Resolve module deps + populate go.sum. `tidy` is faster than
+  # `mod download` because it skips deps the merged code does not
+  # actually import.
+  go mod tidy >/dev/null 2>&1 || true
+)
+
+# Create wrapper-level README, Makefile, and thin scripts.
+export SKEL_NAME="$(basename "$SKEL_DIR")"
+bash "$COMMON_DIR/common-wrapper.sh" "$MAIN_DIR" "$PROJECT_SUBDIR" "Go Service"
+
+echo "[go] Done."

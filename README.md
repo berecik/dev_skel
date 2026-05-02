@@ -13,13 +13,24 @@ exists. Templates and services stay in sync via `./backport` (service →
 template, with VERSION + CHANGELOG bump) and `./ai upgrade` (template →
 service).
 
-There are 12 skeletons in the catalogue — FastAPI, FastAPI-RAG,
+There are 12 base skeletons in the catalogue — FastAPI, FastAPI-RAG,
 Django, Django-Bolt, Flask, Spring, Actix, Axum, Go, Node, React/Vite,
 and Flutter. Any combination can be generated into one wrapper that
 shares its database, JWT secret, and service-URL map. Ten of them
 ship full AI manifests so `skel-gen-ai` can rewrite them; the
 remaining two (`go-skel`, `python-fastapi-rag-skel`) work via the
 static path today and gain manifests as they mature.
+
+Five of the backends additionally ship a **DDD-flavored sister
+skeleton** (`go-ddd-skel`, `rust-actix-ddd-skel`,
+`rust-axum-ddd-skel`, `next-js-ddd-skel`, `java-spring-ddd-skel`)
+that follows the canonical FastAPI shape — per-resource modules
+(models + adapters/sql + service + depts + routes), shared
+DomainError + repository abstractions, auth flat, users repo-only.
+The HTTP contract is identical to the flat counterparts; both
+flavors interoperate at the wrapper level. Generate with
+`make gen-{go,actix,axum,nextjs,spring}-ddd`. Reference:
+[`_docs/DDD-SKELETONS.md`](_docs/DDD-SKELETONS.md).
 
 ---
 

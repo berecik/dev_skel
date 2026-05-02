@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Skeleton test script - tests skeleton generation and project functionality
+
+SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+TMP_ROOT="${TMPDIR:-/tmp}"
+WORK_DIR="$(mktemp -d "$TMP_ROOT/java-spring-skel-test-XXXXXX")"
+TARGET="$WORK_DIR/proj"
+
+cleanup() {
+  if [[ -d "$TARGET" ]]; then
+    (
+      cd "$TARGET" && ./stop 2>/dev/null || true
+    )
+  fi
+  rm -rf "$WORK_DIR" || true
+}
+trap cleanup EXIT
+
+echo "[test_skel] Generating Spring Boot project in $TARGET..."
+"$SKEL_DIR/gen" "$TARGET"
+
+MAIN_DIR="$TARGET"
+PROJECT_DIR="$MAIN_DIR/service"
+
+cd "$PROJECT_DIR"
+
+echo ""
+echo "[test_skel] Running project tests via Maven..."
+mvn test
+
+echo ""
+echo "[test_skel] Building JAR via ./build --jar..."
+cd "$MAIN_DIR"
+./build --jar
+
+echo ""
+echo "[test_skel] Building Docker image via ./build script..."
+./build --tag=spring-test:latest
+
+echo ""
+echo "[test_skel] Cleaning up Docker image..."
+docker rmi spring-test:latest 2>/dev/null || true
+
+echo ""
+echo "[test_skel] Java Spring skeleton tests passed!"

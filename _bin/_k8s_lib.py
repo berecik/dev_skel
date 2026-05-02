@@ -55,7 +55,9 @@ _POSTGRES_SKELS = {
     "python-django-skel",
     "python-flask-skel",
     "java-spring-skel",
+    "java-spring-ddd-skel",
     "next-js-skel",
+    "next-js-ddd-skel",
 }
 
 # Health probes — defaults to "/health".
@@ -63,10 +65,11 @@ _HEALTH_PATHS = {
     "python-fastapi-skel": "/api/health",
     "python-django-bolt-skel": "/api/health",
     "next-js-skel": "/api/health",
+    "next-js-ddd-skel": "/api/health",
 }
 
 # Container port — most backends bind 8000; Next.js binds 3000.
-_SERVICE_PORTS = {"next-js-skel": 3000}
+_SERVICE_PORTS = {"next-js-skel": 3000, "next-js-ddd-skel": 3000}
 
 GREEN = "\033[0;32m"
 YELLOW = "\033[0;33m"

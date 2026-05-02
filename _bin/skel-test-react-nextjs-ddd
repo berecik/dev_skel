@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""End-to-end integration test: Next.js backend + React frontend.
+
+Generates a wrapper containing both ``next-js-skel`` (Next.js API) and
+``ts-react-skel``, configures ``BACKEND_URL`` to a non-conflicting
+port, builds the React frontend (verifying the URL is baked into the
+bundle), starts the Next.js backend in the background, and exercises
+the canonical ``register → login → CRUD → complete → reject
+anonymous → reject invalid token`` flow over real HTTP.
+
+Usage::
+
+    _bin/skel-test-react-nextjs-ddd              # full run
+    _bin/skel-test-react-nextjs-ddd --keep       # leave wrapper on disk
+    _bin/skel-test-react-nextjs-ddd --port 19883 # custom port
+    _bin/skel-test-react-nextjs-ddd --no-skip    # fail on missing Node
+
+Exit codes::
+
+    0 — every check passed
+    1 — at least one check failed
+    2 — toolchain (Node / npm) missing or setup error
+"""
+
+from __future__ import annotations
+
+import argparse
+import shutil
+import sys
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from dev_skel_lib import DevSkelConfig, detect_root, load_config  # noqa: E402
+
+from _frontend_backend_lib import (  # noqa: E402
+    DEFAULT_PORT,
+    DEFAULT_STARTUP_TIMEOUT,
+    EXIT_FAIL,
+    EXIT_SETUP,
+    BackendSpec,
+    run_react_backend_integration,
+)
+
+
+PROJECT_NAME = "test-react-nextjs-ddd"
+BACKEND_SKEL = "next-js-ddd-skel"
+BACKEND_SERVICE_NAME = "Items API"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Integration test that generates a wrapper containing "
+            "next-js-skel (Next.js) + ts-react-skel, builds the React "
+            "frontend, starts the Next.js backend, and verifies the "
+            "items API end-to-end via real HTTP."
+        ),
+    )
+    parser.add_argument(
+        "--keep",
+        action="store_true",
+        help=(
+            "Leave the generated wrapper at "
+            "_test_projects/test-react-nextjs-ddd on disk after the test."
+        ),
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=DEFAULT_PORT,
+        help=(
+            "TCP port the Next.js backend should bind to. Default: "
+            f"{DEFAULT_PORT}."
+        ),
+    )
+    parser.add_argument(
+        "--server-startup-timeout",
+        type=int,
+        default=max(DEFAULT_STARTUP_TIMEOUT, 60),
+        help=(
+            "Seconds to wait for the Next.js server to become "
+            f"reachable (default: {max(DEFAULT_STARTUP_TIMEOUT, 60)})."
+        ),
+    )
+    parser.add_argument(
+        "--no-skip",
+        action="store_true",
+        help=(
+            "Treat missing Node/npm as a hard failure (exit 1) "
+            "instead of the default toolchain skip (exit 2)."
+        ),
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    cfg: DevSkelConfig = load_config()
+    repo_root = detect_root(SCRIPT_DIR, cfg.skel_dir)
+
+    spec = BackendSpec(
+        skeleton=BACKEND_SKEL,
+        service_name=BACKEND_SERVICE_NAME,
+        server_argv_template=[
+            "npm", "run", "dev",
+        ],
+        extra_env={
+            "PORT": str(args.port),
+        },
+    )
+
+    return run_react_backend_integration(
+        project_name=PROJECT_NAME,
+        title="React + Next.js integration test",
+        spec=spec,
+        repo_root=repo_root,
+        port=args.port,
+        server_startup_timeout=args.server_startup_timeout,
+        keep=args.keep,
+        no_skip=args.no_skip,
+    )
+
+
+if __name__ == "__main__":
+    sys.exit(main())

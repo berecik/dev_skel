@@ -65,8 +65,15 @@ AXUM_SKEL := $(SKEL_DIR)/rust-axum-skel
 FASTAPI_RAG_SKEL := $(SKEL_DIR)/python-fastapi-rag-skel
 GO_SKEL := $(SKEL_DIR)/go-skel
 
+# DDD-flavored sister skeletons (light-DDD layered, FastAPI-shape)
+GO_DDD_SKEL := $(SKEL_DIR)/go-ddd-skel
+ACTIX_DDD_SKEL := $(SKEL_DIR)/rust-actix-ddd-skel
+AXUM_DDD_SKEL := $(SKEL_DIR)/rust-axum-ddd-skel
+NEXTJS_DDD_SKEL := $(SKEL_DIR)/next-js-ddd-skel
+SPRING_DDD_SKEL := $(SKEL_DIR)/java-spring-ddd-skel
+
 # All skeletons
-SKELETONS := $(FASTAPI_SKEL) $(FLASK_SKEL) $(DJANGO_SKEL) $(DJANGO_BOLT_SKEL) $(REACT_SKEL) $(FLUTTER_SKEL) $(NEXTJS_SKEL) $(SPRING_SKEL) $(ACTIX_SKEL) $(AXUM_SKEL) $(FASTAPI_RAG_SKEL) $(GO_SKEL)
+SKELETONS := $(FASTAPI_SKEL) $(FLASK_SKEL) $(DJANGO_SKEL) $(DJANGO_BOLT_SKEL) $(REACT_SKEL) $(FLUTTER_SKEL) $(NEXTJS_SKEL) $(SPRING_SKEL) $(ACTIX_SKEL) $(AXUM_SKEL) $(FASTAPI_RAG_SKEL) $(GO_SKEL) $(GO_DDD_SKEL) $(ACTIX_DDD_SKEL) $(AXUM_DDD_SKEL) $(NEXTJS_DDD_SKEL) $(SPRING_DDD_SKEL)
 
 # Test output directory
 TEST_OUTPUT := _test_projects
@@ -139,6 +146,21 @@ gen-axum: ## Generate Rust Axum project (NAME=myapp [SERVICE="display name"])
 gen-go: ## Generate Go (net/http) project (NAME=myapp [SERVICE="display name"])
 	@$(MAKE) -C $(GO_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
 
+gen-go-ddd: ## Generate Go DDD project (NAME=myapp [SERVICE="display name"])
+	@$(MAKE) -C $(GO_DDD_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
+
+gen-actix-ddd: ## Generate Rust Actix DDD project (NAME=myapp [SERVICE="display name"])
+	@$(MAKE) -C $(ACTIX_DDD_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
+
+gen-axum-ddd: ## Generate Rust Axum DDD project (NAME=myapp [SERVICE="display name"])
+	@$(MAKE) -C $(AXUM_DDD_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
+
+gen-nextjs-ddd: ## Generate Next.js DDD project (NAME=myapp [SERVICE="display name"])
+	@$(MAKE) -C $(NEXTJS_DDD_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
+
+gen-spring-ddd: ## Generate Spring Boot DDD project (NAME=myapp [SERVICE="display name"])
+	@$(MAKE) -C $(SPRING_DDD_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
+
 gen-stack-web: ## Generate opinionated web stack (FastAPI + React)
 	@bash -eu -c 'name="$(NAME)"; \
 	if [[ -z "$$name" ]]; then echo "Usage: make gen-stack-web NAME=<project-dir>" >&2; exit 1; fi; \
@@ -177,6 +199,11 @@ test-generators: ## Test all generators by creating test projects
 	$(MAKE) test-gen-actix
 	$(MAKE) test-gen-axum
 	$(MAKE) test-gen-go
+	$(MAKE) test-gen-go-ddd
+	$(MAKE) test-gen-actix-ddd
+	$(MAKE) test-gen-axum-ddd
+	$(MAKE) test-gen-nextjs-ddd
+	$(MAKE) test-gen-spring-ddd
 	@echo ""
 	@echo "$(GREEN)=== All generators tested successfully! ===$(NC)"
 
@@ -249,6 +276,36 @@ test-gen-go: ## Test Go generator
 	@cd $(TEST_OUTPUT)/test-go-app/service && go build ./...
 	@echo "$(GREEN)Go generator test passed$(NC)"
 
+test-gen-go-ddd: ## Test Go DDD generator
+	@echo "$(YELLOW)>>> Testing Go DDD generator$(NC)"
+	@$(MAKE) gen-go-ddd NAME=$(TEST_OUTPUT)/test-go-ddd-app
+	@cd $(TEST_OUTPUT)/test-go-ddd-app/service && go build ./...
+	@echo "$(GREEN)Go DDD generator test passed$(NC)"
+
+test-gen-actix-ddd: ## Test Rust Actix DDD generator
+	@echo "$(YELLOW)>>> Testing Rust Actix DDD generator$(NC)"
+	@$(MAKE) gen-actix-ddd NAME=$(TEST_OUTPUT)/test-actix-ddd-app
+	@cd $(TEST_OUTPUT)/test-actix-ddd-app/service && cargo build --release
+	@echo "$(GREEN)Rust Actix DDD generator test passed$(NC)"
+
+test-gen-axum-ddd: ## Test Rust Axum DDD generator
+	@echo "$(YELLOW)>>> Testing Rust Axum DDD generator$(NC)"
+	@$(MAKE) gen-axum-ddd NAME=$(TEST_OUTPUT)/test-axum-ddd-app
+	@cd $(TEST_OUTPUT)/test-axum-ddd-app/service && cargo build --release
+	@echo "$(GREEN)Rust Axum DDD generator test passed$(NC)"
+
+test-gen-nextjs-ddd: ## Test Next.js DDD generator
+	@echo "$(YELLOW)>>> Testing Next.js DDD generator$(NC)"
+	@$(MAKE) gen-nextjs-ddd NAME=$(TEST_OUTPUT)/test-nextjs-ddd-app
+	@cd $(TEST_OUTPUT)/test-nextjs-ddd-app/service && npm install --silent && npm run build
+	@echo "$(GREEN)Next.js DDD generator test passed$(NC)"
+
+test-gen-spring-ddd: ## Test Spring Boot DDD generator
+	@echo "$(YELLOW)>>> Testing Spring Boot DDD generator$(NC)"
+	@$(MAKE) gen-spring-ddd NAME=$(TEST_OUTPUT)/test-spring-ddd-app
+	@cd $(TEST_OUTPUT)/test-spring-ddd-app/service && mvn -q -DskipTests package
+	@echo "$(GREEN)Spring Boot DDD generator test passed$(NC)"
+
 #
 # === AI-AUGMENTED GENERATORS (Ollama) ===
 #
@@ -291,6 +348,21 @@ test-gen-ai-axum: ## AI-generate a Rust Axum service in _test_projects/
 
 test-gen-ai-nextjs: ## AI-generate a Node service in _test_projects/
 	@_bin/skel-test-ai-generators --skel next-js-skel
+
+test-gen-ai-go-ddd: ## AI-generate a Go DDD service in _test_projects/
+	@_bin/skel-test-ai-generators --skel go-ddd-skel
+
+test-gen-ai-actix-ddd: ## AI-generate a Rust Actix DDD service in _test_projects/
+	@_bin/skel-test-ai-generators --skel rust-actix-ddd-skel
+
+test-gen-ai-axum-ddd: ## AI-generate a Rust Axum DDD service in _test_projects/
+	@_bin/skel-test-ai-generators --skel rust-axum-ddd-skel
+
+test-gen-ai-nextjs-ddd: ## AI-generate a Next.js DDD service in _test_projects/
+	@_bin/skel-test-ai-generators --skel next-js-ddd-skel
+
+test-gen-ai-spring-ddd: ## AI-generate a Spring Boot DDD service in _test_projects/
+	@_bin/skel-test-ai-generators --skel java-spring-ddd-skel
 
 test-gen-ai-react: ## AI-generate a React frontend in _test_projects/
 	@_bin/skel-test-ai-generators --skel ts-react-skel
@@ -436,6 +508,41 @@ test-react-go: ## Cross-stack integration test (go-skel + ts-react)
 
 test-react-go-keep: ## Same, but leave _test_projects/test-react-go on disk
 	@_bin/skel-test-react-go --keep
+
+test-react-go-ddd: ## Cross-stack integration test (go-ddd-skel + ts-react)
+	@echo "$(GREEN)=== React + Go DDD integration test ===$(NC)"
+	@_bin/skel-test-react-go-ddd
+
+test-react-go-ddd-keep: ## Same, but leave _test_projects/test-react-go-ddd on disk
+	@_bin/skel-test-react-go-ddd --keep
+
+test-react-actix-ddd: ## Cross-stack integration test (rust-actix-ddd-skel + ts-react)
+	@echo "$(GREEN)=== React + Actix DDD integration test ===$(NC)"
+	@_bin/skel-test-react-actix-ddd
+
+test-react-actix-ddd-keep:
+	@_bin/skel-test-react-actix-ddd --keep
+
+test-react-axum-ddd: ## Cross-stack integration test (rust-axum-ddd-skel + ts-react)
+	@echo "$(GREEN)=== React + Axum DDD integration test ===$(NC)"
+	@_bin/skel-test-react-axum-ddd
+
+test-react-axum-ddd-keep:
+	@_bin/skel-test-react-axum-ddd --keep
+
+test-react-nextjs-ddd: ## Cross-stack integration test (next-js-ddd-skel + ts-react)
+	@echo "$(GREEN)=== React + Next.js DDD integration test ===$(NC)"
+	@_bin/skel-test-react-nextjs-ddd
+
+test-react-nextjs-ddd-keep:
+	@_bin/skel-test-react-nextjs-ddd --keep
+
+test-react-spring-ddd: ## Cross-stack integration test (java-spring-ddd-skel + ts-react)
+	@echo "$(GREEN)=== React + Spring DDD integration test ===$(NC)"
+	@_bin/skel-test-react-spring-ddd
+
+test-react-spring-ddd-keep:
+	@_bin/skel-test-react-spring-ddd --keep
 
 test-react-nextjs: ## Cross-stack integration test (next-js-skel + ts-react)
 	@echo "$(GREEN)=== React + Next.js integration test ===$(NC)"
@@ -618,6 +725,41 @@ test-flutter-go: ## Cross-stack integration test (go + flutter)
 
 test-flutter-go-keep: ## Same, but leave _test_projects/test-flutter-go on disk
 	@_bin/skel-test-flutter-go --keep
+
+test-flutter-go-ddd: ## Cross-stack integration test (go-ddd + flutter)
+	@echo "$(GREEN)=== Flutter + Go DDD integration test ===$(NC)"
+	@_bin/skel-test-flutter-go-ddd
+
+test-flutter-go-ddd-keep:
+	@_bin/skel-test-flutter-go-ddd --keep
+
+test-flutter-actix-ddd: ## Cross-stack integration test (actix-ddd + flutter)
+	@echo "$(GREEN)=== Flutter + Actix DDD integration test ===$(NC)"
+	@_bin/skel-test-flutter-actix-ddd
+
+test-flutter-actix-ddd-keep:
+	@_bin/skel-test-flutter-actix-ddd --keep
+
+test-flutter-axum-ddd: ## Cross-stack integration test (axum-ddd + flutter)
+	@echo "$(GREEN)=== Flutter + Axum DDD integration test ===$(NC)"
+	@_bin/skel-test-flutter-axum-ddd
+
+test-flutter-axum-ddd-keep:
+	@_bin/skel-test-flutter-axum-ddd --keep
+
+test-flutter-nextjs-ddd: ## Cross-stack integration test (nextjs-ddd + flutter)
+	@echo "$(GREEN)=== Flutter + Next.js DDD integration test ===$(NC)"
+	@_bin/skel-test-flutter-nextjs-ddd
+
+test-flutter-nextjs-ddd-keep:
+	@_bin/skel-test-flutter-nextjs-ddd --keep
+
+test-flutter-spring-ddd: ## Cross-stack integration test (spring-ddd + flutter)
+	@echo "$(GREEN)=== Flutter + Spring DDD integration test ===$(NC)"
+	@_bin/skel-test-flutter-spring-ddd
+
+test-flutter-spring-ddd-keep:
+	@_bin/skel-test-flutter-spring-ddd --keep
 
 test-flutter-nextjs: ## Cross-stack integration test (nextjs + flutter)
 	@echo "$(GREEN)=== Flutter + Next.js integration test ===$(NC)"
@@ -895,6 +1037,26 @@ test-k8s-react-go: ## K8s cross-stack test (Go + React)
 	@echo "$(GREEN)=== K8s: React + Go ===$(NC)"
 	@_bin/skel-test-k8s-react-go
 
+test-k8s-react-go-ddd: ## K8s cross-stack test (Go DDD + React)
+	@echo "$(GREEN)=== K8s: React + Go DDD ===$(NC)"
+	@_bin/skel-test-k8s-react-go-ddd
+
+test-k8s-react-actix-ddd: ## K8s cross-stack test (Actix DDD + React)
+	@echo "$(GREEN)=== K8s: React + Actix DDD ===$(NC)"
+	@_bin/skel-test-k8s-react-actix-ddd
+
+test-k8s-react-axum-ddd: ## K8s cross-stack test (Axum DDD + React)
+	@echo "$(GREEN)=== K8s: React + Axum DDD ===$(NC)"
+	@_bin/skel-test-k8s-react-axum-ddd
+
+test-k8s-react-nextjs-ddd: ## K8s cross-stack test (Next.js DDD + React)
+	@echo "$(GREEN)=== K8s: React + Next.js DDD ===$(NC)"
+	@_bin/skel-test-k8s-react-nextjs-ddd
+
+test-k8s-react-spring-ddd: ## K8s cross-stack test (Spring DDD + React)
+	@echo "$(GREEN)=== K8s: React + Spring DDD ===$(NC)"
+	@_bin/skel-test-k8s-react-spring-ddd
+
 test-k8s-react-nextjs: ## K8s cross-stack test (Next.js + React)
 	@echo "$(GREEN)=== K8s: React + Next.js ===$(NC)"
 	@_bin/skel-test-k8s-react-nextjs
@@ -944,6 +1106,26 @@ test-devcontainer-axum: ## Devcontainer test (Rust Axum)
 test-devcontainer-go: ## Devcontainer test (Go)
 	@echo "$(GREEN)=== Devcontainer: Go ===$(NC)"
 	@_bin/skel-test-devcontainer-go
+
+test-devcontainer-go-ddd: ## Devcontainer test (Go DDD)
+	@echo "$(GREEN)=== Devcontainer: Go DDD ===$(NC)"
+	@_bin/skel-test-devcontainer-go-ddd
+
+test-devcontainer-actix-ddd: ## Devcontainer test (Actix DDD)
+	@echo "$(GREEN)=== Devcontainer: Actix DDD ===$(NC)"
+	@_bin/skel-test-devcontainer-actix-ddd
+
+test-devcontainer-axum-ddd: ## Devcontainer test (Axum DDD)
+	@echo "$(GREEN)=== Devcontainer: Axum DDD ===$(NC)"
+	@_bin/skel-test-devcontainer-axum-ddd
+
+test-devcontainer-nextjs-ddd: ## Devcontainer test (Next.js DDD)
+	@echo "$(GREEN)=== Devcontainer: Next.js DDD ===$(NC)"
+	@_bin/skel-test-devcontainer-nextjs-ddd
+
+test-devcontainer-spring-ddd: ## Devcontainer test (Spring DDD)
+	@echo "$(GREEN)=== Devcontainer: Spring DDD ===$(NC)"
+	@_bin/skel-test-devcontainer-spring-ddd
 
 test-devcontainer-nextjs: ## Devcontainer test (Next.js)
 	@echo "$(GREEN)=== Devcontainer: Next.js ===$(NC)"

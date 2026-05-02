@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+"""Devcontainer cross-stack test: Spring Boot backend under docker compose."""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _devcontainer_lib import run_devcontainer_test  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(run_devcontainer_test("java-spring-ddd-skel"))

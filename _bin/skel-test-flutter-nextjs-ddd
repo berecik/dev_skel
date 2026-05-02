@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""End-to-end integration test: Next.js backend + Flutter frontend.
+
+Generates a wrapper containing both ``next-js-skel`` (Next.js API) and
+``flutter-skel``, configures ``BACKEND_URL`` to a non-conflicting
+port, re-copies the wrapper-shared ``.env`` into the Flutter project's
+bundled asset, runs ``flutter pub get`` + ``flutter build web``
+(verifying the URL is bundled into the asset), starts the Next.js
+backend in the background, and exercises the canonical
+``register -> login -> CRUD -> complete`` flow over real HTTP.
+
+The HTTP exercise hits the BACKEND directly (not the Flutter app),
+proving that the same items API contract works for both frontends.
+The Flutter-specific value-add is the bundled-``.env`` inspection,
+which confirms ``flutter_dotenv`` will read the right ``BACKEND_URL``
+at runtime.
+
+Usage::
+
+    _bin/skel-test-flutter-nextjs-ddd              # full run
+    _bin/skel-test-flutter-nextjs-ddd --keep       # leave wrapper on disk
+    _bin/skel-test-flutter-nextjs-ddd --port 18788 # custom port
+    _bin/skel-test-flutter-nextjs-ddd --no-skip    # fail on missing Flutter/Node
+
+Exit codes::
+
+    0 — every check passed
+    1 — at least one check failed
+    2 — toolchain (Flutter / Node / npm) missing or setup error
+"""
+
+from __future__ import annotations
+
+import argparse
+import shutil
+import sys
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from dev_skel_lib import DevSkelConfig, detect_root, load_config  # noqa: E402
+
+from _frontend_backend_lib import (  # noqa: E402
+    DEFAULT_STARTUP_TIMEOUT,
+    EXIT_FAIL,
+    EXIT_SETUP,
+    FLUTTER_FRONTEND,
+    BackendSpec,
+    run_frontend_backend_integration,
+)
+
+
+PROJECT_NAME = "test-flutter-nextjs-ddd"
+BACKEND_SKEL = "next-js-ddd-skel"
+BACKEND_SERVICE_NAME = "Items API"
+
+FLUTTER_DEFAULT_PORT = 18788
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Integration test that generates a wrapper containing "
+            "next-js-skel (Next.js) + flutter-skel, builds the Flutter "
+            "web bundle, starts the Next.js backend, and verifies the "
+            "items API end-to-end via real HTTP."
+        ),
+    )
+    parser.add_argument(
+        "--keep",
+        action="store_true",
+        help=(
+            "Leave the generated wrapper at "
+            "_test_projects/test-flutter-nextjs-ddd on disk after the test."
+        ),
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=FLUTTER_DEFAULT_PORT,
+        help=(
+            "TCP port the Next.js backend should bind to. Default: "
+            f"{FLUTTER_DEFAULT_PORT}."
+        ),
+    )
+    parser.add_argument(
+        "--server-startup-timeout",
+        type=int,
+        default=max(DEFAULT_STARTUP_TIMEOUT, 60),
+        help=(
+            "Seconds to wait for the Next.js server to become "
+            f"reachable (default: {max(DEFAULT_STARTUP_TIMEOUT, 60)})."
+        ),
+    )
+    parser.add_argument(
+        "--no-skip",
+        action="store_true",
+        help=(
+            "Treat missing Flutter SDK or Node/npm as a hard failure "
+            "(exit 1) instead of the default toolchain skip (exit 2)."
+        ),
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+
+    for tool, label in (("node", "Node.js"), ("npm", "npm")):
+        if not shutil.which(tool):
+            msg = f"{tool} ({label}) not on PATH (required to run the Next.js backend)"
+            if args.no_skip:
+                print(f"  \u2717 {msg}")
+                return EXIT_FAIL
+            print(f"  \u00b7 skipping ({msg})")
+            return EXIT_SETUP
+
+    cfg: DevSkelConfig = load_config()
+    repo_root = detect_root(SCRIPT_DIR, cfg.skel_dir)
+
+    spec = BackendSpec(
+        skeleton=BACKEND_SKEL,
+        service_name=BACKEND_SERVICE_NAME,
+        server_argv_template=[
+            "npm", "run", "dev",
+        ],
+        extra_env={
+            "PORT": str(args.port),
+        },
+    )
+
+    return run_frontend_backend_integration(
+        frontend=FLUTTER_FRONTEND,
+        project_name=PROJECT_NAME,
+        title="Flutter + Next.js integration test",
+        spec=spec,
+        repo_root=repo_root,
+        port=args.port,
+        server_startup_timeout=args.server_startup_timeout,
+        keep=args.keep,
+        no_skip=args.no_skip,
+    )
+
+
+if __name__ == "__main__":
+    sys.exit(main())

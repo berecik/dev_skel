@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Test script for running project tests
+# Usage: ./test [options]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --release)
+            cargo test --release
+            exit 0
+            ;;
+        -h|--help)
+            echo "Usage: ./test [options]"
+            echo "Options:"
+            echo "  --release   Run tests in release mode"
+            exit 0
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+cargo test

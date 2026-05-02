@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Same as ./build --release. Kept for parity with the other skels'
+# wrapper layout.
+set -euo pipefail
+exec "$(dirname "$0")/build" --release "$@"

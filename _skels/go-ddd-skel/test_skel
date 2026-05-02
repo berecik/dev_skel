@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Skeleton-test script: generate a fresh project in a tempdir, run
+# `go test ./...`, build the release binary, smoke the Docker image.
+
+SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+TMP_ROOT="${TMPDIR:-/tmp}"
+WORK_DIR="$(mktemp -d "$TMP_ROOT/go-skel-test-XXXXXX")"
+TARGET="$WORK_DIR/proj"
+
+cleanup() {
+  if [[ -d "$TARGET" ]]; then
+    (cd "$TARGET" && ./stop 2>/dev/null || true)
+  fi
+  rm -rf "$WORK_DIR" || true
+}
+trap cleanup EXIT
+
+echo "[test_skel] Generating Go project in $TARGET..."
+"$SKEL_DIR/gen" "$TARGET"
+
+MAIN_DIR="$TARGET"
+PROJECT_DIR="$MAIN_DIR/service"
+
+cd "$PROJECT_DIR"
+
+echo ""
+echo "[test_skel] Running project tests via ./test (go test ./...)..."
+./test
+
+echo ""
+echo "[test_skel] Building release binary via ./build --release..."
+./build --release
+test -x bin/app
+
+if command -v docker >/dev/null 2>&1; then
+  echo ""
+  echo "[test_skel] Building Docker image via ./build script..."
+  ./build --tag=go-test:latest
+
+  echo ""
+  echo "[test_skel] Cleaning up Docker image..."
+  docker rmi go-test:latest 2>/dev/null || true
+else
+  echo "[test_skel] docker not on PATH — skipping image build"
+fi
+
+echo ""
+echo "[test_skel] Go skeleton tests passed!"

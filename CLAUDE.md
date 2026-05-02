@@ -136,6 +136,16 @@ make rule-affecting edits.
     `skel_name` is given, only that one skeleton is generated.
     Same behavior as pre-2026-04 invocations — kept for scripted
     users.
+- **DDD-flavored sister skeletons** (since 2026-05) ship alongside
+  five backends: `go-ddd-skel`, `rust-actix-ddd-skel`,
+  `rust-axum-ddd-skel`, `next-js-ddd-skel`, `java-spring-ddd-skel`.
+  They follow the canonical FastAPI shape (per-resource modules:
+  models + adapters/sql + service + depts + routes; shared
+  `errors`/`httpx`/`repository` abstractions; auth flat;
+  users repo-only). Originals are untouched. Generate with
+  `make gen-{go,actix,axum,nextjs,spring}-ddd`. Test with
+  `make test-{react,flutter,devcontainer,k8s-react}-{go,actix,axum,nextjs,spring}-ddd`.
+  Full reference: [`_docs/DDD-SKELETONS.md`](_docs/DDD-SKELETONS.md).
 - **All 10 skeletons are AI-supported** — Python (django, django-bolt,
   fastapi, flask), Java (spring), Rust (actix, axum), Next.js (js),
   React (ts-react), and Flutter (flutter). The full-stack picker

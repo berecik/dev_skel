@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SKEL_DIR="${1:?skel_dir missing}"
+TARGET_DIR="${2:?target_dir missing}"
+
+echo "Merging additional files from $SKEL_DIR to $TARGET_DIR (Rust Actix)..."
+
+# `cargo new` writes its own minimal Cargo.toml + src/main.rs in the
+# target directory. The skel ships richer versions (with actix-web,
+# tracing, sqlx, jsonwebtoken, argon2 dependencies, the wrapper-shared
+# `Config` wiring, and the full `/api/auth/*`, `/api/items`,
+# `/api/state` handler tree under `src/handlers/`); they MUST always
+# overwrite cargo's hello-world template, otherwise the generated
+# project has no dependencies and cannot compile against any handlers.
+#
+# Every file shipped under `src/` is regenerated on overwrite so the
+# wrapper-shared backend stack stays in sync — keep this regex up to
+# date when adding files under `src/handlers/`.
+#
+# The dev_skel-side helper scripts (Makefile, merge, test_skel, deps,
+# install-deps, AGENTS.md, ...) are excluded so they do not leak into
+# the generated project.
+OVERWRITE_REGEX='^/(Cargo\.toml|src/.*\.rs)$'
+EXCLUDE_REGEX='^/(Makefile|merge|gen|test_skel|deps|install-deps|AGENTS\.md|CLAUDE\.md|JUNIE-RULES\.md)$'
+
+while IFS= read -r -d '' src; do
+  rel="${src#"$SKEL_DIR"}"
+  if [[ "$rel" =~ $EXCLUDE_REGEX ]]; then
+    continue
+  fi
+  dst="$TARGET_DIR/$rel"
+  if [[ "$rel" =~ $OVERWRITE_REGEX ]] || [[ ! -f "$dst" ]]; then
+    mkdir -p "$(dirname "$dst")"
+    cp "$src" "$dst"
+    echo "  + $rel"
+  fi
+done < <(find "$SKEL_DIR" -type f -print0)
+
+echo "Done."

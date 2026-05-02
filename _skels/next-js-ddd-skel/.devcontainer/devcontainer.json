@@ -1,0 +1,21 @@
+{
+  "name": "Next.js Development",
+  "dockerComposeFile": ["docker-compose.devcontainer.yml"],
+  "service": "devcontainer",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "forwardPorts": [3000, 5432],
+  "postCreateCommand": "npm install",
+  "containerEnv": {
+    "NODE_ENV": "development"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-azuretools.vscode-docker",
+        "eamodio.gitlens"
+      ]
+    }
+  }
+}

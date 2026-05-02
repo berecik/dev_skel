@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+COMMON_DIR="$SKEL_DIR/../_common"
+# shellcheck disable=SC1091
+. "$COMMON_DIR/slug.sh"
+
+MAIN_DIR="${1:-}"
+SERVICE_NAME_RAW="${2:-}"
+
+if [[ -z "$MAIN_DIR" ]]; then
+  echo "Usage: $(basename "$0") <main-dir> [service-name]" >&2
+  exit 1
+fi
+
+PROJECT_SUBDIR_OVERRIDE=""
+if [[ -n "$SERVICE_NAME_RAW" ]]; then
+  PROJECT_SUBDIR_OVERRIDE="$(slugify_service_name "$SERVICE_NAME_RAW")"
+fi
+
+# MAIN_DIR is already expected to be an absolute wrapper directory; Axum service lives in service_subdir inside it
+PROJECT_SUBDIR="${PROJECT_SUBDIR_OVERRIDE:-service}"
+PROJECT_DIR="$MAIN_DIR/$PROJECT_SUBDIR"
+
+echo "[axum] Generating into: $MAIN_DIR (project dir: $PROJECT_SUBDIR)"
+
+cargo new "$PROJECT_DIR" >/dev/null 2>&1
+
+# Merge skeleton overlays (do not overwrite Cargo.toml or src/main.rs per merge rules)
+bash "$SKEL_DIR/merge" "$SKEL_DIR" "$PROJECT_DIR"
+
+# Ensure Cargo.toml uses a stable edition supported by Docker base image
+if [[ -f "$PROJECT_DIR/Cargo.toml" ]]; then
+  sed -i '' 's/^edition *= *.*/edition = "2021"/' "$PROJECT_DIR/Cargo.toml" || true
+fi
+
+(
+  cd "$PROJECT_DIR"
+  cargo fetch -q || true
+)
+
+# Create wrapper-level README, Makefile, and thin scripts
+export SKEL_NAME="$(basename "$SKEL_DIR")"
+bash "$COMMON_DIR/common-wrapper.sh" "$MAIN_DIR" "$PROJECT_SUBDIR" "Axum Service"
+
+echo "[axum] Done."

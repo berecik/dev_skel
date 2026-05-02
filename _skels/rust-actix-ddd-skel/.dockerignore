@@ -1,0 +1,25 @@
+# Common skel artifacts
+.git
+.gitignore
+.devcontainer
+.ai
+.ai_runtime.py
+.skel_context.json
+*.md
+LICENSE
+Makefile
+merge
+gen
+gen-requirements
+test
+test_skel
+deps
+AGENTS.md
+CLAUDE.md
+JUNIE-RULES.md
+VERSION
+CHANGELOG.md
+
+# Rust
+target/
+.cargo/

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Same as ./run dev. Kept for parity with the other skels' wrapper
+# layout (./run-dev / ./build-dev / ./stop-dev exist as shorthand).
+set -euo pipefail
+exec "$(dirname "$0")/run" dev "$@"

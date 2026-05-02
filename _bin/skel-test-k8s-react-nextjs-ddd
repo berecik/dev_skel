@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+"""K8s cross-stack test: Next.js backend on k3s. See _k8s_lib.py."""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _k8s_lib import run_k8s_test  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(run_k8s_test("next-js-ddd-skel"))

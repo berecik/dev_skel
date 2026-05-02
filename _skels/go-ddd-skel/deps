@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Bootstrap the Go toolchain on this machine. Mostly informational —
+# Go is a single binary install on every supported platform, so we
+# defer to the distro / brew / asdf tooling instead of bundling a
+# downloader.
+
+if command -v go >/dev/null 2>&1; then
+  echo "Go is already installed: $(go version)"
+  exit 0
+fi
+
+cat <<'EOF'
+Go is not installed. Install one of:
+
+  macOS  :  brew install go
+  Arch   :  sudo pacman -S go
+  Fedora :  sudo dnf install golang
+  Ubuntu :  sudo apt-get install golang
+  Other  :  https://go.dev/dl/
+
+Then re-run ./install-deps to fetch the module dependencies.
+EOF
+exit 1

@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+COMMON_DIR="$SKEL_DIR/../_common"
+# shellcheck disable=SC1091
+. "$COMMON_DIR/slug.sh"
+
+MAIN_DIR="${1:-}"
+SERVICE_NAME_RAW="${2:-}"
+
+if [[ -z "$MAIN_DIR" ]]; then
+  echo "Usage: $(basename "$0") <main-dir> [service-name]" >&2
+  exit 1
+fi
+
+PROJECT_SUBDIR_OVERRIDE=""
+if [[ -n "$SERVICE_NAME_RAW" ]]; then
+  PROJECT_SUBDIR_OVERRIDE="$(slugify_service_name "$SERVICE_NAME_RAW")"
+fi
+
+# MAIN_DIR is already expected to be an absolute wrapper directory; Spring Boot app lives in service_subdir inside it
+PROJECT_SUBDIR="${PROJECT_SUBDIR_OVERRIDE:-service}"
+PROJECT_DIR="$MAIN_DIR/$PROJECT_SUBDIR"
+
+echo "[spring] Generating into: $MAIN_DIR (project dir: $PROJECT_SUBDIR)"
+mkdir -p "$PROJECT_DIR"
+
+# Use Spring Initializr to scaffold base project matching our exclusions
+tmpzip="$(mktemp -t spring-XXXXXX.zip)"
+tmpdir="$(mktemp -dt spring-unzip-XXXXXX)"
+
+GROUP_ID="app.marysia"
+ARTIFACT_ID="$(basename "$PROJECT_DIR")"
+NAME="$ARTIFACT_ID"
+PACKAGE="${GROUP_ID}.${ARTIFACT_ID}"
+
+curl -fsSL "https://start.spring.io/starter.zip?type=maven-project&language=java&groupId=${GROUP_ID}&artifactId=${ARTIFACT_ID}&name=${NAME}&packageName=${PACKAGE}&packaging=jar&javaVersion=21&dependencies=web" -o "$tmpzip"
+unzip -q "$tmpzip" -d "$tmpdir"
+# Some Spring Initializr responses extract straight into `$tmpdir`,
+# others wrap everything in a single artifact subdirectory. Detect
+# whether `$tmpdir/pom.xml` is at the root and pick the right rsync
+# source. The previous shell-glob form (`"$tmpdir"/*/`) silently
+# stripped the `src/` prefix when initializr did NOT wrap files in an
+# artifact dir, leaving orphan `main/` and `test/` directories at the
+# project root.
+if [[ -f "$tmpdir/pom.xml" ]]; then
+  rsync -a "$tmpdir"/ "$PROJECT_DIR"/
+else
+  artifact_root="$(find "$tmpdir" -mindepth 1 -maxdepth 1 -type d | head -n1)"
+  if [[ -z "$artifact_root" ]]; then
+    echo "[spring] error: could not find Spring Initializr output in $tmpdir" >&2
+    exit 1
+  fi
+  rsync -a "$artifact_root"/ "$PROJECT_DIR"/
+fi
+rm -rf "$tmpzip" "$tmpdir"
+
+# Spring Initializr scaffolds files under the artifact-derived package
+# (`app.marysia.<artifact>`) plus a duplicate `application.properties`.
+# Our skel uses a stable `app.marysia.skel` package and ships its own
+# properties + Application.java — drop the initializr leftovers so the
+# generated project compiles with a single Spring Boot main class.
+ARTIFACT_PKG_PATH="app/marysia/${ARTIFACT_ID}"
+rm -rf \
+  "$PROJECT_DIR/src/main/java/${ARTIFACT_PKG_PATH}" \
+  "$PROJECT_DIR/src/test/java/${ARTIFACT_PKG_PATH}" \
+  "$PROJECT_DIR/src/main/resources/application.properties"
+
+# Merge skeleton overlays into inner project directory. The merge
+# script overwrites every file under `app.marysia.skel/` and the
+# resources / pom.xml so re-running gen against an existing project
+# always picks up the latest skel state.
+bash "$SKEL_DIR/merge" "$SKEL_DIR" "$PROJECT_DIR"
+
+(
+  cd "$PROJECT_DIR"
+  mvn -q -e -DskipTests dependency:resolve || true
+)
+
+# Create wrapper-level README, Makefile, and thin scripts
+export SKEL_NAME="$(basename "$SKEL_DIR")"
+bash "$COMMON_DIR/common-wrapper.sh" "$MAIN_DIR" "$PROJECT_SUBDIR" "Spring Service"
+
+echo "[spring] Done."

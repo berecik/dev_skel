@@ -70,11 +70,20 @@ rule-affecting edits.
      appends `<skel>/CHANGELOG.md`) and `./ai upgrade` (template →
      service, replays the changelog excerpt as a propose/apply
      request).
-- Makefile-based project generator system managing 10 skeletons in
-  `_skels/*-skel/`. Each skeleton ships a static `gen` scaffolder, a
-  `merge` rsync helper, an AI manifest at
-  `_skels/_common/manifests/<skel>.py`, a `VERSION` + `CHANGELOG.md`,
-  and per-stack `test` / `build` / `run` / `install-deps` scripts.
+- Makefile-based project generator system managing 10 base skeletons +
+  5 DDD-flavored sister skeletons in `_skels/*-skel/`. Each skeleton
+  ships a static `gen` scaffolder, a `merge` rsync helper, an AI
+  manifest at `_skels/_common/manifests/<skel>.py`, a `VERSION` +
+  `CHANGELOG.md`, and per-stack `test` / `build` / `run` /
+  `install-deps` scripts.
+- DDD sister skeletons (since 2026-05): `go-ddd-skel`,
+  `rust-actix-ddd-skel`, `rust-axum-ddd-skel`, `next-js-ddd-skel`,
+  `java-spring-ddd-skel`. They implement the same wrapper-shared HTTP
+  contract as their flat counterparts but follow the canonical FastAPI
+  shape (per-resource models + adapters/sql + service + depts + routes
+  modules, shared errors/httpx/repository abstractions). Both flavors
+  coexist; originals are untouched. Reference:
+  [`_docs/DDD-SKELETONS.md`](_docs/DDD-SKELETONS.md).
 - Each skeleton produces a framework-specific service inside a wrapper project.
   The wrapper integrates services around a shared environment file
   (`<wrapper>/.env`) plus a shared SQLite/Postgres database

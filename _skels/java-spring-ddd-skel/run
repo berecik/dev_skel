@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run script for Spring Boot project
+# Usage: ./run [mode]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Source the wrapper-shared `.env` first then the local `.env` so the
+# JVM child process inherits SPRING_DATASOURCE_URL, JWT_SECRET,
+# SERVICE_HOST, SERVICE_PORT, etc. The application also resolves
+# `SERVICE_PORT` directly through `application.properties`; reading it
+# here keeps the banner accurate.
+if [[ -f "$SCRIPT_DIR/../.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/../.env"
+  set +a
+fi
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/.env"
+  set +a
+fi
+
+MODE="${1:-dev}"
+PORT="${SERVICE_PORT:-${PORT:-8080}}"
+
+case $MODE in
+    dev)
+        echo "Starting development server..."
+        echo "  URL: http://localhost:$PORT"
+        echo ""
+
+        mvn spring-boot:run
+        ;;
+
+    prod)
+        echo "Starting production server..."
+
+        # Build if JAR doesn't exist
+        if ! ls target/*.jar >/dev/null 2>&1; then
+            echo "Building JAR first..."
+            mvn clean package -DskipTests
+        fi
+
+        java -jar target/*.jar
+        ;;
+
+    docker)
+        echo "Running in Docker..."
+
+        if ! docker images spring-app:latest --format "{{.Repository}}" | grep -q "spring-app"; then
+            echo "Image not found. Building..."
+            ./build
+        fi
+
+        docker run --rm -p "${PORT}:8080" --name spring-app spring-app:latest
+        ;;
+
+    -h|--help)
+        echo "Usage: ./run [mode]"
+        echo ""
+        echo "Modes:"
+        echo "  dev     Development server with spring-boot:run (default)"
+        echo "  prod    Production server from JAR"
+        echo "  docker  Run in Docker container"
+        exit 0
+        ;;
+
+    *)
+        echo "Unknown mode: $MODE"
+        exit 1
+        ;;
+esac

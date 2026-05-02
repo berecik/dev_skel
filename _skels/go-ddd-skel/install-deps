@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Install Go dependencies (download module cache + populate go.sum).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[0;33m'
+NC='\033[0m'
+
+info()   { echo -e "${GREEN}[INFO]${NC} $*"; }
+warn()   { echo -e "${YELLOW}[WARN]${NC} $*"; }
+header() { echo -e "${BLUE}=== $* ===${NC}"; }
+
+header "Installing Go dependencies"
+
+if ! command -v go >/dev/null 2>&1; then
+  echo "ERROR: go not found. Install Go 1.22+ first."
+  echo "Run: ../skel-deps go-skel  (if using dev_skel structure)"
+  exit 1
+fi
+
+info "Go version: $(go version)"
+info "Resolving module dependencies..."
+go mod tidy
+go mod download
+
+echo -e "${BLUE}=== Dependencies installed ===${NC}"
+info "Run the service with: ./run"
+info "Run tests with:        ./test"

@@ -1,0 +1,17 @@
+# Rust
+/target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db

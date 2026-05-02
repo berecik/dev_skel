@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run script for Rust Actix-web project
+# Usage: ./run [mode]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Source the wrapper-shared `.env` first then the local `.env` so
+# child cargo processes (and the compiled binary, when run via
+# `./run prod`) inherit DATABASE_URL, JWT_SECRET, SERVICE_HOST,
+# SERVICE_PORT, etc. The application's own `load_dotenv()` also
+# loads them; reading them here keeps the banner accurate.
+if [[ -f "$SCRIPT_DIR/../.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/../.env"
+  set +a
+fi
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/.env"
+  set +a
+fi
+
+MODE="${1:-dev}"
+PORT="${SERVICE_PORT:-${PORT:-8080}}"
+
+case $MODE in
+    dev)
+        echo "Starting development server..."
+        echo "  URL: http://localhost:$PORT"
+        echo ""
+
+        cargo run
+        ;;
+
+    prod)
+        echo "Starting production server..."
+
+        # Build if binary doesn't exist
+        if [[ ! -f "target/release/app" ]]; then
+            echo "Building release binary first..."
+            cargo build --release
+        fi
+
+        ./target/release/app
+        ;;
+
+    watch)
+        echo "Starting with cargo-watch..."
+        echo "  URL: http://localhost:$PORT"
+        echo ""
+
+        cargo watch -x run
+        ;;
+
+    docker)
+        echo "Running in Docker..."
+
+        if ! docker images actix-app:latest --format "{{.Repository}}" | grep -q "actix-app"; then
+            echo "Image not found. Building..."
+            ./build
+        fi
+
+        docker run --rm -p "${PORT}:8080" --name actix-app actix-app:latest
+        ;;
+
+    -h|--help)
+        echo "Usage: ./run [mode]"
+        echo ""
+        echo "Modes:"
+        echo "  dev     Development server with cargo run (default)"
+        echo "  prod    Production server from release binary"
+        echo "  watch   Development with cargo-watch (auto-reload)"
+        echo "  docker  Run in Docker container"
+        exit 0
+        ;;
+
+    *)
+        echo "Unknown mode: $MODE"
+        exit 1
+        ;;
+esac

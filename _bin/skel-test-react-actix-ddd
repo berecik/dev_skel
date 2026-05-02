@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""End-to-end integration test: Rust Actix backend + React frontend.
+
+Generates a wrapper containing both ``rust-actix-skel`` and
+``ts-react-skel``, configures ``BACKEND_URL`` to a non-conflicting
+port, builds the React frontend (verifying the URL is baked into the
+bundle), compiles + starts the Actix backend in the background, and
+exercises the canonical ``register → login → CRUD → complete → reject
+anonymous → reject invalid token`` flow over real HTTP using the same
+shape the React ``src/api/items.ts`` client uses.
+
+This is the cross-stack proof that:
+
+1. ``_bin/skel-gen`` can generate a wrapper containing the Actix +
+   React full-stack pair.
+2. The wrapper-shared ``BACKEND_URL`` env var is consistently consumed
+   by both services (the React Vite plugin bakes it into the bundle;
+   the Actix binary reads ``SERVICE_PORT`` from the wrapper ``.env``).
+3. The Actix skel's wrapper-shared API
+   (``src/handlers/{auth,items,state}.rs``) is schema-compatible with
+   the React skel's typed fetch client — the same React build that
+   talks to django-bolt also talks to Actix without any code changes.
+4. The end-to-end ``register → login → create item → list items →
+   complete`` flow works against a live Actix server bound to the
+   same port the React bundle expects.
+
+Usage::
+
+    _bin/skel-test-react-actix-ddd              # full run
+    _bin/skel-test-react-actix-ddd --keep       # leave wrapper on disk
+    _bin/skel-test-react-actix-ddd --port 19878 # custom port
+    _bin/skel-test-react-actix-ddd --no-skip    # fail on missing Node/cargo
+
+Exit codes::
+
+    0 — every check passed
+    1 — at least one check failed
+    2 — toolchain (Node / npm / cargo) missing or setup error
+"""
+
+from __future__ import annotations
+
+import argparse
+import shutil
+import sys
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from dev_skel_lib import DevSkelConfig, detect_root, load_config  # noqa: E402
+
+from _frontend_backend_lib import (  # noqa: E402
+    DEFAULT_PORT,
+    DEFAULT_STARTUP_TIMEOUT,
+    EXIT_FAIL,
+    EXIT_SETUP,
+    BackendSpec,
+    run_react_backend_integration,
+)
+
+
+PROJECT_NAME = "test-react-actix-ddd"
+BACKEND_SKEL = "rust-actix-ddd-skel"
+BACKEND_SERVICE_NAME = "Items API"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Integration test that generates a wrapper containing "
+            "rust-actix-skel + ts-react-skel, builds the React frontend, "
+            "compiles + starts the Actix backend, and verifies the items "
+            "API end-to-end via real HTTP."
+        ),
+    )
+    parser.add_argument(
+        "--keep",
+        action="store_true",
+        help=(
+            "Leave the generated wrapper at "
+            "_test_projects/test-react-actix-ddd on disk after the test "
+            "finishes. Useful for poking at the build or running the "
+            "server manually."
+        ),
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=DEFAULT_PORT,
+        help=(
+            "TCP port the Actix backend should bind to. The wrapper "
+            f"BACKEND_URL is rewritten to http://127.0.0.1:<port> before "
+            f"the React build runs. Default: {DEFAULT_PORT}."
+        ),
+    )
+    parser.add_argument(
+        "--server-startup-timeout",
+        type=int,
+        default=max(DEFAULT_STARTUP_TIMEOUT, 90),
+        help=(
+            "Seconds to wait for the Actix server to become reachable on "
+            f"the chosen port (default: {max(DEFAULT_STARTUP_TIMEOUT, 90)}). "
+            "Higher than the FastAPI/django-bolt default because a cold "
+            "Rust release build can take longer than uvicorn boot."
+        ),
+    )
+    parser.add_argument(
+        "--no-skip",
+        action="store_true",
+        help=(
+            "Treat missing Node/npm/cargo as a hard failure (exit 1) "
+            "instead of the default toolchain skip (exit 2)."
+        ),
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+
+    if not shutil.which("cargo"):
+        msg = "cargo not on PATH (required to build the Actix backend)"
+        if args.no_skip:
+            print(f"  ✗ {msg}")
+            return EXIT_FAIL
+        print(f"  · skipping ({msg})")
+        return EXIT_SETUP
+
+    cfg: DevSkelConfig = load_config()
+    repo_root = detect_root(SCRIPT_DIR, cfg.skel_dir)
+
+    # Pre-build the Actix release binary so the server starts almost
+    # instantly when `runtime_proc` spawns it. We then point the
+    # `server_argv_template` at the compiled binary instead of `cargo
+    # run` (which would re-check the build, slow down server startup,
+    # and split stderr across cargo + the binary).
+    pre_setup = [
+        (
+            "cargo build --release",
+            ["cargo", "build", "--release", "--quiet"],
+        ),
+    ]
+
+    spec = BackendSpec(
+        skeleton=BACKEND_SKEL,
+        service_name=BACKEND_SERVICE_NAME,
+        server_argv_template=[
+            "./target/release/app",
+        ],
+        pre_server_setup=pre_setup,
+        # The Actix binary reads SERVICE_HOST + SERVICE_PORT from the
+        # process env, so we override them here. (BACKEND_URL is
+        # already exported by the harness, but the backend itself
+        # cares about SERVICE_HOST/SERVICE_PORT to know where to bind.)
+        extra_env={
+            "SERVICE_HOST": "127.0.0.1",
+            "SERVICE_PORT": str(args.port),
+        },
+    )
+
+    return run_react_backend_integration(
+        project_name=PROJECT_NAME,
+        title="React + Actix integration test",
+        spec=spec,
+        repo_root=repo_root,
+        port=args.port,
+        server_startup_timeout=args.server_startup_timeout,
+        keep=args.keep,
+        no_skip=args.no_skip,
+    )
+
+
+if __name__ == "__main__":
+    sys.exit(main())

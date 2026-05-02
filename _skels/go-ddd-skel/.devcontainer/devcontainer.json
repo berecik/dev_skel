@@ -1,0 +1,20 @@
+{
+  "name": "Go Development",
+  "dockerComposeFile": ["docker-compose.devcontainer.yml"],
+  "service": "devcontainer",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "forwardPorts": [8000, 5432],
+  "postCreateCommand": "go mod download",
+  "containerEnv": {
+    "GO111MODULE": "on"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "ms-azuretools.vscode-docker",
+        "eamodio.gitlens"
+      ]
+    }
+  }
+}

@@ -332,6 +332,14 @@ _SIBLING_KEY_FILES: Dict[str, List[str]] = {
     "rust-actix-skel": ["src/main.rs", "src/config.rs"],
     "rust-axum-skel": ["src/main.rs", "src/config.rs"],
     "next-js-skel": ["src/index.js", "src/config.js"],
+    "go-ddd-skel": ["main.go", "internal/items/depts.go"],
+    "rust-actix-ddd-skel": ["src/main.rs", "src/items/depts.rs"],
+    "rust-axum-ddd-skel": ["src/main.rs", "src/items/depts.rs"],
+    "next-js-ddd-skel": ["src/items/depts.js", "src/config.js"],
+    "java-spring-ddd-skel": [
+        "src/main/java/app/marysia/skel/Application.java",
+        "src/main/resources/application.properties",
+    ],
     "ts-react-skel": [
         "src/config.ts",
         "src/api/items.ts",
@@ -391,6 +399,11 @@ _SERVICE_KIND_BY_TECH: Dict[str, str] = {
     "rust-actix-skel": "backend",
     "rust-axum-skel": "backend",
     "next-js-skel": "backend",
+    "go-ddd-skel": "backend",
+    "rust-actix-ddd-skel": "backend",
+    "rust-axum-ddd-skel": "backend",
+    "next-js-ddd-skel": "backend",
+    "java-spring-ddd-skel": "backend",
     "ts-react-skel": "frontend",
     "flutter-skel": "frontend",
 }
@@ -868,6 +881,11 @@ SKELETON_DESCRIPTIONS: Dict[str, str] = {
     "rust-actix-skel": "Rust Actix-web (sqlite via stdlib)",
     "rust-axum-skel": "Rust Axum (sqlite via stdlib)",
     "next-js-skel": "Node 22 (node:sqlite + node:test)",
+    "go-ddd-skel": "Go DDD (per-resource modules, GORM, FastAPI shape)",
+    "rust-actix-ddd-skel": "Rust Actix DDD (per-resource modules, SeaORM, FastAPI shape)",
+    "rust-axum-ddd-skel": "Rust Axum DDD (per-resource modules, SeaORM, FastAPI shape)",
+    "next-js-ddd-skel": "Next.js DDD (per-resource modules, Drizzle, FastAPI shape)",
+    "java-spring-ddd-skel": "Spring Boot DDD (per-resource packages, JPA, FastAPI shape)",
     "ts-react-skel": "React + Vite + TypeScript (typed fetch client + items hook)",
     "flutter-skel": "Flutter / Dart (Material 3, secure token store, items + /api/state client)",
 }

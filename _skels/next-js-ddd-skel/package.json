@@ -1,0 +1,33 @@
+{
+  "name": "next-js-ddd-skel",
+  "version": "1.0.0",
+  "description": "Next.js API backend skeleton",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "node --test --experimental-vm-modules src/**/*.test.js",
+    "lint": "next lint",
+    "format": "prettier --write 'src/**/*.{js,jsx,ts,tsx}'"
+  },
+  "dependencies": {
+    "next": "^15.3",
+    "react": "^19.0",
+    "react-dom": "^19.0",
+    "better-sqlite3": "^11.0",
+    "drizzle-orm": "^0.36.0",
+    "jose": "^6.0",
+    "bcryptjs": "^3.0",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.28.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^15.3",
+    "prettier": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

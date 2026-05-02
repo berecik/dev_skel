@@ -1,0 +1,58 @@
+[package]
+name = "rust-axum-ddd-skel"
+version = "1.0.0"
+edition = "2021"
+description = "Rust/Axum skeleton project"
+license = "MIT"
+
+# Pin the binary name so the compiled artifact is always
+# `target/release/app`, regardless of the package name. The run/build
+# scripts and the generated Dockerfile all assume this name.
+[[bin]]
+name = "app"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["trace", "cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy = "0.15"
+
+# Wrapper-shared backend stack so the React frontend's `/api/auth/*`,
+# `/api/categories`, `/api/items`, and `/api/state` calls Just Work
+# against this service out of the box. SQLite is the default backing
+# store (matches the wrapper-shared `_shared/db.sqlite3`); switch to
+# Postgres by changing DATABASE_URL — SeaORM auto-detects the driver.
+sea-orm = { version = "1", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "sqlx-sqlite",
+    "sqlx-postgres",
+    "macros",
+    "with-chrono",
+] }
+sea-orm-migration = { version = "1", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "sqlx-sqlite",
+    "sqlx-postgres",
+] }
+jsonwebtoken = "9"
+argon2 = "0.5"
+password-hash = { version = "0.5", features = ["std"] }
+rand = "0.8"
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+thiserror = "1"
+async-trait = "0.1"
+
+[dev-dependencies]
+axum-test = "14"
+tokio-test = "0.4"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

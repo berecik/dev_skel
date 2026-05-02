@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build script for local development
+# Usage: ./build-dev
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+echo "Building for local development..."
+
+# Check Rust toolchain
+if ! command -v cargo &> /dev/null; then
+    echo "Error: Rust toolchain is required. Install from https://rustup.rs"
+    exit 1
+fi
+
+# Build in debug mode
+cargo build
+
+echo "Build complete. Run './run-dev' to start the server."

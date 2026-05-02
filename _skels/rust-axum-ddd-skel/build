@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build script for Rust Axum project
+# Usage: ./build [options]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Default values
+TAG="axum-app:latest"
+NO_CACHE=""
+PUSH=false
+RELEASE=false
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --no-cache)
+            NO_CACHE="--no-cache"
+            shift
+            ;;
+        --push)
+            PUSH=true
+            shift
+            ;;
+        --tag=*)
+            TAG="${1#*=}"
+            shift
+            ;;
+        --release)
+            RELEASE=true
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: ./build [options]"
+            echo ""
+            echo "Options:"
+            echo "  --release    Build release binary (cargo build --release)"
+            echo "  --no-cache   Build Docker without using cache"
+            echo "  --push       Push image to registry after build"
+            echo "  --tag=TAG    Tag for the image (default: axum-app:latest)"
+            exit 0
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+if [[ "$RELEASE" == true ]]; then
+    echo "Building release binary..."
+    cargo build --release
+    echo "Build complete. Binary in target/release/"
+    exit 0
+fi
+
+# Create Dockerfile if it doesn't exist
+if [[ ! -f "Dockerfile" ]]; then
+    cat > Dockerfile <<'EOF'
+FROM rust:latest AS builder
+
+WORKDIR /app
+
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+RUN cargo build --release && rm -rf src
+
+COPY src ./src
+RUN touch src/main.rs && cargo build --release
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Cargo.toml ships an explicit `[[bin]] name = "app"` so the compiled
+# binary is always `target/release/app`, regardless of the package
+# name (which inherits from the wrapper-shared skel name).
+COPY --from=builder /app/target/release/app .
+
+EXPOSE 3000
+
+CMD ["./app"]
+EOF
+    echo "Created Dockerfile"
+fi
+
+echo "Building Docker image: $TAG"
+docker build --tag "$TAG" $NO_CACHE .
+
+echo ""
+echo "Build complete: $TAG"
+docker images "$TAG" --format "Size: {{.Size}}"
+
+if [[ "$PUSH" == true ]]; then
+    echo "Pushing image..."
+    docker push "$TAG"
+fi

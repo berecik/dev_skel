@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build script for Spring Boot project
+# Usage: ./build [options]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Default values
+TAG="spring-app:latest"
+NO_CACHE=""
+PUSH=false
+JAR_ONLY=false
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --no-cache)
+            NO_CACHE="--no-cache"
+            shift
+            ;;
+        --push)
+            PUSH=true
+            shift
+            ;;
+        --tag=*)
+            TAG="${1#*=}"
+            shift
+            ;;
+        --jar)
+            JAR_ONLY=true
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: ./build [options]"
+            echo ""
+            echo "Options:"
+            echo "  --jar        Build JAR only (mvn package)"
+            echo "  --no-cache   Build Docker without using cache"
+            echo "  --push       Push image to registry after build"
+            echo "  --tag=TAG    Tag for the image (default: spring-app:latest)"
+            exit 0
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+if [[ "$JAR_ONLY" == true ]]; then
+    echo "Building JAR..."
+    mvn clean package -DskipTests
+    echo "Build complete. JAR in target/"
+    exit 0
+fi
+
+# Create Dockerfile if it doesn't exist
+if [[ ! -f "Dockerfile" ]]; then
+    cat > Dockerfile <<'EOF'
+FROM maven:3.9-eclipse-temurin-21 AS builder
+
+WORKDIR /app
+
+COPY pom.xml .
+RUN mvn dependency:go-offline
+
+COPY src ./src
+RUN mvn clean package -DskipTests
+
+FROM eclipse-temurin:21-jre-alpine
+
+WORKDIR /app
+
+COPY --from=builder /app/target/*.jar app.jar
+
+EXPOSE 8080
+
+CMD ["java", "-jar", "app.jar"]
+EOF
+    echo "Created Dockerfile"
+fi
+
+echo "Building Docker image: $TAG"
+docker build --tag "$TAG" $NO_CACHE .
+
+echo ""
+echo "Build complete: $TAG"
+docker images "$TAG" --format "Size: {{.Size}}"
+
+if [[ "$PUSH" == true ]]; then
+    echo "Pushing image..."
+    docker push "$TAG"
+fi
