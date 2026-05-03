@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Generator for `wrapper-skel`: lays down the project basement (the
+# wrapper directory + shared environment + dispatch scripts) WITHOUT
+# requiring any service yet. Drop services in afterwards with
+# `make gen-<skel> NAME=<this-wrapper>`.
+#
+# Usage:
+#   bash gen <main-dir> [project-title]
+#
+# Implementation note: the actual heredoc-soup that emits every
+# wrapper file lives in `_skels/_common/common-wrapper.sh` (it's
+# shared with the per-skel gen scripts so the wrapper layout stays
+# byte-identical across both flows). This `gen` is a thin shim that
+# invokes common-wrapper.sh in wrapper-only mode (empty PROJECT_SUBDIR).
+
+SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+COMMON_DIR="$SKEL_DIR/../_common"
+
+MAIN_DIR="${1:-}"
+PROJECT_TITLE="${2:-Generated Project}"
+
+if [[ -z "$MAIN_DIR" ]]; then
+  echo "Usage: $(basename "$0") <main-dir> [project-title]" >&2
+  exit 1
+fi
+
+mkdir -p "$MAIN_DIR"
+
+echo "[wrapper-skel] Generating wrapper basement at: $MAIN_DIR"
+
+# Wrapper-only mode: pass empty PROJECT_SUBDIR. common-wrapper.sh skips
+# every service-specific block (existence check, docker-compose entry,
+# AI sidecar force-overwrite, README service-name references).
+SKEL_NAME="$(basename "$SKEL_DIR")" \
+  bash "$COMMON_DIR/common-wrapper.sh" "$MAIN_DIR" "" "$PROJECT_TITLE"
+
+echo "[wrapper-skel] Done. Add services with:"
+echo "  make gen-fastapi   NAME=$MAIN_DIR SERVICE=\"Items API\""
+echo "  make gen-go        NAME=$MAIN_DIR SERVICE=\"Tickets\""
+echo "  make gen-react     NAME=$MAIN_DIR SERVICE=\"Web UI\""

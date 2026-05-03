@@ -47,18 +47,29 @@ set -euo pipefail
 #             others  → first service that has the script
 
 MAIN_DIR="${1:?main_dir missing}"
-PROJECT_SUBDIR="${2:?project_subdir missing}"
+PROJECT_SUBDIR="${2-}"
 PROJECT_TITLE="${3:-Generated Project}"
 
+# Wrapper-only mode (no service yet): pass an empty PROJECT_SUBDIR. The
+# scaffolder still lays down .env, _shared/, README, Makefile, dispatch
+# scripts, project/env/kube helpers, etc. — every service-specific
+# block (existence check, docker-compose entry, AI sidecar force-overwrite,
+# service-name references in README) is gated on PROJECT_SUBDIR being
+# non-empty so calling this twice (once wrapper-only, once per added
+# service) is safe.
+
 MAIN_DIR="$(cd "$MAIN_DIR" && pwd)"
-PROJECT_DIR="$MAIN_DIR/$PROJECT_SUBDIR"
-
-if [[ ! -d "$PROJECT_DIR" ]]; then
-  echo "[common-wrapper] ERROR: project dir '$PROJECT_DIR' does not exist" >&2
-  exit 1
+PROJECT_DIR=""
+if [[ -n "$PROJECT_SUBDIR" ]]; then
+  PROJECT_DIR="$MAIN_DIR/$PROJECT_SUBDIR"
+  if [[ ! -d "$PROJECT_DIR" ]]; then
+    echo "[common-wrapper] ERROR: project dir '$PROJECT_DIR' does not exist" >&2
+    exit 1
+  fi
+  echo "[common-wrapper] Preparing wrapper in: $MAIN_DIR (project: $PROJECT_SUBDIR)"
+else
+  echo "[common-wrapper] Preparing wrapper in: $MAIN_DIR (no service yet)"
 fi
-
-echo "[common-wrapper] Preparing wrapper in: $MAIN_DIR (project: $PROJECT_SUBDIR)"
 mkdir -p "$MAIN_DIR" "$MAIN_DIR/_shared"
 
 # --------------------------------------------------------------------------- #
@@ -434,7 +445,8 @@ fi
 # Each backend that ships a Dockerfile gets a container entry so
 # `docker compose up` boots the whole stack. Idempotent — skips if the
 # service is already declared.
-if [[ -f "$MAIN_DIR/$PROJECT_SUBDIR/Dockerfile" ]] && \
+if [[ -n "$PROJECT_SUBDIR" ]] && \
+   [[ -f "$MAIN_DIR/$PROJECT_SUBDIR/Dockerfile" ]] && \
    ! grep -q "^  ${PROJECT_SUBDIR}:" "$MAIN_DIR/docker-compose.yml" 2>/dev/null; then
 
   # Resolve the port. Gen scripts that bind to a non-8000 default
@@ -481,6 +493,10 @@ fi
 #  2) Wrapper README
 # --------------------------------------------------------------------------- #
 
+# Use a placeholder slug in the README examples when no service exists yet;
+# the wrapper-only flow lays this README down before any service is added.
+README_SVC_SLUG="${PROJECT_SUBDIR:-<service>}"
+
 cat >"$MAIN_DIR/README.md" <<EOF
 # $PROJECT_TITLE
 
@@ -511,16 +527,16 @@ script accepts an optional first argument matching a service slug:
 \`\`\`bash
 ./services                  # list every service the wrapper knows about
 ./run                       # run the first service (delegates to <svc>/run)
-./run $PROJECT_SUBDIR dev   # run a specific service in dev mode
+./run $README_SVC_SLUG dev   # run a specific service in dev mode
 ./test                      # run tests for every service that has ./test
-./test $PROJECT_SUBDIR      # only run that service's tests
+./test $README_SVC_SLUG      # only run that service's tests
 ./build                     # build every service that has ./build
 ./install-deps              # install deps for every service
 ./stop                      # stop every running service
 \`\`\`
 
 Forwarded arguments after the optional service slug go straight to the
-inner script — for example \`./run $PROJECT_SUBDIR dev --port=8001\`.
+inner script — for example \`./run $README_SVC_SLUG dev --port=8001\`.
 
 ## Adding more services
 
@@ -535,7 +551,7 @@ make gen-django-bolt NAME=$(basename "$MAIN_DIR") SERVICE="Ticket Service"
 The wrapper scripts and Makefile auto-discover the new service the next
 time they run; the shared \`.env\` is preserved.
 
-See \`$PROJECT_SUBDIR/README.md\` for stack-specific details on the first
+See \`$README_SVC_SLUG/README.md\` for stack-specific details on the first
 service.
 EOF
 

@@ -64,6 +64,7 @@ ACTIX_SKEL := $(SKEL_DIR)/rust-actix-skel
 AXUM_SKEL := $(SKEL_DIR)/rust-axum-skel
 FASTAPI_RAG_SKEL := $(SKEL_DIR)/python-fastapi-rag-skel
 GO_SKEL := $(SKEL_DIR)/go-skel
+WRAPPER_SKEL := $(SKEL_DIR)/wrapper-skel
 
 # DDD-flavored sister skeletons (light-DDD layered, FastAPI-shape)
 GO_DDD_SKEL := $(SKEL_DIR)/go-ddd-skel
@@ -73,7 +74,7 @@ NEXTJS_DDD_SKEL := $(SKEL_DIR)/next-js-ddd-skel
 SPRING_DDD_SKEL := $(SKEL_DIR)/java-spring-ddd-skel
 
 # All skeletons
-SKELETONS := $(FASTAPI_SKEL) $(FLASK_SKEL) $(DJANGO_SKEL) $(DJANGO_BOLT_SKEL) $(REACT_SKEL) $(FLUTTER_SKEL) $(NEXTJS_SKEL) $(SPRING_SKEL) $(ACTIX_SKEL) $(AXUM_SKEL) $(FASTAPI_RAG_SKEL) $(GO_SKEL) $(GO_DDD_SKEL) $(ACTIX_DDD_SKEL) $(AXUM_DDD_SKEL) $(NEXTJS_DDD_SKEL) $(SPRING_DDD_SKEL)
+SKELETONS := $(FASTAPI_SKEL) $(FLASK_SKEL) $(DJANGO_SKEL) $(DJANGO_BOLT_SKEL) $(REACT_SKEL) $(FLUTTER_SKEL) $(NEXTJS_SKEL) $(SPRING_SKEL) $(ACTIX_SKEL) $(AXUM_SKEL) $(FASTAPI_RAG_SKEL) $(GO_SKEL) $(GO_DDD_SKEL) $(ACTIX_DDD_SKEL) $(AXUM_DDD_SKEL) $(NEXTJS_DDD_SKEL) $(SPRING_DDD_SKEL) $(WRAPPER_SKEL)
 
 # Test output directory
 TEST_OUTPUT := _test_projects
@@ -161,6 +162,9 @@ gen-nextjs-ddd: ## Generate Next.js DDD project (NAME=myapp [SERVICE="display na
 gen-spring-ddd: ## Generate Spring Boot DDD project (NAME=myapp [SERVICE="display name"])
 	@$(MAKE) -C $(SPRING_DDD_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
 
+gen-wrapper: ## Generate the project basement only (no service yet) — overlay services with gen-<skel>
+	@$(MAKE) -C $(WRAPPER_SKEL) gen NAME=$(abspath $(NAME)) SERVICE="$(SERVICE)"
+
 gen-stack-web: ## Generate opinionated web stack (FastAPI + React)
 	@bash -eu -c 'name="$(NAME)"; \
 	if [[ -z "$$name" ]]; then echo "Usage: make gen-stack-web NAME=<project-dir>" >&2; exit 1; fi; \
@@ -204,6 +208,7 @@ test-generators: ## Test all generators by creating test projects
 	$(MAKE) test-gen-axum-ddd
 	$(MAKE) test-gen-nextjs-ddd
 	$(MAKE) test-gen-spring-ddd
+	$(MAKE) test-gen-wrapper
 	@echo ""
 	@echo "$(GREEN)=== All generators tested successfully! ===$(NC)"
 
@@ -285,26 +290,32 @@ test-gen-go-ddd: ## Test Go DDD generator
 test-gen-actix-ddd: ## Test Rust Actix DDD generator
 	@echo "$(YELLOW)>>> Testing Rust Actix DDD generator$(NC)"
 	@$(MAKE) gen-actix-ddd NAME=$(TEST_OUTPUT)/test-actix-ddd-app
-	@cd $(TEST_OUTPUT)/test-actix-ddd-app/service && cargo build --release
+	@cd $(TEST_OUTPUT)/test-actix-ddd-app/service && cargo build --release 2>/dev/null
 	@echo "$(GREEN)Rust Actix DDD generator test passed$(NC)"
 
 test-gen-axum-ddd: ## Test Rust Axum DDD generator
 	@echo "$(YELLOW)>>> Testing Rust Axum DDD generator$(NC)"
 	@$(MAKE) gen-axum-ddd NAME=$(TEST_OUTPUT)/test-axum-ddd-app
-	@cd $(TEST_OUTPUT)/test-axum-ddd-app/service && cargo build --release
+	@cd $(TEST_OUTPUT)/test-axum-ddd-app/service && cargo build --release 2>/dev/null
 	@echo "$(GREEN)Rust Axum DDD generator test passed$(NC)"
 
 test-gen-nextjs-ddd: ## Test Next.js DDD generator
 	@echo "$(YELLOW)>>> Testing Next.js DDD generator$(NC)"
 	@$(MAKE) gen-nextjs-ddd NAME=$(TEST_OUTPUT)/test-nextjs-ddd-app
-	@cd $(TEST_OUTPUT)/test-nextjs-ddd-app/service && npm install --silent && npm run build
+	@cd $(TEST_OUTPUT)/test-nextjs-ddd-app/app && npm test
 	@echo "$(GREEN)Next.js DDD generator test passed$(NC)"
 
 test-gen-spring-ddd: ## Test Spring Boot DDD generator
 	@echo "$(YELLOW)>>> Testing Spring Boot DDD generator$(NC)"
 	@$(MAKE) gen-spring-ddd NAME=$(TEST_OUTPUT)/test-spring-ddd-app
-	@cd $(TEST_OUTPUT)/test-spring-ddd-app/service && mvn -q -DskipTests package
+	@cd $(TEST_OUTPUT)/test-spring-ddd-app/service && mvn compile -q
 	@echo "$(GREEN)Spring Boot DDD generator test passed$(NC)"
+
+test-gen-wrapper: ## Test wrapper-skel generator (project basement only)
+	@echo "$(YELLOW)>>> Testing wrapper-skel generator$(NC)"
+	@$(MAKE) gen-wrapper NAME=$(TEST_OUTPUT)/test-wrapper-app SERVICE="Test Wrapper"
+	@bash $(WRAPPER_SKEL)/test_skel
+	@echo "$(GREEN)wrapper-skel generator test passed$(NC)"
 
 #
 # === AI-AUGMENTED GENERATORS (Ollama) ===

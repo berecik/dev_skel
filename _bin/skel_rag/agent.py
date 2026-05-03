@@ -215,6 +215,21 @@ class RagAgent:
                     f"  [{index}/{len(manifest.targets)}] {label}\n"
                 )
 
+            # Per-target opt-out: when the user's item_class matches one
+            # of the names listed in `skip_for_item_class`, the AI rewrite
+            # would replace a bundled rich domain shape with the generic
+            # items shape and break sibling files that consume the rich
+            # shape. Skip the AI call entirely; the file that the static
+            # gen produced (or the bundled skel content already at this
+            # path) stays in place.
+            if expanded.skip_for_item_class and ctx.item_class in expanded.skip_for_item_class:
+                if progress is not None:
+                    progress.write(
+                        f"      ↳ skipping (item_class={ctx.item_class!r} "
+                        f"in skip_for_item_class)\n"
+                    )
+                continue
+
             reference = _read_reference(ctx.skeleton_path, expanded.template)
             retrieved_block = self._retrieve_block_for_target(
                 retriever=retriever,
@@ -511,6 +526,16 @@ class RagAgent:
                 progress.write(
                     f"  [int {index}/{len(manifest.targets)}] {label}\n"
                 )
+
+            # Per-target opt-out: see the corresponding block in the
+            # per-target generation loop above.
+            if expanded.skip_for_item_class and ctx.item_class in expanded.skip_for_item_class:
+                if progress is not None:
+                    progress.write(
+                        f"      ↳ skipping (item_class={ctx.item_class!r} "
+                        f"in skip_for_item_class)\n"
+                    )
+                continue
 
             try:
                 reference = _read_reference(ctx.skeleton_path, expanded.template)

@@ -106,15 +106,67 @@ BACKEND_EXTRA = (
 
 FRONTEND_EXTRA = """\
 Replace item screens with pizzeria ordering UX.
-Screens: MenuList (browse catalog items, filter by category),
-OrderBuilder (select positions, edit quantities, see subtotal),
-AddressForm (add or update delivery address during checkout),
-Confirmation (submit order, show pending status),
-StatusScreen (show approved/rejected + wait_minutes + feedback from restaurant).
-Navigation: menu list -> order builder -> address form -> confirmation -> status.
+
+DOMAIN MODEL (Dart classes that MUST exist in lib/api/orders_client.dart;
+field names match the JSON wire format from BACKEND_EXTRA):
+
+- class Order:
+    final int id;
+    final int userId;          // json key: 'user_id'
+    final String status;       // 'draft' | 'pending' | 'approved' | 'rejected'
+    final String createdAt;    // json key: 'created_at'
+    final String? submittedAt; // json key: 'submitted_at'
+    final int? waitMinutes;    // json key: 'wait_minutes'
+    final String? feedback;
+- class OrderLine:
+    final int id;
+    final int catalogItemId;   // json key: 'catalog_item_id'
+    final int quantity;
+    final double unitPrice;    // json key: 'unit_price'
+- class OrderAddress:
+    final String street;
+    final String city;
+    final String zipCode;      // json key: 'zip_code'
+    final String phone;
+    final String? notes;
+- class OrderDetail (returned by GET /api/orders/{id}):
+    final Order order;
+    final List<OrderLine> lines;
+    final OrderAddress? address;
+  Each class has a `factory ClassName.fromJson(Map<String, dynamic>)`
+  constructor that decodes the snake_case wire format. Do NOT keep the
+  generic items-shape `Order { name, description, isCompleted, categoryId }`
+  — replace it entirely.
+
+CONTROLLER METHODS (in lib/controllers/orders_controller.dart):
+
+class OrdersController extends ChangeNotifier:
+  Future<void> loadAll();                   // GET /api/orders
+  Future<OrderDetail> getDetail(int id);    // GET /api/orders/{id}
+  Future<Order> createDraft();              // POST /api/orders
+  Future<void> addLine(int orderId, int catalogItemId, int quantity);
+  Future<void> setAddress(int orderId, OrderAddress address);
+  Future<void> submit(int orderId);
+  Future<void> approve(int orderId, int waitMinutes, String feedback);
+  Future<void> reject(int orderId, String feedback);
+
+SCREENS (each in lib/screens/<name>.dart; one widget per file):
+- menu_list.dart        — MenuListView: browse catalog, filter by category
+- order_builder.dart    — OrderBuilderView: select positions, edit quantities, subtotal
+- address_form.dart     — AddressFormView: street/city/zip/phone/notes form
+- confirmation.dart     — ConfirmationView: submit order, show pending
+- status_screen.dart    — StatusScreenView: approved/rejected + wait_minutes + feedback
+- order_list.dart       — OrderListView: list user orders, tap → status_screen
+
+NAVIGATION: menu list -> order builder -> address form -> confirmation -> status.
+
 Use existing auth/token infrastructure. Read BACKEND_URL from AppConfig.
-Generate tests for: menu rendering, position selection, address form,
-order submission, status display with wait-time feedback."""
+
+TESTS (in test/, one file per controller method or screen widget; each
+test must construct fakes — no live HTTP). Cover: menu rendering,
+position selection, address form, order submission flow, status display
+with wait-time feedback, and round-trip JSON decode for all four
+classes above."""
 
 INTEGRATION_EXTRA = """\
 Verify the full pizzeria flow end-to-end:
@@ -376,15 +428,16 @@ def add_flutter_frontend(
 ) -> str:
     """Add Flutter frontend to an existing wrapper via skel-gen-ai.
 
-    Uses ``skel-gen-ai`` with ``--existing-project`` (from skel-gen-static)
-    flow — generates the Flutter skeleton into the existing wrapper
-    without recreating the wrapper base.
+    Always uses the AI overlay so the playbook validates the FULL
+    AI-generation pipeline end-to-end. When ``item_class`` collides
+    with the bundled flutter-skel's pre-shipped rich classes (Order /
+    OrderDetail / OrderLine / OrderAddress), the manifest's dynamic
+    template paths point the AI at the EXISTING rich bundled file as
+    the reference and instruct it to preserve the rich shape while
+    applying the user's frontend instructions.
 
     Returns the Flutter service slug.
     """
-    # Use skel-gen-ai in single-skeleton mode pointed at the existing
-    # wrapper. This runs the Flutter gen script (flutter create + merge)
-    # and then the AI overlay, all within the existing wrapper.
     cmd = [
         sys.executable,
         str(repo_root / "_bin" / "skel-gen-ai"),

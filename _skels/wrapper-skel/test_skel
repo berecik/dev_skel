@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Smoke test for wrapper-skel. Generates into a temporary directory,
+# confirms the canonical wrapper files are present, then cleans up.
+
+SKEL_DIR="$(cd "$(dirname "$0")" && pwd)"
+TMP="$(mktemp -d -t wrapper-skel-test.XXXXXX)"
+trap 'rm -rf "$TMP"' EXIT
+
+echo "[wrapper-skel/test_skel] Generating into $TMP ..."
+bash "$SKEL_DIR/gen" "$TMP" "Smoke Test Project" >/dev/null
+
+required=(
+  ".env" ".env.example" "_shared" "_shared/db.sqlite3"
+  "README.md" "Makefile" "services" "project" "env" "kube"
+  "run-dev-all" "stop-dev-all" "docker-compose.yml"
+  "contracts/openapi/wrapper-api.yaml" "dev_skel.project.yml"
+)
+
+missing=()
+for rel in "${required[@]}"; do
+  if [[ ! -e "$TMP/$rel" ]]; then
+    missing+=("$rel")
+  fi
+done
+
+if (( ${#missing[@]} > 0 )); then
+  echo "[wrapper-skel/test_skel] FAIL — missing files:"
+  printf '  - %s\n' "${missing[@]}"
+  exit 1
+fi
+
+# Confirm the README rendered the placeholder for "no service yet".
+if ! grep -q '<service>/README.md' "$TMP/README.md"; then
+  echo "[wrapper-skel/test_skel] FAIL — README missing the <service> placeholder"
+  exit 1
+fi
+
+echo "[wrapper-skel/test_skel] OK — ${#required[@]} files present, README placeholder rendered."

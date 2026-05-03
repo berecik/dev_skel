@@ -13,10 +13,28 @@ exists. Templates and services stay in sync via `./backport` (service →
 template, with VERSION + CHANGELOG bump) and `./ai upgrade` (template →
 service).
 
-There are 12 base skeletons in the catalogue — FastAPI, FastAPI-RAG,
-Django, Django-Bolt, Flask, Spring, Actix, Axum, Go, Node, React/Vite,
-and Flutter. Any combination can be generated into one wrapper that
-shares its database, JWT secret, and service-URL map. Ten of them
+There are 12 base service skeletons in the catalogue — FastAPI,
+FastAPI-RAG, Django, Django-Bolt, Flask, Spring, Actix, Axum, Go,
+Node, React/Vite, and Flutter — plus a separate `wrapper-skel`
+**project basement template** that owns the shared layer (`.env`,
+`_shared/`, dispatch scripts, `docker-compose.yml`,
+`dev_skel.project.yml`). Any combination of service skels can be
+generated into one wrapper that shares its database, JWT secret, and
+service-URL map. Two composition flows are supported:
+
+```
+# 1. Wrapper-first (basement, then services as you need them)
+make gen-wrapper NAME=myproj
+make gen-fastapi NAME=myproj SERVICE="API"
+make gen-react   NAME=myproj SERVICE="UI"
+
+# 2. Service-driven (the legacy one-shot — basement is created on the first call)
+make gen-fastapi NAME=myproj SERVICE="API"
+make gen-react   NAME=myproj SERVICE="UI"
+```
+
+Both flows route through `_skels/_common/common-wrapper.sh`, so the
+wrapper layout is byte-identical regardless of which one you pick. Ten of them
 ship full AI manifests so `skel-gen-ai` can rewrite them; the
 remaining two (`go-skel`, `python-fastapi-rag-skel`) work via the
 static path today and gain manifests as they mature.

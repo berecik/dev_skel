@@ -125,24 +125,70 @@ MANIFEST = {
     "targets": [
         {
             "path": "lib/api/{items_plural}_client.dart",
-            "template": "lib/api/items_client.dart",
+            # Dynamic template path: for non-colliding item_class
+            # values (Ticket, Booking, etc.) the path resolves to a
+            # file that doesn't exist and the AI falls back to the
+            # inline reference baked into the prompt.
+            "template": "lib/api/{items_plural}_client.dart",
+            # When item_class collides with a class the bundled
+            # flutter-skel already ships rich (Order/OrderDetail/
+            # OrderLine/OrderAddress, Category/ItemCategory,
+            # CatalogItem, ReactState), skip the AI rewrite entirely
+            # — the bundled file already matches the wrapper-shared
+            # backend contract and is consumed by sibling widgets
+            # (lib/screens/order_list.dart) that the AI does NOT
+            # regenerate.
+            "skip_for_item_class": [
+                "Order", "OrderDetail", "OrderLine", "OrderAddress",
+                "Category", "ItemCategory", "CatalogItem", "ReactState",
+            ],
             "language": "dart",
             "description": "lib/api/{items_plural}_client.dart — typed HTTP client",
             "prompt": """\
-Rewrite `lib/api/items_client.dart` as
-`lib/api/{items_plural}_client.dart` for the `{item_class}` entity.
+Produce `lib/api/{items_plural}_client.dart` for the `{item_class}`
+entity. The REFERENCE template (block at the bottom of this prompt
+under "REFERENCE") is one of two things, and your task differs based
+on which:
 
-Required transformations:
-- Replace every `Item` / `items` token with `{item_class}` /
-  `{items_plural}` (incl. class names, factory names, the
-  `_itemsBase` getter which becomes `_{items_plural}Base`, and
-  every method name like `listItems` → `list{item_class}s`,
-  `getItem` → `get{item_class}`, `createItem` → `create{item_class}`,
-  `completeItem` → `complete{item_class}`).
-- The new endpoint is `${{config.backendUrl}}/api/{items_plural}`
-  instead of `/api/items`.
-- The exported `{item_class}` class MUST keep ALL fields from the
-  original `Item` class, including `categoryId`. The exact shape is:
+  PATH A — {item_class} is one of these EXACT names:
+  `Order`, `Category`, `CatalogItem`, `ReactState`, `OrderLine`,
+  `OrderAddress`, `OrderDetail`. These names refer to classes the
+  bundled flutter-skel already ships at full domain richness in the
+  REFERENCE template at this path. In PATH A, OUTPUT THE REFERENCE
+  VERBATIM (or with at most additive changes the frontend
+  instructions explicitly demand). DO NOT replace its rich domain
+  shape with the generic items shape under any circumstance. The
+  bundled file already matches the wrapper-shared backend contract
+  and is consumed by the bundled `lib/screens/order_list.dart`
+  widget; rewriting it breaks that widget.
+
+  PATH B — {item_class} is anything else (Ticket, Booking, Pizza).
+  In PATH B, the REFERENCE template is either the bundled
+  items_client.dart (when path resolves to it) or
+  `(no template provided)` (when nothing exists at this path). Then
+  RENAME items → {items_plural} throughout (class names, factory
+  names, the `_itemsBase` getter → `_{items_plural}Base`, method
+  names like `listItems` → `list{item_class}s`, `getItem` →
+  `get{item_class}`, `createItem` → `create{item_class}`,
+  `completeItem` → `complete{item_class}`) and apply the user's
+  frontend instructions to enrich the class shape with any
+  domain-specific fields, companion classes, and methods.
+
+Common rules (apply in BOTH paths):
+- The HTTP endpoint is `${{config.backendUrl}}/api/{items_plural}`.
+- Imports continue to pull `TokenStore` from
+  `'../auth/token_store.dart'` and `AppConfig` from
+  `'../config.dart'`.
+
+User-supplied frontend instructions (apply additively in PATH A,
+substantively in PATH B):
+----- BEGIN FRONTEND INSTRUCTIONS -----
+{frontend_extra}
+-----  END FRONTEND INSTRUCTIONS  -----
+
+- FALLBACK SHAPE (use ONLY when the frontend instructions above are
+  empty or do not specify Dart class shapes). Keep ALL fields from
+  the original `Item` class, including `categoryId`:
   ```dart
   class {item_class} {{
     const {item_class}({{
@@ -175,11 +221,7 @@ Required transformations:
       );
     }}
   }}
-  ```
-  DO NOT omit `categoryId` — it is used by the form and list widgets
-  for the category selector and badge display.
-- The `New{item_class}` class MUST include `categoryId`:
-  ```dart
+
   class New{item_class} {{
     const New{item_class}({{
       required this.name,
@@ -202,9 +244,19 @@ Required transformations:
     }}
   }}
   ```
-- Keep the `loginWithPassword`, `AuthError`, `_headers`, and
-  `_unwrap` helpers exactly as in the REFERENCE. They are
-  framework-wide and do not change with the entity name.
+  In fallback mode, `categoryId` is used by the form and list widgets
+  for the category selector and badge display.
+- AVOID DUPLICATING the `AuthError`, `loginWithPassword`, `_headers`,
+  and `_unwrap` helpers. If `lib/api/items_client.dart` will continue
+  to exist alongside this new client (which it will whenever the
+  wrapper still ships an items endpoint), DO NOT redefine
+  `AuthError` here — instead `import '../api/items_client.dart'
+  show AuthError;` and use the imported symbol. Same for any other
+  framework-wide types (`_headers`, `_unwrap` are private so they
+  can be redefined; `AuthError` is public and would collide). If a
+  symbol must be available to handlers in this file, prefer importing
+  it over redeclaring it. Only redeclare `AuthError` here when
+  `items_client.dart` will NOT be in the final tree.
 - Keep the `complete{item_class}` helper (renamed from `completeItem`)
   pointing at `/{items_plural}/$id/complete`.
 - The class name becomes `{item_class}sClient` (renamed from
@@ -230,14 +282,48 @@ ambiguous, do NOT copy verbatim):
         },
         {
             "path": "lib/controllers/{items_plural}_controller.dart",
-            "template": "lib/controllers/items_controller.dart",
+            # Dynamic template — see comment on the api client target.
+            "template": "lib/controllers/{items_plural}_controller.dart",
+            # See skip_for_item_class on the api client target above.
+            "skip_for_item_class": [
+                "Order", "OrderDetail", "OrderLine", "OrderAddress",
+                "Category", "ItemCategory", "CatalogItem", "ReactState",
+            ],
             "language": "dart",
             "description": "lib/controllers/{items_plural}_controller.dart — view-model",
             "prompt": """\
-Rewrite `lib/controllers/items_controller.dart` as
-`lib/controllers/{items_plural}_controller.dart`.
+Produce `lib/controllers/{items_plural}_controller.dart`. The
+REFERENCE template (block below) is one of two things; act based on
+which:
 
-Required transformations:
+  PATH A — {item_class} is one of these EXACT names:
+  `Order`, `Category`, `CatalogItem`, `ReactState`, `OrderLine`,
+  `OrderAddress`, `OrderDetail`. The bundled flutter-skel already
+  ships a rich `{item_class}sController` at the REFERENCE path that
+  matches the wrapper-shared backend contract. In PATH A, OUTPUT
+  THE REFERENCE VERBATIM with at most additive changes the
+  frontend instructions explicitly demand. Do NOT replace its
+  methods with the generic items CRUD (`create`, `complete`) — the
+  bundled controller is the contract `lib/screens/order_list.dart`
+  consumes.
+
+  PATH B — {item_class} is anything else (Ticket, Booking, Pizza).
+  REFERENCE is the items_controller.dart baseline (or the
+  `(no template provided)` placeholder). Then RENAME items →
+  {items_plural} throughout (class name `ItemsController` →
+  `{item_class}sController`, `_items` field → `_{items_plural}`,
+  client type → `{item_class}sClient`, all `Item` / `items` tokens
+  → `{item_class}` / `{items_plural}`) and apply the user's frontend
+  instructions to add domain-specific methods (e.g. `getDetail`,
+  `createDraft`, `addLine`, `submit`, `approve`, `reject`).
+
+User-supplied frontend instructions:
+----- BEGIN FRONTEND INSTRUCTIONS -----
+{frontend_extra}
+-----  END FRONTEND INSTRUCTIONS  -----
+
+Required transformations (rename-only baseline for PATH B — the
+domain instructions above SUPERSEDE these where they conflict):
 - Class name: `{item_class}sController` (renamed from
   `ItemsController`).
 - The `client` field type is `{item_class}sClient` from
@@ -276,15 +362,38 @@ ambiguous, do NOT copy verbatim):
             "template": "lib/screens/item_list.dart",
             "language": "dart",
             "description": "lib/screens/item_list.dart — list widget",
+            # When item_class collides with a bundled rich type, leave
+            # the bundled simple-CRUD ItemListView in place — the rich
+            # workflow is rendered by lib/screens/order_list.dart which
+            # the AI does NOT regenerate.
+            "skip_for_item_class": [
+                "Order", "OrderDetail", "OrderLine", "OrderAddress",
+                "Category", "ItemCategory", "CatalogItem", "ReactState",
+            ],
             "prompt": """\
-Rewrite `lib/screens/item_list.dart` to use the `{item_class}` entity.
+Produce `lib/screens/item_list.dart`. There are TWO paths:
+
+  PATH A — {item_class} is one of these EXACT names:
+  `Order`, `Category`, `CatalogItem`, `ReactState`, `OrderLine`,
+  `OrderAddress`, `OrderDetail`. The bundled flutter-skel already
+  ships richer companion widgets for these types (e.g.
+  `OrderListView` in `lib/screens/order_list.dart`), and
+  `home_screen.dart` mounts BOTH `ItemListView` and `OrderListView`
+  side-by-side with their own controllers. Rewriting `ItemListView`
+  to use `{item_class}sController` breaks that pairing.
+  In PATH A, OUTPUT THE REFERENCE VERBATIM (or with at most
+  whitespace-only changes). Do NOT change the entity type or
+  controller type here.
+
+  PATH B — {item_class} is anything else (Ticket, Booking, Pizza).
+  Then RENAME items → {item_class} per the rules below.
 
 CRITICAL: Keep the widget class name as `ItemListView` and the file
 as `lib/screens/item_list.dart`. Do NOT rename the class — it MUST
 stay `ItemListView` because `home_screen.dart` and `main.dart` import
 it by this exact name.
 
-Required transformations:
+Required transformations (PATH B only):
 - Keep class name: `ItemListView` (do NOT change).
 - The `controller` field type stays `ItemsController` from
   `'../controllers/items_controller.dart'` — do NOT rename.
@@ -326,15 +435,42 @@ ambiguous, do NOT copy verbatim):
             "template": "lib/screens/item_form.dart",
             "language": "dart",
             "description": "lib/screens/item_form.dart — create form",
+            # When item_class collides with a bundled rich type, leave
+            # the bundled simple-CRUD ItemForm in place — the rich
+            # workflow is handled by lib/screens/order_list.dart which
+            # the AI does NOT regenerate.
+            "skip_for_item_class": [
+                "Order", "OrderDetail", "OrderLine", "OrderAddress",
+                "Category", "ItemCategory", "CatalogItem", "ReactState",
+            ],
             "prompt": """\
-Rewrite `lib/screens/item_form.dart` to use the `{item_class}` entity.
+Produce `lib/screens/item_form.dart`. The REFERENCE template is the
+bundled simple-CRUD form. There are TWO paths:
+
+  PATH A — {item_class} is one of these EXACT names:
+  `Order`, `Category`, `CatalogItem`, `ReactState`, `OrderLine`,
+  `OrderAddress`, `OrderDetail`. These names collide with classes
+  the bundled flutter-skel already ships at full domain richness;
+  the bundled `home_screen.dart` mounts `ItemListView` (Item-based)
+  alongside `OrderListView` (Order-based) and passes the matching
+  controller to each. Rewriting `ItemForm` to use
+  `{item_class}sController` breaks that contract.
+  In PATH A, OUTPUT THE REFERENCE VERBATIM (or with at most
+  whitespace-only changes). Do NOT swap `ItemsController` for
+  `{item_class}sController`. Do NOT import `New{item_class}` (the
+  rich orders_client.dart does not define `NewOrder` — there is no
+  simple create call for a rich workflow). Do NOT change the entity
+  type referenced inside the form. The `Item` baseline stays.
+
+  PATH B — {item_class} is anything else (Ticket, Booking, Pizza,
+  etc.). Then RENAME items → {item_class} per the rules below.
 
 CRITICAL: Keep the widget class name as `ItemForm` and the file as
 `lib/screens/item_form.dart`. Do NOT rename the class — it MUST stay
 `ItemForm` because `home_screen.dart` and `main.dart` import it by
 this exact name.
 
-Required transformations:
+Required transformations (PATH B only):
 - Keep class name: `ItemForm` (do NOT change).
 - The `controller` field type stays `ItemsController` — do NOT rename.
 - The `controller.create(NewItem(...))` call becomes

@@ -266,6 +266,15 @@ class AiTarget:
     Python ``str.format``-style template that receives the
     :class:`GenerationContext` template variables plus a ``template`` slot
     holding the reference file's contents.
+
+    ``skip_for_item_class`` is an optional list of item_class names for
+    which the AI generation is SKIPPED entirely, leaving the file
+    that the static gen produced (or the bundled skel content when the
+    target path matches a bundled file) intact. This is the escape
+    hatch for cases where the user's chosen item_class collides with a
+    rich domain class the bundled skel already provides — the AI rewrite
+    would replace the rich shape with the generic items shape and
+    break sibling files that consume the rich shape.
     """
 
     path: str
@@ -273,6 +282,7 @@ class AiTarget:
     prompt: str
     language: str = "python"
     description: str = ""
+    skip_for_item_class: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -742,6 +752,7 @@ def load_manifest(repo_root: Path, skeleton_name: str) -> AiManifest:
             prompt=str(t["prompt"]),
             language=str(t.get("language", "python")),
             description=str(t.get("description", "")),
+            skip_for_item_class=list(t.get("skip_for_item_class", [])),
         )
         for t in targets_raw
     ]
@@ -1430,6 +1441,7 @@ def expand_target_paths(target: AiTarget, ctx: GenerationContext) -> AiTarget:
         prompt=target.prompt,
         language=target.language,
         description=expand(target.description) if target.description else "",
+        skip_for_item_class=list(target.skip_for_item_class),
     )
 
 

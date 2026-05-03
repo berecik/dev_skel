@@ -136,6 +136,20 @@ make rule-affecting edits.
     `skel_name` is given, only that one skeleton is generated.
     Same behavior as pre-2026-04 invocations — kept for scripted
     users.
+- **`wrapper-skel`** (since 2026-05-02) is a separate **project
+  basement template**. It owns the wrapper directory + shared layer
+  (`.env`, `_shared/`, `docker-compose.yml`, dispatch scripts,
+  `project`/`env`/`kube`/`run-dev-all`/`stop-dev-all`,
+  `dev_skel.project.yml`) without requiring any service. Two flows
+  are supported: **wrapper-first** (`make gen-wrapper NAME=myproj`
+  → `make gen-fastapi NAME=myproj SERVICE="API"` → ...) and the
+  legacy **service-driven** (`make gen-fastapi NAME=myproj`
+  bootstraps the basement on the first call). Both routes call
+  `_skels/_common/common-wrapper.sh`, which now accepts an empty
+  `PROJECT_SUBDIR` (wrapper-only mode) — single source of truth for
+  wrapper file emission. Edit the wrapper layout in
+  `_skels/_common/common-wrapper.sh`, not in `wrapper-skel/gen` and
+  not in any per-service `gen` script.
 - **DDD-flavored sister skeletons** (since 2026-05) ship alongside
   five backends: `go-ddd-skel`, `rust-actix-ddd-skel`,
   `rust-axum-ddd-skel`, `next-js-ddd-skel`, `java-spring-ddd-skel`.

@@ -76,6 +76,17 @@ rule-affecting edits.
   manifest at `_skels/_common/manifests/<skel>.py`, a `VERSION` +
   `CHANGELOG.md`, and per-stack `test` / `build` / `run` /
   `install-deps` scripts.
+- `wrapper-skel` (since 2026-05-02) is a separate **project
+  basement template** that lays down the wrapper directory + shared
+  layer (`.env`, `_shared/`, `docker-compose.yml`, dispatch scripts,
+  `project`/`env`/`kube`, `dev_skel.project.yml`) without requiring
+  any service. Two flows: **wrapper-first** (`make gen-wrapper
+  NAME=myproj` → `make gen-<service-skel> NAME=myproj`) and the
+  legacy **service-driven** (one-shot). Both flows route through
+  `_skels/_common/common-wrapper.sh`, which now accepts an empty
+  `PROJECT_SUBDIR`. Edit wrapper layout in `common-wrapper.sh`
+  (single source of truth) — never duplicate wrapper file emission
+  into a per-service `gen` script.
 - DDD sister skeletons (since 2026-05): `go-ddd-skel`,
   `rust-actix-ddd-skel`, `rust-axum-ddd-skel`, `next-js-ddd-skel`,
   `java-spring-ddd-skel`. They implement the same wrapper-shared HTTP
