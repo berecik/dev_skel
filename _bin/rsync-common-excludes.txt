@@ -1,2 +1,28 @@
 _test_projects/
-AGENTS.md
+
+# Build artefacts (directories — trailing slash matches dirs only)
+target/
+node_modules/
+.venv/
+venv/
+env/
+dist/
+build/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.next/
+.nuxt/
+.cache/
+.idea/
+.vscode/
+.gradle/
+.cargo/
+
+# Files
+.DS_Store
+*.pyc
+*.pyo
+*.swp

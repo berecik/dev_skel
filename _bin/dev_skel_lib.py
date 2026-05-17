@@ -180,6 +180,10 @@ def sync_to_remote(host: str, src_dir: Path, dest_dir: str, excludes_file: Path)
         "-az",
         "--delete",
         "--progress",
+        # Per-directory ignore files (rsync descends and reads these in each
+        # subdir). `:-` = dir-merge with patterns treated as excludes.
+        "--filter=:- .gitignore",
+        "--filter=:- .rsyncignore",
         "--exclude-from",
         str(excludes_file),
         "-e",
