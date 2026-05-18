@@ -722,6 +722,186 @@ class RagAgent:
 
         return results
 
+    # ---- integration phase (DSPy path, opt-in via SKEL_RAG_USE_DSPY=1) ----
+
+    def run_integration_phase_with_dspy(
+        self,
+        *,
+        manifest: "IntegrationManifest",
+        ctx: "GenerationContext",
+        dry_run: bool = False,
+        progress: Any = None,
+    ) -> List["TargetResult"]:
+        """DSPy-based parallel path for the integration phase.
+
+        Mirrors :meth:`run_integration_phase` but routes each target
+        through :class:`IntegrationProgram` (a composed DSPy module
+        wrapping :class:`IntegrateService`) instead of formatting a
+        prompt string and calling :meth:`chat`. Gated by the caller via
+        ``SKEL_RAG_USE_DSPY=1``; the legacy ``run_integration_phase``
+        remains the default until Phase 8.
+
+        Same external behaviour: writes the same output files in the
+        same locations, honours ``dry_run``, and best-effort skips
+        any target whose path expansion or system-prompt render fails
+        (matching the legacy method).
+        """
+
+        import dspy
+        from skel_rag.dspy_lm import make_lm
+        from skel_rag.programs.integration import IntegrationProgram
+        from skel_ai_lib import (  # local import — avoid circular dependency
+            AiManifest as LegacyAiManifest,
+            TargetResult,
+            build_system_prompt,
+            clean_response,
+            expand_target_paths,
+            _read_reference,
+        )
+
+        if not manifest.targets:
+            if progress is not None:
+                progress.write(
+                    "  (integration manifest has no targets — nothing to do)\n"
+                )
+            return []
+
+        results: List[TargetResult] = []
+        # Render the legacy system prompt only so an exception here keeps
+        # parity with the legacy method's bail-out semantics. The DSPy
+        # signature carries its own docstring, so the rendered system
+        # prompt is not piped into the LM call.
+        try:
+            build_system_prompt(
+                LegacyAiManifest(
+                    skeleton_name=manifest.skeleton_name,
+                    targets=[],
+                    system_prompt=manifest.system_prompt,
+                    notes=manifest.notes,
+                ),
+                ctx,
+            )
+        except Exception as exc:  # noqa: BLE001 — match legacy bail-out
+            if progress is not None:
+                progress.write(
+                    f"  (integration system prompt render failed: {exc!r}; "
+                    "skipping the integration phase)\n"
+                )
+            return []
+
+        # Wrapper corpus is the parent directory of the new service.
+        wrapper_root = ctx.project_root
+        wrapper_corpus = corpus_for_wrapper(
+            wrapper_root, exclude_slug=ctx.service_subdir
+        )
+        wrapper_retriever = self.get_retriever(
+            wrapper_corpus, persist=False
+        ) if wrapper_corpus.files else None
+
+        lm = make_lm(self.ollama_cfg)
+        program = IntegrationProgram()
+        integration_extra = getattr(ctx, "integration_extra", "") or ""
+
+        with dspy.context(lm=lm):
+            for index, target in enumerate(manifest.targets, start=1):
+                try:
+                    expanded = expand_target_paths(target, ctx)
+                except Exception as exc:  # noqa: BLE001
+                    if progress is not None:
+                        progress.write(
+                            f"  [int {index}/{len(manifest.targets)}] "
+                            f"(skipping — path expansion failed: {exc})\n"
+                        )
+                    continue
+
+                label = expanded.description or expanded.path
+                if progress is not None:
+                    progress.write(
+                        f"  [int {index}/{len(manifest.targets)}] {label}\n"
+                    )
+
+                # Per-target opt-out (matches the legacy path).
+                if expanded.skip_for_item_class and ctx.item_class in expanded.skip_for_item_class:
+                    if progress is not None:
+                        progress.write(
+                            f"      ↳ skipping (item_class={ctx.item_class!r} "
+                            f"in skip_for_item_class)\n"
+                        )
+                    continue
+
+                # Read the reference (used for context only — the
+                # signature does not currently expose a reference field,
+                # so for parity we just resolve it to surface any error
+                # the same way the legacy method does).
+                try:
+                    _read_reference(ctx.skeleton_path, expanded.template)
+                    retrieved_siblings_block = self._retrieve_block_for_target(
+                        retriever=wrapper_retriever,
+                        target=expanded,
+                        ctx=ctx,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    if progress is not None:
+                        progress.write(
+                            f"      (skipping — prompt render failed: {exc})\n"
+                        )
+                    continue
+
+                destination = ctx.project_dir / expanded.path
+                if dry_run:
+                    results.append(
+                        TargetResult(
+                            target=expanded,
+                            written_to=destination,
+                            bytes_written=0,
+                        )
+                    )
+                    continue
+
+                try:
+                    pred = program(
+                        target_path=expanded.path,
+                        retrieved_siblings=retrieved_siblings_block,
+                        item_class=ctx.item_class,
+                        service_label=ctx.service_label,
+                        integration_extra=integration_extra,
+                    )
+                except OllamaError as exc:
+                    if progress is not None:
+                        progress.write(
+                            f"      (Ollama error on integration target: {exc}; "
+                            "continuing to next target)\n"
+                        )
+                    continue
+                except Exception as exc:  # noqa: BLE001
+                    if progress is not None:
+                        progress.write(
+                            f"      (unexpected Ollama failure: {exc!r}; "
+                            "continuing to next target)\n"
+                        )
+                    continue
+
+                cleaned = clean_response(pred.file_contents, target.language)
+                try:
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_text(cleaned, encoding="utf-8")
+                except OSError as exc:
+                    if progress is not None:
+                        progress.write(
+                            f"      (could not write {destination}: {exc}; skipping)\n"
+                        )
+                    continue
+
+                results.append(
+                    TargetResult(
+                        target=expanded,
+                        written_to=destination,
+                        bytes_written=len(cleaned.encode("utf-8")),
+                    )
+                )
+
+        return results
+
     # ---- fix loop ---------------------------------------------------------
 
     def fix_target(

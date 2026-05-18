@@ -189,6 +189,29 @@ def _generate_targets_dispatch(*, client, manifest, ctx, dry_run, progress):
     )
 
 
+def _run_integration_dispatch(*, client, manifest, ctx, dry_run, progress):
+    """Dispatch the integration phase to DSPy when SKEL_RAG_USE_DSPY=1,
+    else legacy. Mirrors :func:`_generate_targets_dispatch` so both call
+    sites in this file (single-skeleton flow + full-stack flow) share
+    one code path regardless of the chosen backend.
+    """
+
+    if os.environ.get("SKEL_RAG_USE_DSPY") == "1":
+        return client.agent.run_integration_phase_with_dspy(
+            manifest=manifest,
+            ctx=ctx,
+            dry_run=dry_run,
+            progress=progress,
+        )
+    return run_integration_phase(
+        client=client,
+        manifest=manifest,
+        ctx=ctx,
+        dry_run=dry_run,
+        progress=progress,
+    )
+
+
 def _run_kube_phase_with_fallback(*, client, wrapper_dir, args) -> None:
     """Run Phase 5 (Kubernetes lifecycle) and report outcome.
 
@@ -868,7 +891,7 @@ def _run_single_skel_flow(
         # crash here would lose the test output the next iteration
         # could feed back to the model.
         try:
-            integration_results = run_integration_phase(
+            integration_results = _run_integration_dispatch(
                 client=client,
                 manifest=integration_manifest,
                 ctx=ctx,
@@ -1356,7 +1379,7 @@ def _run_fullstack_flow(
             # continues to the test-fix loop with whatever files
             # were already written.
             try:
-                integration_results = run_integration_phase(
+                integration_results = _run_integration_dispatch(
                     client=client,
                     manifest=backend_integration,
                     ctx=backend_ctx,
