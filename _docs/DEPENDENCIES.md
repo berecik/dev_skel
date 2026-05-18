@@ -66,14 +66,18 @@ ollama pull qwen2.5-coder:7b
 
 In-tree mode (when a dev_skel checkout is reachable) uses a real RAG
 pipeline — tree-sitter chunker + FAISS index + sentence-transformers
-embedding model + LangChain Ollama chat. Install once:
+embedding model + DSPy-driven Ollama chat (via the `litellm` backend
+inside DSPy). Install once:
 
 ```bash
 make install-rag-deps
 ```
 
-This adds `sentence-transformers`, `faiss-cpu`, `langchain-ollama`
-(plus their tree-sitter friends). The default embedding model is
+This adds `dspy-ai` (which pulls in `litellm`, `pydantic`, and
+optionally `optuna` for MIPRO/BootstrapFewShot optimization),
+`sentence-transformers`, `faiss-cpu`, `langchain-ollama` (still used
+by the LangChain text-splitter fallback inside `skel_rag.chunker`),
+plus their tree-sitter friends. The default embedding model is
 `BAAI/bge-small-en-v1.5`.
 
 The **out-of-tree** `./ai` mode (when a service is detached from any

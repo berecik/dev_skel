@@ -64,6 +64,7 @@ info "=== Upgrading pip ==="
 
 info "=== Installing RAG agent dependencies ==="
 "$PIP" install --upgrade \
+    'dspy-ai>=2.5' \
     'langchain-core>=0.3' \
     'langchain-community>=0.3' \
     'langchain-huggingface>=0.1' \
@@ -84,6 +85,7 @@ fi
 
 info "=== Verifying installation ==="
 "$VPYTHON" -c "
+import dspy
 from langchain_core.messages import HumanMessage
 from langchain_ollama import ChatOllama
 from langchain_community.vectorstores import FAISS

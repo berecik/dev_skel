@@ -636,9 +636,10 @@ class OllamaClient:
         """Send one user/system turn and return the assistant text.
 
         Delegates to :meth:`skel_rag.agent.RagAgent.chat`, which goes
-        through ``langchain_ollama.ChatOllama``. The new path raises
-        :class:`skel_rag.llm.OllamaError` on failure; we re-raise as the
-        local :class:`OllamaError` so existing handlers keep matching.
+        through DSPy's ``ollama_chat/...`` LM (backed by litellm). The
+        new path raises :class:`skel_rag.llm.OllamaError` on failure;
+        we re-raise as the local :class:`OllamaError` so existing
+        handlers keep matching.
 
         Honors ``SKEL_AI_VERBOSE`` + ``SKEL_AI_HEARTBEAT_SEC`` env vars
         to print an elapsed-time tick while the call blocks, so
