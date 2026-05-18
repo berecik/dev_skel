@@ -312,6 +312,119 @@ class RagAgent:
 
         return results
 
+    # ---- per-target phase (DSPy path, opt-in via SKEL_RAG_USE_DSPY=1) -----
+
+    def generate_targets_with_dspy(
+        self,
+        *,
+        manifest: "AiManifest",
+        ctx: "GenerationContext",
+        dry_run: bool = False,
+        progress: Any = None,
+    ) -> List["TargetResult"]:
+        """DSPy-based parallel path for the per-target generation phase.
+
+        Mirrors :meth:`generate_targets` but builds inputs for the
+        :class:`GenerateFile` signature instead of formatting prompt
+        strings. Gated by the caller via ``SKEL_RAG_USE_DSPY=1``; the
+        legacy ``generate_targets`` remains the default until Phase 8.
+
+        Same retrieval / skip / prior-outputs semantics as the legacy
+        path so the file write side-effects are identical.
+        """
+
+        import dspy
+        from skel_rag.dspy_lm import make_lm
+        from skel_rag.signatures.generate_file import GenerateFile
+        from skel_ai_lib import (  # local import to avoid circular dependency
+            TargetResult,
+            clean_response,
+            expand_target_paths,
+            _read_reference,
+        )
+
+        results: List[TargetResult] = []
+        lm = make_lm(self.ollama_cfg)
+        predictor = dspy.Predict(GenerateFile)
+        retriever = self.get_retriever(corpus_for_skeleton(ctx.skeleton_path))
+
+        prior_outputs: List[str] = []
+
+        with dspy.context(lm=lm):
+            for index, target in enumerate(manifest.targets, start=1):
+                expanded = expand_target_paths(target, ctx)
+                label = expanded.description or expanded.path
+                if progress is not None:
+                    progress.write(
+                        f"  [{index}/{len(manifest.targets)}] {label}\n"
+                    )
+
+                # Same per-target opt-out as the legacy path.
+                if expanded.skip_for_item_class and ctx.item_class in expanded.skip_for_item_class:
+                    if progress is not None:
+                        progress.write(
+                            f"      ↳ skipping (item_class={ctx.item_class!r} "
+                            f"in skip_for_item_class)\n"
+                        )
+                    continue
+
+                reference = _read_reference(ctx.skeleton_path, expanded.template) or ""
+                retrieved_block = self._retrieve_block_for_target(
+                    retriever=retriever,
+                    target=expanded,
+                    ctx=ctx,
+                )
+                prior_block = "\n\n".join(prior_outputs) if prior_outputs else ""
+
+                destination = ctx.project_dir / expanded.path
+
+                if dry_run:
+                    results.append(
+                        TargetResult(
+                            target=expanded,
+                            written_to=destination,
+                            bytes_written=0,
+                        )
+                    )
+                    continue
+
+                pred = predictor(
+                    skeleton_name=manifest.skeleton_name,
+                    target_path=expanded.path,
+                    reference_template=reference,
+                    retrieved_context=retrieved_block,
+                    prior_outputs=prior_block,
+                    item_class=ctx.item_class,
+                    item_name=ctx.item_name,
+                    items_plural=ctx.items_plural,
+                    service_label=ctx.service_label,
+                    auth_type=ctx.auth_type,
+                    backend_extra=ctx.backend_extra or "",
+                )
+                cleaned = clean_response(pred.file_contents, target.language)
+
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text(cleaned, encoding="utf-8")
+
+                results.append(
+                    TargetResult(
+                        target=expanded,
+                        written_to=destination,
+                        bytes_written=len(cleaned.encode("utf-8")),
+                    )
+                )
+
+                # Accumulate for multi-phase context (cap each file to
+                # ~2000 chars, matching the legacy path).
+                snippet = cleaned[:2000]
+                if len(cleaned) > 2000:
+                    snippet += "\n... (truncated)"
+                prior_outputs.append(
+                    f"--- FILE: {expanded.path} ---\n{snippet}\n--- END ---"
+                )
+
+        return results
+
     # ---- post-generation review -------------------------------------------
 
     def _maybe_check_target(
