@@ -388,7 +388,7 @@ class RagAgent:
                     )
                     continue
 
-                pred = predictor(
+                gen_inputs = dict(
                     skeleton_name=manifest.skeleton_name,
                     target_path=expanded.path,
                     reference_template=reference,
@@ -401,7 +401,18 @@ class RagAgent:
                     auth_type=ctx.auth_type,
                     backend_extra=ctx.backend_extra or "",
                 )
+                pred = predictor(**gen_inputs)
                 cleaned = clean_response(pred.file_contents, target.language)
+                cleaned = self._check_via_dspy(
+                    cleaned=cleaned,
+                    gen_inputs=gen_inputs,
+                    target=target,
+                    expanded=expanded,
+                    ctx=ctx,
+                    prior_outputs=prior_outputs,
+                    clean_response=clean_response,
+                    progress=progress,
+                )
 
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(cleaned, encoding="utf-8")
@@ -560,6 +571,69 @@ class RagAgent:
                     f"{type(exc).__name__}\n"
                 )
         return cleaned
+
+    # ---- post-generation review (DSPy path, opt-in) ----------------------
+
+    def _check_via_dspy(
+        self,
+        *,
+        cleaned: str,
+        gen_inputs: Dict[str, Any],
+        target: Any,
+        expanded: Any,
+        ctx: Any,
+        prior_outputs: List[str],
+        clean_response: Any,
+        progress: Any,
+    ) -> str:
+        """DSPy-native CHECK_TEST review.
+
+        Pipes the just-cleaned ``cleaned`` text through
+        :class:`CheckedGenerateProgram`'s reviewer. Same gating as the
+        legacy ``_maybe_check_target`` (skips when
+        ``OLLAMA_CHECK_DISABLE`` is set or when GEN and CHECK_TEST
+        resolve to the same model). Best-effort: any failure inside
+        the DSPy path returns ``cleaned`` unchanged so the caller
+        cannot blow up on a flaky reviewer.
+        """
+
+        import os
+        if os.environ.get("OLLAMA_CHECK_DISABLE", "").strip().lower() in (
+            "1", "true", "yes",
+        ):
+            return cleaned
+        check_cfg = self.ollama_cfg.for_check_test()
+        if check_cfg.model == self.ollama_cfg.model:
+            return cleaned
+
+        try:
+            import dspy
+            from skel_rag.dspy_lm import make_lm
+            from skel_rag.programs.generate_with_check import (
+                CheckedGenerateProgram,
+            )
+
+            siblings = "\n\n".join(prior_outputs[-6:])
+            program = CheckedGenerateProgram()
+            with dspy.context(lm=make_lm(check_cfg)):
+                pred = program(
+                    sibling_files=siblings,
+                    contract="",
+                    **gen_inputs,
+                )
+            new_text = clean_response(
+                getattr(pred, "file_contents", "") or "", target.language,
+            )
+            if new_text and new_text.strip():
+                return new_text
+            return cleaned
+        except Exception as exc:  # noqa: BLE001
+            if progress is not None:
+                progress.write(
+                    f"      dspy check ({expanded.path}): skipped "
+                    f"({type(exc).__name__})\n"
+                )
+            return cleaned
 
     # ---- integration phase ------------------------------------------------
 
