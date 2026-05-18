@@ -15,8 +15,9 @@ approach previously hard-coded in ``_bin/skel_ai_lib.py``. The pieces are:
   index per corpus.
 * :mod:`skel_rag.retriever` — query → top-K chunks with metadata
   filters.
-* :mod:`skel_rag.llm` — :class:`langchain_ollama.ChatOllama` factory and
-  a small ``chat()`` helper that mimics the old urllib client.
+* :mod:`skel_rag.llm` — :func:`chat` helper that goes through
+  :func:`skel_rag.dspy_lm.make_lm` (DSPy ``ollama_chat/...`` LM, backed
+  by litellm). Retains an Ollama-specific transient-error retry loop.
 * :mod:`skel_rag.prompts` — assembly helpers for retrieved-context
   blocks and a prompt-aware query builder.
 * :mod:`skel_rag.agent` — :class:`RagAgent`, the high-level entry point

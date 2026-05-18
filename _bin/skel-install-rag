@@ -68,7 +68,6 @@ info "=== Installing RAG agent dependencies ==="
     'langchain-core>=0.3' \
     'langchain-community>=0.3' \
     'langchain-huggingface>=0.1' \
-    'langchain-ollama>=0.2' \
     'langchain-text-splitters>=0.3' \
     'sentence-transformers>=3.0' \
     'faiss-cpu>=1.8' \
@@ -86,9 +85,8 @@ fi
 info "=== Verifying installation ==="
 "$VPYTHON" -c "
 import dspy
-from langchain_core.messages import HumanMessage
-from langchain_ollama import ChatOllama
 from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
 from sentence_transformers import SentenceTransformer
 import tree_sitter
 print('All RAG dependencies OK.')
