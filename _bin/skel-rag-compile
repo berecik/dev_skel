@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""skel-rag-compile — compile a DSPy program against a JSONL trainset.
+
+Usage:
+  skel-rag-compile generate --trainset PATH --out PATH [--max-demos N]
+  skel-rag-compile show-trainset PATH
+
+The ``generate`` subcommand compiles the :class:`GenerateFile`
+predictor using ``BootstrapFewShot`` over a JSONL trainset of
+``{inputs, file_contents, passed}`` records (filtered to
+``passed=True``) and persists the result with ``.save``.
+
+The ``show-trainset`` subcommand prints record counts and the first 3
+records — handy for sanity-checking a captured trainset before paying
+for the actual compile.
+
+This is a manual operator step. The captured JSONL trainset is
+recorded by ``SKEL_RAG_CAPTURE_TRAINSET=<path>`` during ordinary
+``./ai`` / ``skel-gen-ai`` runs (see ``skel_rag.trainset``).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+
+def _cmd_generate(args: argparse.Namespace) -> int:
+    from skel_rag.optimize import compile_generate, save_compiled
+    from skel_rag.programs.metrics import metric_tests_pass
+    from skel_rag.trainset import load_trainset
+
+    trainset_path = Path(args.trainset)
+    out_path = Path(args.out)
+
+    if not trainset_path.exists():
+        print(f"trainset not found: {trainset_path}", file=sys.stderr)
+        return 2
+
+    examples = load_trainset(trainset_path)
+    if not examples:
+        print(
+            f"trainset {trainset_path} has no passed=True records — "
+            f"backfill the passed flag before compiling.",
+            file=sys.stderr,
+        )
+        return 2
+
+    print(f"compiling GenerateFile with {len(examples)} passing examples...")
+    compiled = compile_generate(
+        examples,
+        metric_fn=metric_tests_pass,
+        max_bootstrapped_demos=args.max_demos,
+    )
+    save_compiled(compiled, out_path)
+    print(f"saved compiled program to {out_path}")
+    return 0
+
+
+def _cmd_show_trainset(args: argparse.Namespace) -> int:
+    path = Path(args.path)
+    if not path.exists():
+        print(f"trainset not found: {path}", file=sys.stderr)
+        return 2
+
+    total = 0
+    passed = 0
+    first: list = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        rec = json.loads(line)
+        total += 1
+        if rec.get("passed"):
+            passed += 1
+        if len(first) < 3:
+            first.append(rec)
+
+    print(f"trainset: {path}")
+    print(f"  total records:  {total}")
+    print(f"  passed=True:    {passed}")
+    print(f"  needs labeling: {total - passed}")
+    print("")
+    print("first 3 records:")
+    for i, rec in enumerate(first, start=1):
+        inputs = rec.get("inputs", {})
+        target = inputs.get("target_path", "<?>")
+        passed_flag = rec.get("passed")
+        print(f"  [{i}] target_path={target!r} passed={passed_flag!r}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="skel-rag-compile",
+        description="Compile a DSPy program against a JSONL trainset.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    gen = sub.add_parser(
+        "generate",
+        help="Compile the GenerateFile predictor with BootstrapFewShot.",
+    )
+    gen.add_argument("--trainset", required=True, help="path to a JSONL trainset")
+    gen.add_argument("--out", required=True, help="destination for the compiled artifact")
+    gen.add_argument(
+        "--max-demos", type=int, default=4,
+        help="max_bootstrapped_demos for BootstrapFewShot (default: 4)",
+    )
+    gen.set_defaults(func=_cmd_generate)
+
+    show = sub.add_parser(
+        "show-trainset",
+        help="Summarise a captured JSONL trainset.",
+    )
+    show.add_argument("path", help="path to a JSONL trainset")
+    show.set_defaults(func=_cmd_show_trainset)
+
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

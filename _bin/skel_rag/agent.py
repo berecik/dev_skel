@@ -402,6 +402,12 @@ class RagAgent:
                     backend_extra=ctx.backend_extra or "",
                 )
                 pred = predictor(**gen_inputs)
+                # Phase-7 trainset capture: silently no-ops unless
+                # SKEL_RAG_CAPTURE_TRAINSET=<path> is set. Recorded
+                # records get a placeholder ``passed: null`` flag that
+                # the operator backfills before compiling.
+                from skel_rag.trainset import capture_target as _capture_target
+                _capture_target(gen_inputs, pred.file_contents)
                 cleaned = clean_response(pred.file_contents, target.language)
                 cleaned = self._check_via_dspy(
                     cleaned=cleaned,
