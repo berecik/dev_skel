@@ -73,12 +73,25 @@ inside DSPy). Install once:
 make install-rag-deps
 ```
 
-This adds `dspy-ai` (which pulls in `litellm`, `pydantic`, and
-optionally `optuna` for MIPRO/BootstrapFewShot optimization),
-`sentence-transformers`, `faiss-cpu`, `langchain-ollama` (still used
-by the LangChain text-splitter fallback inside `skel_rag.chunker`),
-plus their tree-sitter friends. The default embedding model is
-`BAAI/bge-small-en-v1.5`.
+This adds:
+
+* `dspy-ai` — the in-tree LM transport + signature/program
+  framework. Pulls in `pydantic` and (optionally) `optuna` for
+  MIPRO/BootstrapFewShot optimization.
+* `litellm` — DSPy's HTTP backend (routes to
+  `ollama_chat/<model>`). Pulled in transitively by `dspy-ai`;
+  listed here so it's discoverable when troubleshooting.
+* `sentence-transformers`, `faiss-cpu` — embedding model +
+  vector store.
+* `langchain-core`, `langchain-community`,
+  `langchain-huggingface`, `langchain-text-splitters` — FAISS
+  wrapper, HuggingFace embeddings, recursive text-splitter
+  fallback inside `skel_rag.chunker`.
+* `tree-sitter`, `tree-sitter-languages` — the primary chunker.
+
+`langchain-ollama` was removed in the Phase 8a DSPy migration
+(2026-05-19) — DSPy now owns the chat transport end-to-end. The
+default embedding model is `BAAI/bge-small-en-v1.5`.
 
 The **out-of-tree** `./ai` mode (when a service is detached from any
 dev_skel checkout) does **not** need these — it uses ripgrep + a

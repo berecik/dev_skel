@@ -74,7 +74,7 @@ call from longer scripts.
 
 | Target | What it does |
 | ------ | ------------ |
-| `make install-rag-deps` | Installs the optional in-tree FAISS deps (`sentence-transformers`, `faiss-cpu`, `langchain-ollama`). Required for in-tree `./ai` mode and for `skel-gen-ai`'s `{retrieved_context}` / `{retrieved_siblings}` placeholders. The out-of-tree `./ai` mode works without these. |
+| `make install-rag-deps` | Installs the optional in-tree FAISS deps (`dspy-ai`, `litellm`, `sentence-transformers`, `faiss-cpu`, plus the LangChain FAISS / embedding / text-splitter wrappers). Required for in-tree `./ai` mode and for `skel-gen-ai`'s `{retrieved_context}` / `{retrieved_siblings}` placeholders. The out-of-tree `./ai` mode works without these. |
 
 ---
 

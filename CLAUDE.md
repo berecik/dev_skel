@@ -184,19 +184,46 @@ make rule-affecting edits.
      phase is currently shipped only for `python-django-bolt-skel`;
      other skels gracefully skip it. Disable with `--no-integrate` /
      `--no-test-fix` when iterating on prompts.
-- **AI generation goes through `_bin/skel_rag/`** (since 2026-04). The
-  package indexes each skeleton's reference templates with tree-sitter
-  + FAISS so prompts retrieve only the most relevant chunks via a local
-  embedding model (default `BAAI/bge-small-en-v1.5`). `skel_ai_lib.py`
-  is now a thin shim that re-exports every public symbol and delegates
-  orchestration to `skel_rag.agent.RagAgent`; the LLM call goes through
-  `langchain_ollama.ChatOllama`. The legacy `{template}` /
-  `{wrapper_snapshot}` placeholders still work, and manifests can opt
-  into `{retrieved_context}` / `{retrieved_siblings}` (FastAPI is the
-  reference migration). Install once with `make install-rag-deps`. The
-  debug CLI is `_bin/skel-rag` (`index` / `search` / `info` / `clean`).
-  Full reference: `_docs/LLM-MAINTENANCE.md` → "`_bin/skel_ai_lib.py`
-  (legacy shim) + `_bin/skel_rag/` (RAG agent)".
+- **AI generation goes through `_bin/skel_rag/`** (since 2026-04, DSPy
+  migration completed Phase 8a on 2026-05-19). The package indexes
+  each skeleton's reference templates with tree-sitter + FAISS so
+  prompts retrieve only the most relevant chunks via a local
+  embedding model (default `BAAI/bge-small-en-v1.5`). The chat
+  transport is now **DSPy** — `dspy.LM("ollama_chat/<model>")`
+  backed by litellm — built per-`OllamaConfig` via
+  `skel_rag.dspy_lm.make_lm(cfg)`. `langchain_ollama` is no longer
+  imported anywhere under `_bin/`. The new DSPy modules live next
+  to the legacy ones inside `_bin/skel_rag/`:
+  * `dspy_lm.py` — `make_lm(cfg)` factory + cache.
+  * `signatures/` — typed `dspy.Signature` classes
+    (`GenerateFile`, `IntegrateService`, `FixFailingFile`,
+    `ReviewGeneratedFile`, `CheckTest`).
+  * `programs/` — composed `dspy.Module`s wrapping the signatures
+    (per-target generation, integration, test/fix loop).
+  * `dspy_retriever.py` — `dspy.Retrieve` adapter over the existing
+    FAISS retriever (so DSPy's optimizers can see retrieval as a
+    primitive).
+  * `optimize.py` + `trainset.py` — BootstrapFewShot scaffolding +
+    trainset capture (compiled artifacts land under
+    `_bin/skel_rag/compiled/`).
+  `skel_ai_lib.py` is still a thin shim re-exporting every public
+  symbol and delegating orchestration to `skel_rag.agent.RagAgent`;
+  `RagAgent` now exposes parallel `_with_dspy` methods
+  (`generate_targets_with_dspy`, `run_integration_phase_with_dspy`)
+  gated behind the **`SKEL_RAG_USE_DSPY=1`** opt-in env var. The
+  default path remains the legacy prompt-string flow until the
+  flip in a follow-up PR. DSPy 3.2.1 has no `Suggest` / `Assert`
+  (removed in DSPy 3.x), so the CHECK_TEST regenerator falls back
+  to a one-shot manual retry. The legacy `{template}` /
+  `{wrapper_snapshot}` placeholders still work, and manifests can
+  opt into `{retrieved_context}` / `{retrieved_siblings}` /
+  `{prior_outputs}` (FastAPI is the reference migration; 17 other
+  manifests are migration follow-ups). Install once with
+  `make install-rag-deps` (which now pulls in `dspy-ai` + `litellm`).
+  The debug CLI is `_bin/skel-rag` (`index` / `search` / `info` /
+  `clean`). Full reference: `_docs/LLM-MAINTENANCE.md` →
+  "`_bin/skel_ai_lib.py` (legacy shim) + `_bin/skel_rag/` (DSPy
+  pipeline)".
 - **Every backend skel** — Python (`python-django-skel`,
   `python-django-bolt-skel`, `python-fastapi-skel`, `python-flask-skel`),
   Java (`java-spring-skel`), Rust (`rust-actix-skel`, `rust-axum-skel`),

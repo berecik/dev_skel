@@ -4,6 +4,38 @@ All model defaults live in **one file**:
 [`_bin/skel_rag/config.py`](../_bin/skel_rag/config.py) — the
 `DEFAULT_OLLAMA_*_MODEL` constants and the `OllamaConfig` dataclass.
 
+## DSPy LM factory
+
+Since the DSPy migration (Phase 8a, 2026-05-19) the canonical
+chat-LM constructor is **`skel_rag.dspy_lm.make_lm(cfg)`**. It
+returns a `dspy.LM("ollama_chat/<model>")` instance backed by
+[litellm](https://github.com/BerriAI/litellm) — DSPy's HTTP
+transport — wired to the same `OllamaConfig` resolution rules the
+rest of the codebase uses. `langchain_ollama` is no longer
+imported anywhere under `_bin/`.
+
+The per-phase variants on `OllamaConfig` (`for_fix`,
+`for_create_test`, `for_check_test`, `for_docs`, legacy `for_test`)
+still work — `make_lm` is invoked per-config, so each phase gets a
+DSPy LM bound to the right model, temperature, and timeout. The
+phase-swap semantics are unchanged; only the transport layer
+moved.
+
+```python
+from skel_rag.config import OllamaConfig
+from skel_rag.dspy_lm import make_lm
+
+cfg = OllamaConfig.from_env()
+gen_lm  = make_lm(cfg)                 # GEN phase
+fix_lm  = make_lm(cfg.for_fix())       # FIX phase (lower temp, shorter timeout)
+docs_lm = make_lm(cfg.for_docs())      # DOCS phase
+```
+
+The full DSPy pipeline (`signatures/`, `programs/`,
+`dspy_retriever.py`, `optimize.py`, `trainset.py`) is documented
+in `_docs/LLM-MAINTENANCE.md`. Until the default flip lands, the
+DSPy code path is opt-in via **`SKEL_RAG_USE_DSPY=1`**.
+
 Every consumer (`skel-gen-ai`, `./ai`, `./backport`, `skel_ai_lib`,
 the refactor runtime) reads its model from this module — either by
 importing the constant directly, or by calling
@@ -122,29 +154,30 @@ Set these on the Ollama daemon (the server, not the client):
 
 ```python
 from skel_rag.config import OllamaConfig
-from skel_rag.ollama_client import OllamaClient
+from skel_rag.dspy_lm import make_lm
 
 cfg = OllamaConfig.from_env()  # picks defaults + env overrides
 
 # Implementation phase — uses cfg.model (GEN slot)
-gen = OllamaClient(cfg)
+gen_lm = make_lm(cfg)
 
 # Test scaffolding — must be a different model
-tests = OllamaClient(cfg.for_create_test())
+tests_lm = make_lm(cfg.for_create_test())
 
 # Validate the generated tests
-review = OllamaClient(cfg.for_check_test())
+review_lm = make_lm(cfg.for_check_test())
 
 # Patch on test failure
-fix = OllamaClient(cfg.for_fix())
+fix_lm = make_lm(cfg.for_fix())
 
 # Generate prose
-docs = OllamaClient(cfg.for_docs())
+docs_lm = make_lm(cfg.for_docs())
 ```
 
 `for_*` returns a fresh `OllamaConfig` with the right model, temperature
 and timeout for that phase — no other slots change, so chaining is
-safe.
+safe. `make_lm` returns a `dspy.LM("ollama_chat/...")` instance
+backed by litellm.
 
 ## Switching models from the shell
 

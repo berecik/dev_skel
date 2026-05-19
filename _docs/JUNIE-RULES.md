@@ -63,19 +63,29 @@ rule-affecting edits.
   becomes the on-disk directory before the AI overlay touches anything.
   Manifests live at `_skels/_common/manifests/<skel>.py`. Do not hand-edit
   AI-generated files in test projects — fix the manifest prompt and re-run.
-- **AI orchestration moved to `_bin/skel_rag/`** (since 2026-04). The
-  package indexes each skeleton's reference templates with tree-sitter
-  + FAISS, retrieves the most relevant chunks per manifest target via a
-  local embedding model, and forwards prompts to Ollama via
-  `langchain_ollama.ChatOllama`. `_bin/skel_ai_lib.py` is now a thin
-  shim that re-exports every public symbol so `skel-gen-ai` and
-  `test-ai-generators` keep importing it unchanged. Manifests can opt
-  into new `{retrieved_context}` / `{retrieved_siblings}` placeholders
-  (FastAPI is the reference migration); the legacy `{template}` /
-  `{wrapper_snapshot}` placeholders still work without modification.
-  Install the heavy deps once with `make install-rag-deps`. Debug CLI:
-  `_bin/skel-rag` (`index` / `search` / `info` / `clean`). Full
-  reference: `_docs/LLM-MAINTENANCE.md`.
+- **AI orchestration moved to `_bin/skel_rag/`** (since 2026-04;
+  DSPy migration completed Phase 8a on 2026-05-19). The package
+  indexes each skeleton's reference templates with tree-sitter +
+  FAISS, retrieves the most relevant chunks per manifest target
+  via a local embedding model, and forwards prompts to Ollama via
+  **DSPy** — `dspy.LM("ollama_chat/<model>")` built per
+  `OllamaConfig` by `skel_rag.dspy_lm.make_lm(cfg)` (litellm-
+  backed). `langchain_ollama` is no longer imported under `_bin/`.
+  New DSPy modules under `_bin/skel_rag/`: `dspy_lm.py`,
+  `signatures/`, `programs/`, `dspy_retriever.py`, `optimize.py`,
+  `trainset.py`. The DSPy code path is gated by
+  `SKEL_RAG_USE_DSPY=1`; the default flip + 17 per-manifest
+  migrations are queued as follow-up PRs.
+  `_bin/skel_ai_lib.py` is still the backwards-compat shim that
+  re-exports every public symbol so `skel-gen-ai` and
+  `test-ai-generators` keep importing it unchanged. Manifests can
+  opt into `{retrieved_context}` / `{retrieved_siblings}` /
+  `{prior_outputs}` placeholders (FastAPI is the reference
+  migration); the legacy `{template}` / `{wrapper_snapshot}`
+  placeholders still work without modification. Install the heavy
+  deps once with `make install-rag-deps` (now pulls in `dspy-ai` +
+  `litellm`). Debug CLI: `_bin/skel-rag` (`index` / `search` /
+  `info` / `clean`). Full reference: `_docs/LLM-MAINTENANCE.md`.
 - **Every backend skel** — Python (django, django-bolt, fastapi, flask),
   Java (spring), Rust (actix, axum), and JS (node) — reads
   `DATABASE_URL` / `JWT_SECRET` (and the JVM-friendly

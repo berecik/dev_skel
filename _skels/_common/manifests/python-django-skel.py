@@ -12,6 +12,23 @@ from :class:`skel_ai_lib.GenerationContext`:
     {service_slug}, {item_name}, {item_class}, {items_plural}, {auth_type},
     {auth_details}, and {template} (the REFERENCE file's contents).
 
+The RAG agent additionally injects three opt-in placeholders when the
+manifest references them in a prompt:
+
+    {retrieved_context}   — Markdown rendering of chunks retrieved
+                            from the *skeleton* corpus for the current
+                            per-target generation.
+    {retrieved_siblings}  — Markdown rendering of chunks retrieved
+                            from the *wrapper* corpus during the
+                            integration phase.
+    {prior_outputs}       — Concatenated outputs of previous targets
+                            in the manifest (so tests can see the
+                            exact code the model just wrote for
+                            models/views).
+
+Manifests that don't reference these placeholders behave exactly as
+before — opt-in is the default.
+
 To extend this manifest:
 - Add new dicts under ``targets``.
 - Each ``path`` is relative to the generated service directory

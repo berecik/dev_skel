@@ -1,5 +1,12 @@
 # RAG Pipeline Improvement Plan
 
+> **Status (2026-05-19):** Parts of this plan have been superseded
+> by the DSPy migration (see
+> `docs/superpowers/plans/2026-05-18-rewrite-ai-stack-to-dspy.md`).
+> Optimization-related sections are now driven by DSPy's
+> BootstrapFewShot in `_bin/skel_rag/optimize.py`. Other sections
+> (chunker, embedder, retrieval) remain accurate.
+
 Comprehensive plan to improve the `_bin/skel_rag/` pipeline in three
 areas: **efficiency** (faster generation, better chunk quality),
 **embedding model cooperation** (BertModel tuning, retrieval accuracy),
@@ -811,6 +818,15 @@ After each retrieval, report how effectively the context budget is used:
 ---
 
 ## Part 5: Implementation Checklist
+
+> **SUPERSEDED (2026-05-19):** Phase-tuning items below that talked
+> about "tune reranking prompt", "A/B test prompt variants", and
+> manual fix-prompt enhancement are now covered by DSPy's
+> `BootstrapFewShot` / `MIPRO` optimizers in
+> `_bin/skel_rag/optimize.py`. The observability +
+> retrieval-quality + efficiency phases (1-3) still apply — they
+> sit *below* DSPy in the stack and are unaffected by the chat
+> transport migration.
 
 ### Phase 1: Observability Foundation (do first)
 

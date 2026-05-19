@@ -122,9 +122,15 @@ Before making changes, read these files:
 5. **`_docs/DEPENDENCIES.md`** - Dependency management system documentation
 6. **`_bin/dev_skel_lib.py`** - Shared Python helpers (config, generation,
    rsync, AGENTS template rendering) used by every `_bin/` CLI
-7. **`_bin/skel_ai_lib.py`** - Ollama-backed AI generator library
-   (`OllamaClient`, `GenerationContext`, manifest loader, prompt rendering,
-   target writer). Stdlib only.
+7. **`_bin/skel_ai_lib.py`** - Backwards-compat shim around the
+   DSPy pipeline in `_bin/skel_rag/`. Hosts the dataclasses
+   (`AiManifest`, `AiTarget`, `GenerationContext`, `TargetResult`),
+   prompt-rendering helpers (`format_prompt`, `clean_response`,
+   `build_system_prompt`), the manifest/dialog loaders, and the
+   legacy `generate_targets` / `run_integration_phase` /
+   `run_test_and_fix_loop` / `_fix_failing_files` orchestration
+   functions (default path; DSPy code path is opt-in via
+   `SKEL_RAG_USE_DSPY=1`).
 8. **`_bin/skel-gen`** - Canonical entrypoint. As of 2026-04 it is a
    thin dispatcher that exec's the AI generator by default
    (`_bin/skel-gen-ai`) or the static fallback when `--static` is
@@ -902,20 +908,49 @@ native variable name) side-by-side. When you switch the wrapper to
 Postgres, update **all three** in lockstep — the dev_skel `.env.example`
 documents this requirement.
 
-### `_bin/skel_ai_lib.py` (legacy shim) + `_bin/skel_rag/` (RAG agent)
+### `_bin/skel_ai_lib.py` (legacy shim) + `_bin/skel_rag/` (DSPy pipeline)
 
-As of the 2026-04 RAG refactor, the AI orchestration lives in
-`_bin/skel_rag/` and `_bin/skel_ai_lib.py` is a backwards-compat shim
-that re-exports every public symbol used by `skel-gen-ai` and
-`test-ai-generators`. The shim delegates the four orchestration
-functions (`generate_targets`, `run_integration_phase`,
-`run_test_and_fix_loop`, and the private `_ask_ollama_to_fix`) to
-`skel_rag.agent.RagAgent`. `OllamaClient.chat` proxies to
-`langchain_ollama.ChatOllama` via `skel_rag.llm`. Every other helper
-(dataclasses, manifest loaders, dialogs, `format_prompt`,
-`clean_response`, `build_system_prompt`, `expand_target_paths`,
-`discover_siblings`, `run_service_tests`, the `_FIX_*` prompt
-templates) is preserved verbatim because the agent imports it.
+Post-Phase-8a (2026-05-19), `_bin/skel_rag/` is the **DSPy** AI
+pipeline. The chat transport went from `langchain_ollama.ChatOllama`
++ a urllib fallback to **`dspy.LM("ollama_chat/<model>")`** built
+per-`OllamaConfig` by `skel_rag.dspy_lm.make_lm(cfg)` (backed by
+litellm under the hood). `langchain_ollama` is no longer imported
+anywhere under `_bin/`.
+
+`_bin/skel_ai_lib.py` remains a backwards-compat shim that hosts the
+non-orchestration helpers and re-exports every public symbol used by
+`skel-gen-ai` and `test-ai-generators`. It still owns the
+dataclasses (`AiManifest`, `AiTarget`, `GenerationContext`,
+`TargetResult`), the prompt-rendering helpers (`format_prompt`,
+`clean_response`, `build_system_prompt`), the manifest / dialog
+loaders (`load_manifest`, `load_integration_manifest`,
+`prompt_user_dialog`), `expand_target_paths`, `discover_siblings`,
+`run_service_tests`, and the `_FIX_*` prompt templates — plus the
+legacy `generate_targets` / `run_integration_phase` /
+`run_test_and_fix_loop` / `_fix_failing_files` orchestration
+functions which are **still the default path** when the new opt-in
+env var is unset. The newly-exported `extract_failing_paths` helper
+is shared between the legacy fix loop and the DSPy program.
+
+The DSPy code path is gated by **`SKEL_RAG_USE_DSPY=1`**. When set,
+`RagAgent` dispatches to the parallel `_with_dspy` methods
+(`generate_targets_with_dspy`, `run_integration_phase_with_dspy`)
+and the test/fix loop uses the DSPy `FixFailingFile` signature
+through `programs/`. Two follow-ups remain queued:
+
+* **Default flip** — make DSPy the default (drop the env var
+  guard). Phase 8a Step 2.
+* **17 per-manifest migrations** — port the remaining
+  `_skels/_common/manifests/*.py` from string-formatted prompts to
+  the new DSPy signature/program pattern (FastAPI is the migrated
+  reference; the other 17 still use `{template}` /
+  `{wrapper_snapshot}` / `{retrieved_context}`). Phase 8a Step 3.
+
+Note: DSPy 3.2.1 removed `dspy.Suggest` and `dspy.Assert` in the
+3.x line, so the CHECK_TEST regenerator currently uses a manual
+one-shot retry rather than a backtracking constraint. This matches
+the legacy "regenerate once if FAIL" semantics so behaviour is
+unchanged on either path.
 
 The RAG layer adds two new placeholders manifests can opt into:
 
@@ -939,9 +974,15 @@ as before, so all 10 skeletons keep working without an opt-in.
 | `embedder.py` | Lazy `HuggingFaceEmbeddings` factory. Default model `BAAI/bge-small-en-v1.5` (~130 MB, normalisable). Cached at `~/.cache/dev_skel/embeddings/`. |
 | `vectorstore.py` | `FAISS.load_local` / `FAISS.from_documents` wrapper with manifest-based cache invalidation. Persisted per skeleton at `_skels/<name>/.skel_rag_index/`; ephemeral (in-memory) for the wrapper integration phase. |
 | `retriever.py` | `Retriever` with metadata-aware `similarity_search`. Filters by language, falls back to widening when fewer than `min_k` results match, and truncates the result to `max_context_chars` total. |
-| `llm.py` | `ChatOllama` factory + `verify()` reachability check + `chat(config, system, user)` helper that mimics the legacy `OllamaClient.chat` signature. |
-| `prompts.py` | `render_retrieved_block(chunks, max_chars)` — Markdown renderer for the `{retrieved_context}` / `{retrieved_siblings}` placeholders. `build_query_for_target(...)` — natural-language query builder used by the retriever. |
-| `agent.py` | `RagAgent` — high-level orchestrator. `generate_targets`, `run_integration_phase`, `fix_target` methods. Maintains a per-corpus retriever cache keyed on `(corpus_id, root)`. |
+| `llm.py` | `verify()` reachability check (pings `/api/tags` and confirms the configured model is loaded) + `chat(config, system, user)` helper that wraps a DSPy LM call so the legacy `OllamaClient.chat` signature keeps working. Pure stdlib for the reachability check; delegates the actual chat to `dspy_lm.make_lm`. |
+| `dspy_lm.py` | `make_lm(cfg)` factory — builds a `dspy.LM("ollama_chat/<model>")` instance (litellm-backed) per `OllamaConfig`. Caches the LM per (base_url, model, temperature, timeout) tuple. The canonical chat-LM constructor. |
+| `signatures/` | Typed `dspy.Signature` classes — `GenerateFile`, `IntegrateService`, `FixFailingFile`, `ReviewGeneratedFile`, `CheckTest`. Replace the prompt-template strings in `prompts.py` for migrated manifests. |
+| `programs/` | Composed `dspy.Module`s — per-target generation, integration, the test/fix loop. Each program assembles retrieval + a signature + (when applicable) a one-shot retry. |
+| `dspy_retriever.py` | `dspy.Retrieve` adapter over the existing FAISS retriever, so DSPy optimizers can treat retrieval as a primitive. |
+| `optimize.py` | BootstrapFewShot scaffolding — `compile_generate()` runs the optimizer against captured trainsets and writes compiled artifacts to `_bin/skel_rag/compiled/<program>-<model>.json`. No real compile has been run yet; scaffolding only. |
+| `trainset.py` | Trainset capture — records inputs / outputs / pass-fail metrics from green test runs into `_bin/skel_rag/trainsets/`. Used by `optimize.py` and the `make test-ai-generators` smoke. |
+| `prompts.py` | `render_retrieved_block(chunks, max_chars)` — Markdown renderer for the `{retrieved_context}` / `{retrieved_siblings}` placeholders. `build_query_for_target(...)` — natural-language query builder used by the retriever. Will shrink as more manifests migrate to DSPy signatures. |
+| `agent.py` | `RagAgent` — high-level orchestrator. Legacy methods (`generate_targets`, `run_integration_phase`, `fix_target`) for the default path; parallel `_with_dspy` methods (`generate_targets_with_dspy`, `run_integration_phase_with_dspy`) for the `SKEL_RAG_USE_DSPY=1` opt-in path. Maintains a per-corpus retriever cache keyed on `(corpus_id, root)`. |
 | `cli.py` | argparse-based `skel-rag` CLI. Subcommands: `index`, `search`, `info`, `clean`. |
 
 The shipped CLI is at `_bin/skel-rag` (a 20-line dispatcher that adds
@@ -979,10 +1020,16 @@ make install-rag-deps
 The Makefile target installs:
 
 ```
-langchain-core langchain-community langchain-huggingface langchain-ollama
-langchain-text-splitters sentence-transformers faiss-cpu tree-sitter
-tree-sitter-languages
+dspy-ai litellm langchain-core langchain-community
+langchain-huggingface langchain-text-splitters
+sentence-transformers faiss-cpu tree-sitter tree-sitter-languages
 ```
+
+`dspy-ai` is the new top-level dep (pulls in `litellm` for HTTP
+transport and `pydantic`); `langchain-ollama` is gone. The
+remaining `langchain-*` packages stay for the FAISS wrapper +
+HuggingFace embeddings + the recursive text-splitter fallback
+inside `skel_rag.chunker`.
 
 If `tree-sitter-languages` has no prebuilt wheel for your platform,
 install `tree-sitter-language-pack` instead — the chunker auto-detects
@@ -1041,8 +1088,11 @@ the `username` field (detected via `@`).
   pings `/api/tags` and confirms the configured model is loaded
   locally; raises a friendly `OllamaError` otherwise.
 - `OllamaClient.chat(system, user)` — proxies to `RagAgent.chat`, which
-  invokes `langchain_ollama.ChatOllama` with the same temperature /
-  timeout configured on the `OllamaConfig`.
+  builds a DSPy LM via `skel_rag.dspy_lm.make_lm(cfg)` and invokes it
+  with the same temperature / timeout configured on the
+  `OllamaConfig`. The litellm backend handles the actual Ollama HTTP
+  call. (Pre-Phase-8a this routed through `langchain_ollama.ChatOllama`;
+  the wrapper signature is unchanged so callers don't notice.)
 - `GenerationContext` — dataclass holding the user's answers (service label,
   item name, auth type, auth notes) plus derived helpers (`item_class`,
   `items_plural`, `service_slug`, `auth_is_none`, `auth_required`). Its
