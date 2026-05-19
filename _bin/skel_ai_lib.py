@@ -2349,6 +2349,105 @@ def _check_test_file(
             return
 
 
+def extract_failing_paths(
+    test_output: str, service_dir: Path, slug: str
+) -> List[Path]:
+    """Return failing source files parsed out of a test runner's output.
+
+    Pure refactor of the heuristic at the top of :func:`_fix_failing_files`
+    so the DSPy ``TestFixLoop`` dispatcher in ``_bin/skel-gen-ai`` can
+    reuse the same failing-file extractor without re-implementing it.
+    Two modes:
+
+    * **Primary**: pytest-style ``FAILED tests/foo.py::bar`` lines map
+      directly to absolute service paths (without the ``::test_name``
+      suffix).
+    * **Fallback**: when no ``FAILED`` lines appear, scan the tail of
+      the output (last 4000 chars) for ``File "<path>"`` / ``at <p>``
+      / ``in <p>`` / ``from <p>`` mentions of files with code-like
+      extensions (.py .ts .tsx .dart .java .rs .go).
+    * **Fallback-of-fallback**: when neither mode finds anything but
+      we still need files to repair, walk ``test*/`` directories under
+      ``service_dir`` and return those.
+
+    All returned paths are filtered to the service's own source tree
+    (allowed prefixes: ``app/<slug>/``, ``tests/``, ``test/``, ``src/``,
+    ``e2e/``) and never include ``__init__.py`` / ``conftest.py``.
+
+    The two ``_fix_failing_files`` callers each had different fallback
+    behaviour; this helper unifies them — callers that want only the
+    primary list can ignore the fallback by checking emptiness before
+    use.
+    """
+
+    _SKIP_DIRS = {
+        ".venv", "node_modules", "site-packages", "__pycache__",
+        ".git", "dist", "build", "target",
+    }
+    _ALLOW_PREFIXES = (
+        f"app/{slug}/",
+        "tests/",
+        "test/",
+        "src/",
+        "e2e/",
+    )
+    _SKIP_NAMES = {"__init__.py", "conftest.py"}
+
+    def _is_own_source(p: Path) -> bool:
+        if p.name in _SKIP_NAMES:
+            return False
+        try:
+            rel = str(p.relative_to(service_dir))
+        except ValueError:
+            return False
+        parts = set(Path(rel).parts)
+        if parts & _SKIP_DIRS:
+            return False
+        return any(rel.startswith(prefix) for prefix in _ALLOW_PREFIXES)
+
+    # Primary: pytest "FAILED tests/foo.py::bar" lines.
+    failed_tests = re.findall(
+        r"FAILED\s+(tests/[^\s:]+|test/[^\s:]+|src/[^\s:]+)", test_output
+    )
+
+    if failed_tests:
+        out: List[Path] = []
+        seen: set = set()
+        for rel in failed_tests:
+            candidate = service_dir / rel.split("::")[0]
+            if candidate in seen:
+                continue
+            if candidate.is_file() and _is_own_source(candidate):
+                out.append(candidate)
+                seen.add(candidate)
+        return out
+
+    # Fallback: scan tail of output for file mentions.
+    file_re = re.compile(
+        r"(?:File [\"']|at |in |from )"
+        r"([^\s\"']+\.(?:py|ts|tsx|dart|java|rs|go))"
+    )
+    mentioned: set = set()
+    for m in file_re.finditer(test_output[-4000:]):
+        p = m.group(1)
+        for candidate in [service_dir / p, service_dir / p.lstrip("/")]:
+            if candidate.is_file() and _is_own_source(candidate):
+                mentioned.add(candidate)
+                break
+
+    # Fallback-of-fallback only used when caller passed a non-empty
+    # output and we still want SOMETHING to repair. We deliberately
+    # do NOT trigger this for an empty output — extract_failing_paths
+    # of "" must return [].
+    if not mentioned and test_output:
+        for ext in ("*.py", "*.ts", "*.dart"):
+            for tf in service_dir.rglob(f"test*/{ext}"):
+                if _is_own_source(tf):
+                    mentioned.add(tf)
+
+    return sorted(mentioned)
+
+
 def _fix_failing_files(
     *,
     client: OllamaClient,
@@ -2383,29 +2482,21 @@ def _fix_failing_files(
             return False
         return any(rel.startswith(prefix) for prefix in _ALLOW_PREFIXES)
 
-    # Parse which test files FAILED (look for "FAILED tests/xxx.py::yyy")
+    # Primary parse — pytest-style FAILED lines.
     failed_tests = re.findall(
         r'FAILED\s+(tests/[^\s:]+|test/[^\s:]+|src/[^\s:]+)', test_output
     )
 
     # If no FAILED lines found, fall back to the old file-mention heuristic
     if not failed_tests:
-        file_re = re.compile(
-            r'(?:File ["\']|at |in |from )([^\s"\']+\.(?:py|ts|tsx|dart|java|rs|go))'
+        # Use the shared helper to discover candidate files via the
+        # fallback paths. Note this still scans the same locations as
+        # before — extract_failing_paths returns an empty list when
+        # both the tail-of-output mentions and the rglob walk are
+        # empty, in which case there's nothing for this branch to do.
+        mentioned = set(
+            extract_failing_paths(test_output, service_dir, _service_slug)
         )
-        mentioned: set = set()
-        for m in file_re.finditer(test_output[-4000:]):
-            p = m.group(1)
-            for candidate in [service_dir / p, service_dir / p.lstrip("/")]:
-                if candidate.is_file() and _is_own_source(candidate):
-                    mentioned.add(candidate)
-                    break
-
-        if not mentioned:
-            for ext in ("*.py", "*.ts", "*.dart"):
-                for tf in service_dir.rglob(f"test*/{ext}"):
-                    if _is_own_source(tf):
-                        mentioned.add(tf)
 
         # Use old-style fix for fallback files (full test_output context)
         for fpath in sorted(mentioned)[:10]:

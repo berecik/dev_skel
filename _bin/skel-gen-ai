@@ -148,9 +148,12 @@ from skel_ai_lib import (
     OllamaClient,
     OllamaConfig,
     OllamaError,
+    TestRunResult,
+    _resolve_test_command,
     discover_manifests,
     discover_siblings,
     expand_target_paths,
+    extract_failing_paths,
     generate_targets,
     load_integration_manifest,
     load_manifest,
@@ -159,6 +162,7 @@ from skel_ai_lib import (
     run_docs_generation,
     run_integration_phase,
     run_kubernetes_phase,
+    run_service_tests,
     run_test_and_fix_loop,
     run_test_generation_phase,
     split_skels_by_kind,
@@ -209,6 +213,165 @@ def _run_integration_dispatch(*, client, manifest, ctx, dry_run, progress):
         ctx=ctx,
         dry_run=dry_run,
         progress=progress,
+    )
+
+
+def _run_test_fix_dispatch(
+    *,
+    client,
+    ctx,
+    manifest,
+    integration_results,
+    progress=None,
+):
+    """Dispatch the test-and-fix loop to the DSPy ``TestFixLoop`` module
+    when ``SKEL_RAG_USE_DSPY`` selects the DSPy path, else fall back to
+    the legacy ``run_test_and_fix_loop`` in ``skel_ai_lib``.
+
+    The DSPy path needs two small adapters bridging the framework-
+    agnostic ``TestFixLoop`` to this project's test runner + failing-
+    file heuristic:
+
+    * ``run_tests()`` calls :func:`run_service_tests` with the
+      manifest's resolved test command and returns a
+      ``(passed, output)`` tuple — same contract ``TestFixLoop``
+      expects from any caller.
+    * ``list_offending_files(output)`` runs
+      :func:`extract_failing_paths` against the service directory so
+      DSPy patches exactly the same files the legacy loop would.
+
+    The DSPy ``Prediction`` is then wrapped in a ``TestRunResult``-
+    shaped namespace so the existing ``final.passed`` /
+    ``final.returncode`` / ``final.duration_s`` access in the caller
+    keeps working unchanged.
+    """
+
+    import time as _time
+    from types import SimpleNamespace
+
+    # Phase 8a Step 1: opt-in via SKEL_RAG_USE_DSPY=1 (same default as
+    # the other two dispatchers). Step 3 flips the default after a live
+    # smoke verifies the path works end-to-end.
+    use_dspy = os.environ.get("SKEL_RAG_USE_DSPY") == "1"
+
+    if not use_dspy:
+        return run_test_and_fix_loop(
+            client=client,
+            ctx=ctx,
+            manifest=manifest,
+            integration_results=integration_results,
+            progress=progress,
+        )
+
+    # Lazy-import so the legacy path never pays the DSPy import cost.
+    try:
+        from skel_rag.programs.test_fix_loop import TestFixLoop
+    except Exception as exc:  # noqa: BLE001 — fall through to legacy
+        if progress is not None:
+            progress.write(
+                f"  [test/fix] DSPy TestFixLoop unavailable ({exc!r}); "
+                "falling back to legacy run_test_and_fix_loop\n"
+            )
+        return run_test_and_fix_loop(
+            client=client,
+            ctx=ctx,
+            manifest=manifest,
+            integration_results=integration_results,
+            progress=progress,
+        )
+
+    # Track wall-clock duration and the last raw TestRunResult so the
+    # returned wrapper can expose .duration_s + .returncode in the
+    # same shape the legacy path returns.
+    started = _time.monotonic()
+    last_result: dict = {"value": None}
+
+    def _run_tests():
+        result = run_service_tests(manifest.test_command, ctx)
+        last_result["value"] = result
+        return result.passed, result.combined_output()
+
+    def _list_offending(output):
+        paths = extract_failing_paths(output, ctx.project_dir, ctx.service_slug)
+        for absolute in paths[:10]:
+            try:
+                contents = absolute.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            try:
+                rel = absolute.relative_to(ctx.project_dir)
+            except ValueError:
+                rel = absolute
+            # sibling_context is left empty for now — Phase 8a defers
+            # context retrieval to a follow-up. The legacy path also
+            # only includes a couple of hand-picked key modules; the
+            # DSPy fix prompt still gets the failing test output.
+            yield (str(rel), contents, "")
+
+    # Allow the loop a small handful of iterations. Even if the
+    # manifest sets fix_timeout_m=120, we still cap per-call iteration
+    # count — the legacy loop bounds by wall clock, ours bounds by
+    # iteration count for predictability under DSPy.
+    max_iter = max(1, min(3, getattr(manifest, "fix_timeout_m", 0) // 30 or 3))
+    loop = TestFixLoop(max_iter=max_iter)
+
+    try:
+        pred = loop.forward(
+            run_tests=_run_tests,
+            list_offending_files=_list_offending,
+            service_dir=ctx.project_dir,
+        )
+    except Exception as exc:  # noqa: BLE001 — surface as failing TestRunResult
+        if progress is not None:
+            progress.write(
+                f"  [test/fix] TestFixLoop raised: {exc!r} — "
+                "returning last on-disk test result\n"
+            )
+        return last_result["value"] or SimpleNamespace(
+            passed=False,
+            returncode=125,
+            duration_s=_time.monotonic() - started,
+            stdout="",
+            stderr=f"TestFixLoop raised: {exc!r}",
+            command=[manifest.test_command],
+            cwd=ctx.project_dir,
+        )
+
+    duration_s = _time.monotonic() - started
+    base = last_result["value"]
+    if progress is not None:
+        progress.write(
+            f"  [test/fix] DSPy loop done after {pred.iterations} iter(s); "
+            f"passed={pred.passed}; fixes_failed={len(pred.fixes_failed)}\n"
+        )
+
+    # Reuse the underlying TestRunResult fields when available so
+    # downstream code keeps working unchanged.
+    if base is not None:
+        return SimpleNamespace(
+            passed=bool(pred.passed),
+            returncode=base.returncode if not pred.passed else 0,
+            duration_s=duration_s,
+            stdout=base.stdout,
+            stderr=base.stderr,
+            command=base.command,
+            cwd=base.cwd,
+            iterations=pred.iterations,
+            fixes_failed=list(pred.fixes_failed),
+        )
+
+    # No test run captured (e.g. run_tests was never invoked) — build
+    # a minimal stand-in.
+    return SimpleNamespace(
+        passed=bool(pred.passed),
+        returncode=0 if pred.passed else 1,
+        duration_s=duration_s,
+        stdout=pred.output if hasattr(pred, "output") else "",
+        stderr="",
+        command=[manifest.test_command],
+        cwd=ctx.project_dir,
+        iterations=pred.iterations,
+        fixes_failed=list(pred.fixes_failed),
     )
 
 
@@ -930,7 +1093,7 @@ def _run_single_skel_flow(
         print()
         print("  Running the test-and-fix loop...")
         try:
-            final = run_test_and_fix_loop(
+            final = _run_test_fix_dispatch(
                 client=client,
                 ctx=ctx,
                 manifest=integration_manifest,
@@ -1455,7 +1618,7 @@ def _run_fullstack_flow(
             # Legacy behavior: old patch-all-files loop
             print()
             print("  ===== Phase 6: Test & fix (legacy mode) =====")
-            final = run_test_and_fix_loop(
+            final = _run_test_fix_dispatch(
                 client=client,
                 ctx=backend_ctx,
                 manifest=backend_integration,
