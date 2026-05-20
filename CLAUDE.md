@@ -210,11 +210,54 @@ make rule-affecting edits.
   symbol and delegating orchestration to `skel_rag.agent.RagAgent`;
   `RagAgent` now exposes parallel `_with_dspy` methods
   (`generate_targets_with_dspy`, `run_integration_phase_with_dspy`)
-  gated behind the **`SKEL_RAG_USE_DSPY=1`** opt-in env var. The
-  default path remains the legacy prompt-string flow until the
-  flip in a follow-up PR. DSPy 3.2.1 has no `Suggest` / `Assert`
-  (removed in DSPy 3.x), so the CHECK_TEST regenerator falls back
-  to a one-shot manual retry. The legacy `{template}` /
+  gated behind the **`SKEL_RAG_USE_DSPY=1`** env var (per-target +
+  integration phases). **Phase-6 test/fix loop** (`_run_test_fix_dispatch`
+  in `_bin/skel-gen-ai` → `programs/test_fix_loop.py:TestFixLoop`) is
+  **default-on as of 2026-05-20**; opt out with
+  `SKEL_RAG_USE_DSPY=0`. The DSPy test/fix loop adds five concrete
+  improvements over the legacy `run_test_and_fix_loop`:
+  - `dspy.ChainOfThought(FixFailingFile)` — reasoning trace before
+    the patched contents; better fix rate + signal for the optimizer.
+  - Per-file retry budget (`SKEL_RAG_FIX_ATTEMPTS`, default 2) —
+    empty / raising LM responses retry in-place instead of wasting
+    a full test re-run on a transient hiccup.
+  - Concurrent fan-out across failing files
+    (`SKEL_RAG_FIX_PARALLEL`, default 1). Raise to 2-4 ONLY after
+    setting `OLLAMA_NUM_PARALLEL>=N` on the Ollama server.
+  - Retrieval-backed `sibling_context` via `SkelRagRM` — each
+    failing file gets the most relevant chunks from the project
+    corpus (instead of an empty string).
+  - Auto-load of compiled few-shot demos from
+    `_bin/skel_rag/compiled/fix_failing.json` (override via
+    `SKEL_RAG_FIX_COMPILED=/path`). Compile with
+    `_bin/skel-rag-compile fix <trainset.jsonl>` after capturing
+    demos with `SKEL_RAG_CAPTURE_FIX_TRAINSET=<path>` on a live
+    run.
+  Other knobs: `SKEL_RAG_FIX_MAX_ITER` (default 10 ceiling on the
+  outer loop), `OLLAMA_CHECK_DISABLE=1` to bypass the slow CHECK_TEST
+  step entirely. DSPy 3.2.1 has no `Suggest` / `Assert` (removed in
+  DSPy 3.x), so the CHECK_TEST regenerator falls back to a one-shot
+  manual retry.
+
+  **Phase-7 optimizer entry points** (`_bin/skel_rag/optimize.py`):
+  `compile_generate` (legacy `BootstrapFewShot` over `GenerateFile`),
+  `compile_fix_failing` (`BootstrapFewShotWithRandomSearch` over the
+  CoT-wrapped `FixFailingFile` — graded reward via
+  `metric_pass_ratio`, no manual `passed=True` annotation needed),
+  and `compile_fix_failing_mipro` (`MIPROv2` joint instruction+demo
+  search; recommended for quarterly retunes). Drive all three from
+  the `_bin/skel-rag-compile` CLI (`generate` / `fix` /
+  `show-trainset` subcommands).
+
+  **Phase-7 evaluation harness**
+  (`_bin/skel_rag/programs/evaluate.py:evaluate_test_fix_loop`)
+  wraps `dspy.Evaluate` over `programs/metrics.py:metric_pass_ratio`
+  so prompt-tuning variants (ChainOfThought on/off, retrieval
+  on/off, parallel, compiled-demos on/off) can be A/B-compared on
+  the same devset without rewriting boilerplate. The graded metric
+  parses pytest's `X passed, Y failed` summary directly so
+  optimizers converge on partial improvements instead of waiting
+  for all-green runs. The legacy `{template}` /
   `{wrapper_snapshot}` placeholders still work, and manifests can
   opt into `{retrieved_context}` / `{retrieved_siblings}` /
   `{prior_outputs}` (FastAPI is the reference migration; 17 other
