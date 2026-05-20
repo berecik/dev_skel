@@ -7,6 +7,7 @@ isolated and do not touch any on-disk state.
 from __future__ import annotations
 
 from sqlalchemy import create_engine
+from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel
 
 from app.wrapper_api.db import WrapperUser
@@ -19,8 +20,18 @@ from app.wrapper_api.seed import seed_default_accounts
 # ---------------------------------------------------------------------------
 
 def _make_session() -> Session:
-    """Return a Session backed by a fresh in-memory SQLite database."""
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    """Return a Session backed by a fresh in-memory SQLite database.
+
+    Uses ``StaticPool`` so every connection from this engine shares the
+    same in-memory database. Without it the FastAPI ``TestClient`` would
+    open a second connection for each request and see an empty schema
+    (in-memory SQLite is per-connection by default).
+    """
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     SQLModel.metadata.create_all(engine, tables=[WrapperUser.__table__])
     return Session(engine, autoflush=False, expire_on_commit=False)
 

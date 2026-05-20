@@ -387,6 +387,18 @@ lives under this package:
 """,
         },
         {
+            "path": "app/tests/__init__.py",
+            "language": "python",
+            "description": "app/tests/__init__.py — package marker (required for pytest sys.path injection)",
+            "prompt": """\
+Create the `app/tests/__init__.py` package marker. Output an empty
+file (zero bytes is fine, a single-line docstring is also fine).
+WITHOUT this marker pytest imports `test_integration.py` as a
+top-level module and `from core import config` fails because the
+project root never lands on sys.path.
+""",
+        },
+        {
             "path": "app/integrations/sibling_clients.py",
             "language": "python",
             "description": "app/integrations/sibling_clients.py — typed clients for sibling backends",
@@ -456,8 +468,30 @@ CRITICAL RULES:
   Always guard client instantiation with `try/except` and call
   `pytest.skip()` when the env var is missing or the service is
   unreachable.
+- DO NOT instantiate a FastAPI `TestClient`. Do NOT import
+  `from app.<service_slug>.main import app` — that module does not
+  exist. The FastAPI app is built lazily via the `app:get_app`
+  factory and the HTTP layer is already exercised by the
+  cross-stack runner. These tests should hit the DB layer directly
+  through `get_session`.
+- Stick to the import list at the bottom of this prompt. Do not
+  invent new imports.
+- DO NOT add any `from app.{service_slug}.main import ...` line —
+  that module does not exist anywhere in the tree and importing it
+  is the #1 reason this test file fails collection.
+- DO NOT import `app` at all. The HTTP layer is exercised by the
+  cross-stack runner via uvicorn, not by these tests.
+- Use SYNC `with get_session() as session:` blocks. Do NOT use
+  `async with` against `get_session` — it is a regular sync context
+  manager from `sqlmodel`, not an async one. If the wrapper exposes
+  an async session helper, prefer the sync path for these tests.
 
-Required tests:
+Required tests (output EXACTLY this set — no extras, no domain-
+specific tests for pizza orders / blog posts / tickets / etc.; the
+integration prompt's `{backend_extra}` describes the domain at the
+HTTP layer, NOT at the function/repository layer, so functions like
+`create_catalog_item` or `submit_order` may NOT exist in the generated
+`adapters/sql.py` — importing them WILL break collection):
 
 1. `test_items_endpoint_round_trip` — using a SQLModel `Session`
    (from `app/wrapper_api/db.get_session`), create an `Item` row,
@@ -473,9 +507,11 @@ Required tests:
    a token for a test user, and assert the result is a non-empty
    string.
 
-4. `test_jwt_secret_is_wrapper_shared` — import settings from
-   `core.config` and assert that
-   `settings.JWT_SECRET == os.environ.get("JWT_SECRET", settings.JWT_SECRET)`.
+4. `test_jwt_secret_is_wrapper_shared` — import the `config`
+   module from `core` and assert that
+   `config.JWT_SECRET == os.environ.get("JWT_SECRET", config.JWT_SECRET)`.
+   There is NO `settings` object on `core.config` — use the module
+   attribute `config.JWT_SECRET` directly.
 
 5. **When `{sibling_count}` > 0**: add one extra test per sibling
    named `test_sibling_<slug>_items_visible_via_shared_db`.

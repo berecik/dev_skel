@@ -28,16 +28,21 @@ class BaseEvent(Generic[ModelType]):
         self.obj = obj
         self.kwargs = kwargs
 
-    @classmethod
     @property
-    def __event_name__(cls):
-        class_name = cls.__name__
+    def __event_name__(self) -> str:
+        """Lowercase, underscored event name derived from the class name.
+
+        Python 3.13+ dropped the `@classmethod` + `@property` stacking
+        that this used to rely on, so we resolve `cls` from the instance
+        instead. Call as `event.__event_name__` (not via the class).
+        """
+        class_name = type(self).__name__
         name = re.sub(r'(?<!^)(?=[A-Z])', '_', class_name).lower()
         name = name.replace('_event', '')
         return name
 
     @property
-    def name(self):
+    def name(self) -> str:
         return self.__event_name__
 
     def dispatch(self, **kwargs):

@@ -120,3 +120,141 @@ def test_capture_in_generate_targets_with_dspy_writes_record(tmp_path, monkeypat
     assert rec["inputs"] == gen_inputs
     assert rec["file_contents"] == "<generated file>"
     assert rec["passed"] is None
+
+
+# --------------------------------------------------------------------- #
+#  Fix-loop trainset capture (Phase 7+ addition)
+# --------------------------------------------------------------------- #
+
+
+def test_capture_fix_attempt_is_noop_when_env_unset(tmp_path, monkeypatch):
+    monkeypatch.delenv("SKEL_RAG_CAPTURE_FIX_TRAINSET", raising=False)
+    monkeypatch.delenv("SKEL_RAG_CAPTURE_TRAINSET", raising=False)
+
+    trainset.capture_fix_attempt(
+        file_path="app/foo.py",
+        current_contents="old",
+        test_output="boom",
+        sibling_context="",
+        fixed_contents="new",
+        post_test_output="1 passed in 1.0s",
+    )
+    # Nothing should have been created; we don't even know what path
+    # would have been used.
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_capture_fix_attempt_writes_record(tmp_path, monkeypatch):
+    dest = tmp_path / "fix.jsonl"
+    monkeypatch.setenv("SKEL_RAG_CAPTURE_FIX_TRAINSET", str(dest))
+
+    trainset.capture_fix_attempt(
+        file_path="app/foo.py",
+        current_contents="def foo(): return 0",
+        test_output="AssertionError",
+        sibling_context="from app.bar import baz",
+        fixed_contents="def foo(): return 1",
+        post_test_output="1 passed in 1.0s",
+    )
+
+    rec = json.loads(dest.read_text(encoding="utf-8").strip())
+    assert rec["inputs"]["file_path"] == "app/foo.py"
+    assert rec["inputs"]["sibling_context"] == "from app.bar import baz"
+    assert rec["fixed_contents"] == "def foo(): return 1"
+    assert rec["post_test_output"] == "1 passed in 1.0s"
+
+
+def test_capture_fix_attempt_falls_back_to_generic_var(tmp_path, monkeypatch):
+    """A single ``SKEL_RAG_CAPTURE_TRAINSET`` flip lets a maintainer
+    capture both phases for an A/B without managing two env vars.
+    The fallback rewrites the suffix to ``.fix.jsonl`` so the gen and
+    fix records stay in separate files."""
+
+    base = tmp_path / "out.jsonl"
+    monkeypatch.delenv("SKEL_RAG_CAPTURE_FIX_TRAINSET", raising=False)
+    monkeypatch.setenv("SKEL_RAG_CAPTURE_TRAINSET", str(base))
+
+    trainset.capture_fix_attempt(
+        file_path="x.py",
+        current_contents="a",
+        test_output="b",
+        sibling_context="c",
+        fixed_contents="d",
+        post_test_output="1 passed in 0.1s",
+    )
+
+    expected = tmp_path / "out.fix.jsonl"
+    assert expected.is_file()
+    assert not base.exists(), "fix capture must not write to the gen file"
+
+
+def test_load_fix_trainset_filters_by_pass_ratio(tmp_path):
+    dest = tmp_path / "fix.jsonl"
+    records = [
+        # All green → ratio 1.0, kept.
+        {
+            "inputs": {
+                "file_path": "a.py", "current_contents": "x",
+                "test_output": "y", "sibling_context": "",
+            },
+            "fixed_contents": "good",
+            "post_test_output": "1 passed in 0.1s",
+        },
+        # 56/(56+5) ≈ 0.918 → kept (above default 0.5).
+        {
+            "inputs": {
+                "file_path": "b.py", "current_contents": "x",
+                "test_output": "y", "sibling_context": "",
+            },
+            "fixed_contents": "mostly-good",
+            "post_test_output": "5 failed, 56 passed in 1.0s",
+        },
+        # 1/(1+10) ≈ 0.09 → dropped at default threshold.
+        {
+            "inputs": {
+                "file_path": "c.py", "current_contents": "x",
+                "test_output": "y", "sibling_context": "",
+            },
+            "fixed_contents": "bad",
+            "post_test_output": "10 failed, 1 passed in 1.0s",
+        },
+        # Unparseable post output → ratio 0.0, dropped.
+        {
+            "inputs": {
+                "file_path": "d.py", "current_contents": "x",
+                "test_output": "y", "sibling_context": "",
+            },
+            "fixed_contents": "infra-failed",
+            "post_test_output": "kaboom",
+        },
+    ]
+    dest.write_text(
+        "\n".join(json.dumps(r) for r in records) + "\n",
+        encoding="utf-8",
+    )
+
+    examples = trainset.load_fix_trainset(dest)
+    paths = sorted(ex.file_path for ex in examples)
+    assert paths == ["a.py", "b.py"]
+    # Each Example must carry exactly the FixFailingFile signature
+    # inputs as the live keys.
+    assert set(examples[0].inputs().keys()) == {
+        "file_path", "current_contents", "test_output", "sibling_context",
+    }
+
+
+def test_load_fix_trainset_min_pass_ratio_override(tmp_path):
+    dest = tmp_path / "fix.jsonl"
+    record = {
+        "inputs": {
+            "file_path": "c.py", "current_contents": "x",
+            "test_output": "y", "sibling_context": "",
+        },
+        "fixed_contents": "marginal",
+        # 1 / (1 + 10) ≈ 0.09 — only kept when threshold drops to 0.0.
+        "post_test_output": "10 failed, 1 passed in 1.0s",
+    }
+    dest.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    assert len(trainset.load_fix_trainset(dest)) == 0
+    assert len(trainset.load_fix_trainset(dest, min_pass_ratio=0.0)) == 1

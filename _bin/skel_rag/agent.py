@@ -479,6 +479,19 @@ class RagAgent:
             # to avoid a no-op round-trip.
             return cleaned
 
+        # Skip the review for trivial files (empty markers, single-line
+        # docstrings). Reviewing 0-40 chars has no signal and the reviewer
+        # tends to hallucinate problems by latching onto context that the
+        # file itself never references — wasting a model call and an
+        # unnecessary regen round-trip.
+        if len(cleaned.strip()) < 40:
+            if progress is not None:
+                progress.write(
+                    f"      check ({expanded.path}): skipped "
+                    f"(trivial, {len(cleaned.strip())} chars)\n"
+                )
+            return cleaned
+
         # Build the review source slice: the just-written file + every
         # earlier sibling output (prior_outputs already capped to 2000
         # chars per file) + the wrapper-shared OpenAPI contract when
@@ -524,12 +537,36 @@ class RagAgent:
         )
 
         try:
-            verdict = llm_chat(check_cfg, review_system, review_user).strip()
+            raw_verdict = llm_chat(check_cfg, review_system, review_user)
+            if not isinstance(raw_verdict, str):
+                # litellm/dspy occasionally returns a list[dict] or a
+                # Prediction-like wrapper depending on the model. Coerce
+                # to a string so the downstream .strip() / .split() never
+                # blows up — the reviewer is best-effort anyway.
+                if isinstance(raw_verdict, list) and raw_verdict:
+                    first = raw_verdict[0]
+                    if isinstance(first, dict):
+                        raw_verdict = (
+                            first.get("content")
+                            or first.get("text")
+                            or str(first)
+                        )
+                    else:
+                        raw_verdict = str(first)
+                elif isinstance(raw_verdict, dict):
+                    raw_verdict = (
+                        raw_verdict.get("content")
+                        or raw_verdict.get("text")
+                        or str(raw_verdict)
+                    )
+                else:
+                    raw_verdict = str(raw_verdict)
+            verdict = raw_verdict.strip()
         except Exception as exc:  # noqa: BLE001
             if progress is not None:
                 progress.write(
                     f"      check ({expanded.path}): skipped "
-                    f"({type(exc).__name__})\n"
+                    f"({type(exc).__name__}: {str(exc)[:120]})\n"
                 )
             return cleaned
 

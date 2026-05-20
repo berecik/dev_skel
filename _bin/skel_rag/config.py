@@ -239,9 +239,15 @@ class OllamaConfig:
         )
 
     def for_fix(self) -> "OllamaConfig":
-        """Surgical-patch variant: low temperature, capped at 300 s timeout."""
-        return self._swap(self.fix_model, temperature=0.1,
-                          timeout=min(self.timeout, 300))
+        """Surgical-patch variant: low temperature.
+
+        Keeps the parent ``timeout`` rather than capping at 300 s. The
+        former cap caused repeated litellm timeouts whenever a fix call
+        took longer than 5 min — common on a contended GPU or a 32B
+        model doing a multi-file patch. Callers that want a tighter
+        budget should set ``OLLAMA_TIMEOUT`` low at the env layer.
+        """
+        return self._swap(self.fix_model, temperature=0.1)
 
     def for_create_test(self) -> "OllamaConfig":
         """Test-scaffolding variant — must differ from the GEN model."""

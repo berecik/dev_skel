@@ -249,10 +249,15 @@ def _run_test_fix_dispatch(
     import time as _time
     from types import SimpleNamespace
 
-    # Phase 8a Step 1: opt-in via SKEL_RAG_USE_DSPY=1 (same default as
-    # the other two dispatchers). Step 3 flips the default after a live
-    # smoke verifies the path works end-to-end.
-    use_dspy = os.environ.get("SKEL_RAG_USE_DSPY") == "1"
+    # Phase 8a Step 3+: DSPy is now the default. Opt OUT by setting
+    # ``SKEL_RAG_USE_DSPY=0`` (kept as an escape hatch for debugging
+    # against the legacy prompt-string path). The DSPy module adds
+    # ChainOfThought reasoning, per-file retry budget, optional
+    # ``num_parallel`` fan-out, retrieval-backed sibling context, and
+    # auto-load of compiled few-shot demos — see
+    # ``_bin/skel_rag/programs/test_fix_loop.py``.
+    raw = os.environ.get("SKEL_RAG_USE_DSPY", "1").strip().lower()
+    use_dspy = raw not in ("0", "false", "no", "off")
 
     if not use_dspy:
         return run_test_and_fix_loop(
@@ -302,18 +307,78 @@ def _run_test_fix_dispatch(
                 rel = absolute.relative_to(ctx.project_dir)
             except ValueError:
                 rel = absolute
-            # sibling_context is left empty for now — Phase 8a defers
-            # context retrieval to a follow-up. The legacy path also
-            # only includes a couple of hand-picked key modules; the
-            # DSPy fix prompt still gets the failing test output.
+            # Leave ``sibling_context`` empty so the TestFixLoop's
+            # retriever (when configured) fills it from the project's
+            # FAISS index instead of us passing a hand-picked tuple.
             yield (str(rel), contents, "")
 
-    # Allow the loop a small handful of iterations. Even if the
-    # manifest sets fix_timeout_m=120, we still cap per-call iteration
-    # count — the legacy loop bounds by wall clock, ours bounds by
-    # iteration count for predictability under DSPy.
-    max_iter = max(1, min(3, getattr(manifest, "fix_timeout_m", 0) // 30 or 3))
-    loop = TestFixLoop(max_iter=max_iter)
+    # Allow the loop a configurable iteration count. Defaults align
+    # with the legacy wall-clock budget: ~3 min per iter at the FIX
+    # model's typical throughput, so a 120 min fix_timeout_m → ~40
+    # iterations. Capped at 10 by default so a runaway loop can't
+    # eat the whole budget; override with ``SKEL_RAG_FIX_MAX_ITER``.
+    fix_timeout_m = getattr(manifest, "fix_timeout_m", 0) or 0
+    derived_iter = max(1, fix_timeout_m // 3)
+    try:
+        env_cap = int(os.environ.get("SKEL_RAG_FIX_MAX_ITER", "10"))
+    except ValueError:
+        env_cap = 10
+    max_iter = max(1, min(env_cap, derived_iter, 10))
+
+    # Build a retriever over the project corpus so per-file fixes get
+    # focused sibling code (e.g. the wrapper-shared models a failing
+    # import refers to). Best-effort: if the embedder stack isn't
+    # available we run without retrieval, matching the legacy
+    # behaviour.
+    retriever = None
+    try:
+        from skel_rag.dspy_retriever import SkelRagRM
+        retriever = SkelRagRM.from_path(ctx.project_dir)
+    except Exception as exc:  # noqa: BLE001
+        if progress is not None:
+            progress.write(
+                f"  [test/fix] retrieval unavailable "
+                f"({type(exc).__name__}); running without sibling "
+                "context enrichment\n"
+            )
+
+    # Fan-out level. Default 1 (sequential, matches legacy). Raise to
+    # 2-4 via ``SKEL_RAG_FIX_PARALLEL=N`` AFTER setting
+    # ``OLLAMA_NUM_PARALLEL>=N`` on the Ollama server — otherwise the
+    # concurrent calls just queue on the GPU with no wall-clock win.
+    try:
+        num_parallel = max(1, int(
+            os.environ.get("SKEL_RAG_FIX_PARALLEL", "1")
+        ))
+    except ValueError:
+        num_parallel = 1
+
+    # Per-file retry budget for empty / raising LM calls. Stays low by
+    # default so a genuine model failure surfaces quickly; bumping to
+    # 3 helps on a contended GPU where the first response can be
+    # truncated.
+    try:
+        fix_attempts = max(1, int(
+            os.environ.get("SKEL_RAG_FIX_ATTEMPTS", "2")
+        ))
+    except ValueError:
+        fix_attempts = 2
+
+    loop = TestFixLoop(
+        max_iter=max_iter,
+        num_parallel=num_parallel,
+        fix_attempts=fix_attempts,
+        retriever=retriever,
+    )
+
+    if progress is not None:
+        progress.write(
+            f"  [test/fix] DSPy TestFixLoop ready "
+            f"(max_iter={max_iter}, parallel={num_parallel}, "
+            f"attempts={fix_attempts}, "
+            f"retriever={'on' if retriever else 'off'}, "
+            f"compiled={'on' if loop._compiled_loaded else 'off'})\n"
+        )
 
     try:
         pred = loop.forward(

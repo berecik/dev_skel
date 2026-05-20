@@ -63,6 +63,65 @@ def _cmd_generate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_fix(args: argparse.Namespace) -> int:
+    """Compile the FixFailingFile ChainOfThought against a fix trainset.
+
+    Captured records come from :func:`skel_rag.trainset.capture_fix_attempt`
+    (set ``SKEL_RAG_CAPTURE_FIX_TRAINSET=<path>`` on a live skel-gen-ai
+    run). The loader filters by post-fix pass_ratio so only fixes that
+    actually moved the test suite forward become exemplars.
+    """
+
+    from skel_rag.optimize import (
+        DEFAULT_FIX_COMPILED,
+        compile_fix_failing,
+        compile_fix_failing_mipro,
+        save_compiled,
+    )
+    from skel_rag.trainset import load_fix_trainset
+
+    trainset_path = Path(args.trainset)
+    if not trainset_path.exists():
+        print(f"trainset not found: {trainset_path}", file=sys.stderr)
+        return 2
+
+    trainset = load_fix_trainset(
+        trainset_path, min_pass_ratio=args.min_pass_ratio,
+    )
+    if not trainset:
+        print(
+            f"no usable examples in {trainset_path} after filtering "
+            f"by min_pass_ratio={args.min_pass_ratio} (lower the "
+            "threshold or capture more fixes).",
+            file=sys.stderr,
+        )
+        return 3
+
+    out_path = Path(args.out) if args.out else DEFAULT_FIX_COMPILED
+    print(
+        f"compiling FixFailingFile over {len(trainset)} examples "
+        f"using {args.optimizer} optimizer...",
+        flush=True,
+    )
+    if args.optimizer == "mipro":
+        compiled = compile_fix_failing_mipro(
+            trainset,
+            auto=args.auto,
+            max_bootstrapped_demos=args.max_demos,
+            num_threads=args.num_threads,
+        )
+    else:
+        compiled = compile_fix_failing(
+            trainset,
+            max_bootstrapped_demos=args.max_demos,
+            num_candidate_programs=args.num_candidates,
+            num_threads=args.num_threads,
+        )
+    save_compiled(compiled, out_path)
+    print(f"saved compiled fix predictor to {out_path}")
+    return 0
+
+
 def _cmd_show_trainset(args: argparse.Namespace) -> int:
     path = Path(args.path)
     if not path.exists():
@@ -115,6 +174,69 @@ def main(argv: list[str] | None = None) -> int:
         help="max_bootstrapped_demos for BootstrapFewShot (default: 4)",
     )
     gen.set_defaults(func=_cmd_generate)
+
+    fix = sub.add_parser(
+        "fix",
+        help=(
+            "Compile the FixFailingFile ChainOfThought against a "
+            "captured fix trainset. The compiled artefact is "
+            "auto-loaded by TestFixLoop on the next run."
+        ),
+    )
+    fix.add_argument(
+        "--trainset", required=True,
+        help="path to a fix trainset captured by capture_fix_attempt",
+    )
+    fix.add_argument(
+        "--out",
+        default=None,
+        help=(
+            "override the compiled artefact location (defaults to "
+            "_bin/skel_rag/compiled/fix_failing.json for auto-load)"
+        ),
+    )
+    fix.add_argument(
+        "--optimizer",
+        choices=["bootstrap", "mipro"],
+        default="bootstrap",
+        help=(
+            "bootstrap = BootstrapFewShotWithRandomSearch (default; "
+            "~minutes). mipro = MIPROv2 joint instruction+demo "
+            "optimization (longer; quarterly retune budget)."
+        ),
+    )
+    fix.add_argument(
+        "--auto",
+        choices=["light", "medium", "heavy"],
+        default="light",
+        help="MIPROv2 budget knob (only used with --optimizer mipro)",
+    )
+    fix.add_argument(
+        "--max-demos", type=int, default=4,
+        help="per-program demo cap (default 4)",
+    )
+    fix.add_argument(
+        "--num-candidates", type=int, default=4,
+        help=(
+            "BootstrapFewShotWithRandomSearch candidate count "
+            "(default 4)"
+        ),
+    )
+    fix.add_argument(
+        "--min-pass-ratio", type=float, default=0.5,
+        help=(
+            "drop trainset entries whose post-fix pass_ratio is "
+            "below this threshold (default 0.5)"
+        ),
+    )
+    fix.add_argument(
+        "--num-threads", type=int, default=1,
+        help=(
+            "inner optimizer thread count (default 1; only raise "
+            "when OLLAMA_NUM_PARALLEL is set on the server)"
+        ),
+    )
+    fix.set_defaults(func=_cmd_fix)
 
     show = sub.add_parser(
         "show-trainset",

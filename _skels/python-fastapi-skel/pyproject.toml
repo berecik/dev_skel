@@ -83,3 +83,9 @@ asyncio_mode = "auto"
 testpaths = ["tests", "app", "core"]
 python_files = "test_*.py"
 python_functions = "test_*"
+# Add the project root to sys.path so `from core import config` and
+# `from app.wrapper_api.db import ...` work for every test, even when
+# the test's containing directory lacks an `__init__.py`. Without this,
+# pytest's rootdir injection only fires for packages declared with a
+# marker file, which makes brand-new AI-generated test files brittle.
+pythonpath = ["."]
