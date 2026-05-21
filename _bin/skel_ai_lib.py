@@ -1741,7 +1741,7 @@ _FIX_USER_PROMPT = (
 
 def _ask_ollama_to_fix(
     *,
-    client: OllamaClient,
+    client: Any,
     ctx: GenerationContext,
     target_result: TargetResult,
     test_run: TestRunResult,
@@ -1752,9 +1752,19 @@ def _ask_ollama_to_fix(
     The RAG agent enriches the prompt with retrieved sibling chunks
     (so the model has the wrapper's API surface to ground its repair),
     then runs the same ``clean_response`` pass we always did.
+
+    ``client`` may be either an :class:`OllamaClient` (whose ``.agent``
+    property lazily yields a :class:`RagAgent`) or a :class:`RagAgent`
+    directly. The per-service ``./ai`` runtime in
+    ``_bin/dev_skel_refactor_runtime.py`` passes a ``RagAgent`` while
+    ``skel-gen-ai`` passes an ``OllamaClient``; both call sites must
+    keep working.
     """
 
-    return client.agent.fix_target(
+    # Duck-type: pull the RagAgent out of an OllamaClient when one is
+    # present, otherwise assume the caller already gave us a RagAgent.
+    agent = getattr(client, "agent", client)
+    return agent.fix_target(
         target_result=target_result,
         test_run=test_run,
         test_command=test_command,

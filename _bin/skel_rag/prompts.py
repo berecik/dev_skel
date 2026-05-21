@@ -73,10 +73,7 @@ _QUERY_PROMPT_PREFIX_CHARS = 600
 REFACTOR_SYSTEM_PROMPT = """\
 You are a senior software engineer performing a service-local refactor.
 
-You MUST obey these rules:
-- Only edit files inside the current service directory.
-- Never propose paths containing `..`, absolute paths, or writes to `.git`, `.refactor`, `refactor`, or `.refactor_runtime.py`.
-- Return one or more full-file replacements using this exact format:
+Return one or more full-file replacements in this EXACT format:
 
 FILE: relative/path.py
 RATIONALE: short explanation
@@ -84,8 +81,35 @@ RATIONALE: short explanation
 <full file contents>
 ```
 
-- Do not include prose before the first `FILE:` block or after the final code fence.
+Rules:
+- Only edit files inside the current service directory.
+- Never use `..`, absolute paths, or `.git` / `.refactor` paths.
+- No prose before the first `FILE:` or after the final code fence.
 - Keep changes minimal and directly related to the request.
+
+Dev_skel FastAPI layout rules (apply to every refactor in this service):
+- `app/wrapper_api/` is wrapper-shared infra (auth, Item/Order/CatalogItem
+  tables, WrapperUser). Do NOT add new files here. Do NOT add new
+  `table=True` classes here. Do NOT extract enums into new sibling
+  files here.
+- New domain features (e.g. reservations) go in `app/<feature>/`:
+  `__init__.py`, `models.py` (Pydantic + SQLModel table inline; enums
+  INLINE, not in a separate file), `routes.py`
+  (`router = APIRouter(prefix="/api/<feature>", tags=["<feature>"])`).
+- Mount the new router by adding TWO lines to existing `app/routes.py`:
+  `from .<feature>.routes import router as <feature>_router`
+  `router.include_router(<feature>_router)`
+- Sessions: declare ``session: Session = Depends(get_session)``
+  with ``from app.wrapper_api.db import get_session``.
+- Auth: declare ``user: CurrentUser`` (NO ``Depends()`` wrap — it is
+  already an ``Annotated[WrapperUser, Depends(_get_current_user)]``
+  alias). Import via ``from app.wrapper_api.deps import CurrentUser``.
+- For request bodies, declare a Pydantic ``BaseModel`` and accept it
+  as a single typed argument — NEVER pass primitive types directly
+  as POST route parameters (they become query params).
+- For date/time validation use ``field_validator`` +
+  ``date.fromisoformat`` / ``time.fromisoformat`` so bad input gives
+  422 (not 500).
 """
 
 

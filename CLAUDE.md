@@ -572,6 +572,40 @@ for caveats.
 
 ---
 
+## 6.2.1 Iterative `./ai` Test: Pizza Reservation
+
+Companion scenario to 6.2 that tests the *iterative refactor*
+capability of the built-in service-level `./ai` agent. Generates the
+pizzeria from scratch (same prompts as 6.2 but into
+`_test_projects/test-pizza-reservation/`), verifies V_pizza baseline,
+then asks `./ai orders_api apply "<reservation prompt>"` to add a
+table reservation system. After the agent finishes it runs:
+
+* **V_pizza regression** — the same 14-step HTTP order lifecycle must
+  still pass (the agent prompt forbids breaking the ordering contract).
+* **V_reservation** — POST a valid date+time booking → 2xx; POST with
+  the date missing or malformed → 4xx. The verifier probes several
+  candidate endpoint paths and body shapes so a reasonable
+  implementation choice by the agent is accepted.
+
+**Read:** [`_docs/PIZZA-RESERVATION-PLAYBOOK.md`](_docs/PIZZA-RESERVATION-PLAYBOOK.md)
+
+Commands:
+
+```bash
+make test-pizza-reservation          # full run (cleans on exit)
+make test-pizza-reservation-keep     # leave wrapper at _test_projects/
+_bin/skel-test-pizza-reservation --keep --ai-timeout-m 45
+```
+
+Exits 0 on green, 1 on assertion failure, 2 when Ollama is
+unreachable (safe for CI). Implementation:
+`_bin/skel-test-pizza-reservation` (loads the pizzeria runner via
+`importlib.SourceFileLoader` to reuse generation + 14-step HTTP
+exercise — no copy-pasted state).
+
+---
+
 ## 6.3 Backporting Service Edits Into the Skeleton (`./backport`)
 
 The sibling of `./ai` for the **service → template** direction.

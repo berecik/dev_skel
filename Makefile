@@ -48,6 +48,9 @@
         test-flutter-nextjs test-flutter-nextjs-keep \
         test-flutter-cross-stack \
         test-pizzeria-orders test-pizzeria-orders-keep \
+        test-pizza-reservation test-pizza-reservation-keep \
+        test-pizza-web test-pizza-web-keep \
+        test-pizza-reservation-web test-pizza-reservation-web-keep \
         test-cross-stack
 
 # Skeleton directories
@@ -821,6 +824,33 @@ test-pizzeria-orders: ## AI-gen pizzeria integration test (FastAPI + Flutter, re
 
 test-pizzeria-orders-keep: ## Same, but leave _test_projects/test-pizzeria-orders on disk
 	@_bin/skel-test-pizzeria-orders --keep
+
+# Iterative-./ai scenario: generate the pizzeria, then ask the per-service
+# ./ai agent to add table reservations, then run V_pizza regression +
+# V_reservation feature verification. Tests the built-in service ./ai
+# refactor agent on a non-trivial multi-file change. Requires Ollama.
+test-pizza-reservation: ## Iterative-./ai scenario: pizza ordering + table reservations (requires Ollama)
+	@echo "$(GREEN)=== Pizza Reservation Iterative-./ai Test ===$(NC)"
+	@_bin/skel-test-pizza-reservation
+
+test-pizza-reservation-keep: ## Same, but leave _test_projects/test-pizza-reservation on disk
+	@_bin/skel-test-pizza-reservation --keep
+
+# Web-E2E scenarios — drive the React frontend through Playwright after
+# the agent adds restaurant UI / reservation UI.
+test-pizza-web: ## Pizza ordering web E2E (client → restaurant → wait-time)
+	@echo "$(GREEN)=== Pizza Web E2E (Playwright) ===$(NC)"
+	@_bin/skel-test-pizza-web
+
+test-pizza-web-keep: ## Same, leave _test_projects/test-pizza-web on disk
+	@_bin/skel-test-pizza-web --keep
+
+test-pizza-reservation-web: ## Reservation web E2E (client books → restaurant confirms)
+	@echo "$(GREEN)=== Pizza Reservation Web E2E (Playwright) ===$(NC)"
+	@_bin/skel-test-pizza-reservation-web
+
+test-pizza-reservation-web-keep: ## Same, leave wrapper on disk
+	@_bin/skel-test-pizza-reservation-web --keep
 
 #
 # === SKELETON TEST TARGETS ===
